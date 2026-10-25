@@ -17,8 +17,22 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // Handlers and hooks are async by contract even when a branch doesn't await.
+      '@typescript-eslint/require-await': 'off',
       eqeqeq: ['error', 'always'],
       'no-console': 'error',
+    },
+  },
+  {
+    // Tests read untyped JSON responses; asserting on them is the point.
+    files: ['**/*.test.ts', '**/*.test.tsx', '**/test/**/*.ts', '**/e2e/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
   {

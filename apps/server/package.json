@@ -17,8 +17,10 @@
   },
   "dependencies": {
     "@flagship/core": "workspace:*",
+    "fastify": "5.12.5",
     "kysely": "0.29.6",
     "pg": "8.23.1",
+    "pino": "10.4.0",
     "zod": "4.6.5"
   }
 }
