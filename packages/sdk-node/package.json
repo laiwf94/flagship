@@ -1,0 +1,31 @@
+{
+  "name": "@flagship/node",
+  "version": "0.1.0",
+  "description": "flagship server-side SDK for Node: local evaluation, streaming updates, OpenFeature provider.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "@flagship/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@flagship/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@flagship/conformance": "workspace:*"
+  }
+}

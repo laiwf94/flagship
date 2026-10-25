@@ -63,6 +63,9 @@ importers:
       '@flagship/conformance':
         specifier: workspace:*
         version: link:../../packages/conformance
+      '@flagship/node':
+        specifier: workspace:*
+        version: link:../../packages/sdk-node
       '@testcontainers/postgresql':
         specifier: 12.2.0
         version: 12.2.0
@@ -84,6 +87,16 @@ importers:
       zod:
         specifier: 4.6.5
         version: 4.6.5
+
+  packages/sdk-node:
+    dependencies:
+      '@flagship/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@flagship/conformance':
+        specifier: workspace:*
+        version: link:../conformance
 
 packages:
 

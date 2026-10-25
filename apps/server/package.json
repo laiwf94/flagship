@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@flagship/conformance": "workspace:*",
+    "@flagship/node": "workspace:*",
     "@testcontainers/postgresql": "12.2.0",
     "@types/pg": "8.23.1",
     "testcontainers": "12.2.0"
