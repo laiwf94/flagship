@@ -1,0 +1,24 @@
+{
+  "name": "@flagship/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "flagship API server: admin API, SDK endpoints, streaming and scheduling.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "12.2.0",
+    "@types/pg": "8.23.1",
+    "testcontainers": "12.2.0"
+  },
+  "dependencies": {
+    "@flagship/core": "workspace:*",
+    "kysely": "0.29.6",
+    "pg": "8.23.1",
+    "zod": "4.6.5"
+  }
+}
