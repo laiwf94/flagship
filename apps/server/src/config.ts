@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { z } from 'zod';
 
 const flag = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1');
@@ -102,6 +103,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     eventsFlushMs: c.FLAGSHIP_EVENTS_FLUSH_MS,
     eventsQueueLimit: c.FLAGSHIP_EVENTS_QUEUE_LIMIT,
     changeRetention: c.FLAGSHIP_CHANGE_RETENTION,
-    adminUiDir: c.FLAGSHIP_ADMIN_UI_DIR,
+    adminUiDir:
+      c.FLAGSHIP_ADMIN_UI_DIR === undefined ? undefined : resolve(c.FLAGSHIP_ADMIN_UI_DIR),
   };
 }

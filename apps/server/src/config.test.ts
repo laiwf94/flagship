@@ -30,7 +30,7 @@ describe('loadConfig', () => {
       FLAGSHIP_ADMIN_EMAIL: 'Admin@Acme.com',
       FLAGSHIP_ADMIN_PASSWORD: 'correct horse battery',
       FLAGSHIP_METRICS_TOKEN: 'a-long-metrics-token',
-      FLAGSHIP_ADMIN_UI_DIR: '/srv/admin',
+      FLAGSHIP_ADMIN_UI_DIR: 'admin/dist',
     });
     expect(c).toMatchObject({
       port: 9000,
@@ -39,7 +39,7 @@ describe('loadConfig', () => {
       allowedOrigins: ['https://flags.acme.com', 'http://localhost:5173'],
       bootstrapAdmin: { email: 'admin@acme.com', password: 'correct horse battery' },
       metricsToken: 'a-long-metrics-token',
-      adminUiDir: '/srv/admin',
+      adminUiDir: `${process.cwd()}/admin/dist`,
     });
   });
 

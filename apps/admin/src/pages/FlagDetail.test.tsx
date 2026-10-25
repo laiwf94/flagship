@@ -232,12 +232,21 @@ describe('flag editor', () => {
     await user.click(screen.getByRole('button', { name: 'Save to Production' }));
     expect(await screen.findByText(/Someone else saved this flag/)).toBeTruthy();
     const loads = api.calls.filter((c) => c.path.endsWith('/flags/new-checkout')).length;
+    api.set(FLAG_API, makeFlag({ fallthrough: { variant: 'on' } }, 4));
     await user.click(screen.getByRole('button', { name: 'Reload latest' }));
     await waitFor(() => {
       expect(api.calls.filter((c) => c.path.endsWith('/flags/new-checkout')).length).toBe(
         loads + 1,
       );
     });
+    // Their version replaces the local draft, including fields we never touched.
+    await waitFor(() => {
+      expect(screen.getByLabelText<HTMLSelectElement>('Default rule serves').value).toBe('on');
+    });
+    expect(
+      screen.getByLabelText<HTMLSelectElement>('Serve when off or a prerequisite fails').value,
+    ).toBe('off');
+    expect(screen.queryByRole('region', { name: 'Unsaved changes' })).toBeNull();
   });
 
   it('shows server validation errors', async () => {

@@ -6,10 +6,10 @@
   --border-strong: #c5ccd8;
   --text: #17202e;
   --muted: #5a6577;
-  --accent: #1f5eff;
+  --accent: #1d4fd8;
   --accent-text: #ffffff;
   --accent-soft: #e8efff;
-  --focus: #1f5eff;
+  --focus: #1d4fd8;
   --success: #12795a;
   --success-soft: #e3f5ee;
   --warning: #8a5a00;
@@ -998,7 +998,7 @@ a.row:hover {
 
 .clause {
   display: grid;
-  grid-template-columns: 32px minmax(90px, 1fr) 112px minmax(130px, 1.2fr) minmax(120px, 1.5fr) 40px;
+  grid-template-columns: 32px minmax(90px, 1fr) 112px minmax(170px, 1.2fr) minmax(120px, 1.5fr) 40px;
   gap: var(--space-2);
   align-items: center;
 }
@@ -1033,14 +1033,14 @@ input[type='range'] {
 }
 
 .weights {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
 }
 
 .weight-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px auto;
+  grid-template-columns: auto 88px auto;
   align-items: center;
   gap: var(--space-2);
 }

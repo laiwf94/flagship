@@ -94,6 +94,8 @@ export function Targeting({
   const [confirmKill, setConfirmKill] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<ApiError | undefined>();
+  // Set by "Reload latest": take the next server version even over local edits.
+  const [adopt, setAdopt] = useState(false);
 
   const savedJson = JSON.stringify(saved);
   const dirty = JSON.stringify(draft) !== savedJson;
@@ -103,7 +105,10 @@ export function Targeting({
   const [seen, setSeen] = useState(`${flag.version}/${savedJson}`);
   if (seen !== `${flag.version}/${savedJson}`) {
     setSeen(`${flag.version}/${savedJson}`);
-    if (!dirty) setDraft(saved);
+    if (!dirty || adopt) {
+      setDraft(saved);
+      setAdopt(false);
+    }
     setBase(flag.version);
   }
 
@@ -480,7 +485,7 @@ export function Targeting({
                   <Button
                     onClick={() => {
                       setReviewing(false);
-                      setDraft(saved);
+                      setAdopt(true);
                       onReload();
                     }}
                   >

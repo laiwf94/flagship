@@ -69,6 +69,26 @@ describe('flag list', () => {
     expect(await screen.findByText('dark mode')).toBeTruthy();
   });
 
+  it('links every section from the sidebar', async () => {
+    mockApi({
+      'GET /api/session': session,
+      'GET /api/projects': projects,
+      'GET /api/projects/default/flags': { flags: [] },
+    });
+    renderAt('/p/default/production/flags');
+    const nav = await screen.findByRole('navigation', { name: 'Sections' });
+    expect(
+      within(nav)
+        .getAllByRole('link')
+        .map((a) => [a.textContent, a.getAttribute('href')]),
+    ).toEqual([
+      ['Flags', '/p/default/production/flags'],
+      ['Segments', '/p/default/production/segments'],
+      ['History', '/p/default/production/history'],
+      ['Settings', '/p/default/production/settings'],
+    ]);
+  });
+
   it('shows an empty state that invites editors to create the first flag', async () => {
     mockApi({
       'GET /api/session': session,
