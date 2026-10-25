@@ -14,6 +14,7 @@ import { currentUser } from '../auth/guard.js';
 import type { Context } from '../context.js';
 import { parse } from '../errors.js';
 import { listAudit } from '../services/audit.js';
+import { exposureSummary } from '../services/exposures.js';
 import {
   archiveFlag,
   createFlag,
@@ -230,6 +231,21 @@ export function flagRoutes(ctx: Context) {
         return cancelSchedule(s, await env(s.project.id, p.environment), p.flag, p.id, ctx.now());
       },
     );
+
+    api.get('/projects/:project/flags/:flag/exposures', async (request) => {
+      const p = parse(flagParams, request.params, 'path');
+      const q = parse(
+        z.object({
+          environment: keySchema,
+          hours: z.coerce.number().int().min(1).max(720).default(24),
+        }),
+        request.query,
+        'query',
+      );
+      const project = await getProject(ctx.db, p.project);
+      const e = await env(project.id, q.environment);
+      return exposureSummary(ctx.db, e.id, p.flag, q.hours, ctx.now());
+    });
 
     api.get('/projects/:project/environments/:environment/ruleset', async (request) => {
       const p = parse(envParams, request.params, 'path');

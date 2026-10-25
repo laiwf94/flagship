@@ -17,6 +17,7 @@ import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
 import { KeyAuthenticator } from './services/apikeys.js';
 import { RulesetCache } from './services/cache.js';
+import { ExposureQueue, exposureWriter } from './services/exposures.js';
 import { Scheduler } from './services/schedules.js';
 import { Hub } from './streaming/hub.js';
 import { bootstrapProject } from './services/projects.js';
@@ -45,6 +46,7 @@ export interface App {
   hub: Hub;
   cache: RulesetCache;
   scheduler: Scheduler;
+  exposures: ExposureQueue;
   /** Stops accepting work, drains streams and background jobs, closes the server. */
   close: () => Promise<void>;
 }
@@ -156,7 +158,16 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     maxStreamsPerKey: config.maxStreamsPerKey,
   });
   await hub.start();
-  await server.register(sdkRoutes(ctx, { cache, hub }), { prefix: '/sdk/v1' });
+  const exposures = new ExposureQueue({
+    write: exposureWriter(db),
+    limit: config.eventsQueueLimit,
+    flushMs: config.eventsFlushMs,
+    metrics,
+    logger,
+    now,
+  });
+  exposures.start();
+  await server.register(sdkRoutes(ctx, { cache, hub, exposures }), { prefix: '/sdk/v1' });
 
   const admin = await bootstrapAdmin(db, config.bootstrapAdmin);
   if (admin !== undefined) await bootstrapProject(db, { id: admin.id, name: admin.name });
@@ -171,7 +182,11 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   });
   scheduler.start();
 
-  const closers: (() => Promise<void>)[] = [() => scheduler.stop(), () => hub.close()];
+  const closers: (() => Promise<void>)[] = [
+    () => scheduler.stop(),
+    () => hub.close(),
+    () => exposures.stop(),
+  ];
 
   await server.ready();
 
@@ -182,6 +197,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     hub,
     cache,
     scheduler,
+    exposures,
     close: async () => {
       draining = true;
       for (const close of closers) await close();

@@ -1,4 +1,4 @@
-import { contextSchema, evaluateAll } from '@flagship/core';
+import { contextSchema, evaluateAll, keySchema } from '@flagship/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { authenticateSdk } from '../auth/sdk.js';
@@ -6,16 +6,32 @@ import type { Context } from '../context.js';
 import type { KeyKind } from '../db/schema.js';
 import { AppError, parse } from '../errors.js';
 import type { RulesetCache } from '../services/cache.js';
+import type { ExposureQueue } from '../services/exposures.js';
 import type { Hub } from '../streaming/hub.js';
 
 export interface SdkDeps {
   cache: RulesetCache;
   hub: Hub;
+  exposures: ExposureQueue;
 }
 
 const LAST_EVENT_ID = /^\d{1,15}$/;
 
 const evaluateBody = z.strictObject({ context: contextSchema });
+
+const eventsBody = z.strictObject({
+  events: z
+    .array(
+      z.strictObject({
+        flag: keySchema,
+        variant: keySchema,
+        count: z.int().min(1).max(1_000_000),
+        at: z.int().min(0).optional(),
+      }),
+    )
+    .min(1)
+    .max(1000),
+});
 
 function lastEventId(request: FastifyRequest): number | undefined {
   const raw = request.headers['last-event-id'];
@@ -129,6 +145,18 @@ export function sdkRoutes(ctx: Context, deps: SdkDeps) {
       }
       void reply.header('cache-control', 'no-store');
       return { version: snapshot.version, flags };
+    });
+
+    sdk.post('/events', { bodyLimit: 256 * 1024 }, async (request, reply) => {
+      const id = await authenticateSdk(ctx.keys, request, ['client', 'server']);
+      const { events } = parse(eventsBody, request.body, 'events');
+      const result = deps.exposures.offer(id.environmentId, events);
+      if (result === undefined) {
+        throw new AppError('resource_exhausted', 'event queue is full, retry later', undefined, {
+          'retry-after': '5',
+        });
+      }
+      return reply.status(202).send({ accepted: events.length, dropped: result.dropped });
     });
 
     sdk.get('/stream', { config: { stream: true } }, (request, reply) =>
