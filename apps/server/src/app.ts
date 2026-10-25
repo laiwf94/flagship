@@ -1,12 +1,19 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import cookie from '@fastify/cookie';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { sql } from 'kysely';
 import type { Logger } from 'pino';
+import { sessionGuard } from './auth/guard.js';
 import type { Config } from './config.js';
+import type { Context } from './context.js';
 import type { Db } from './db/database.js';
 import { AppError, errorHandler, sendError } from './errors.js';
 import { createLogger } from './log.js';
 import { createMetrics, type Metrics } from './metrics.js';
+import { sessionRoutes } from './routes/session.js';
+import { userRoutes } from './routes/users.js';
+import { safeEqual } from './util.js';
+import { bootstrapAdmin } from './services/users.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -19,6 +26,8 @@ export interface AppDeps {
   config: Config;
   db: Db;
   logger?: Logger;
+  /** Injectable clock for expiry tests. */
+  now?: () => Date;
 }
 
 export interface App {
@@ -31,15 +40,10 @@ export interface App {
 const REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
-export function safeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
 export async function buildApp(deps: AppDeps): Promise<App> {
   const { config, db } = deps;
   const metrics = createMetrics();
+  const ctx: Context = { config, db, metrics, now: deps.now ?? (() => new Date()) };
   const logger = deps.logger ?? createLogger(config.logLevel);
   // Widened so the instance type stays FastifyInstance with the default logger.
   const baseLogger: FastifyBaseLogger = logger;
@@ -57,6 +61,9 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     },
   });
 
+  server.decorateRequest('user', null);
+  server.decorateRequest('session', null);
+  await server.register(cookie);
   server.setErrorHandler(errorHandler);
   server.setNotFoundHandler((request, reply) =>
     sendError(
@@ -113,6 +120,17 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     }
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.registry.render());
   });
+
+  await server.register(
+    async (api) => {
+      api.addHook('onRequest', sessionGuard(ctx));
+      await api.register(sessionRoutes(ctx));
+      await api.register(userRoutes(ctx));
+    },
+    { prefix: '/api' },
+  );
+
+  await bootstrapAdmin(db, config.bootstrapAdmin);
 
   const closers: (() => Promise<void>)[] = [];
 

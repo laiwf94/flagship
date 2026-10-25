@@ -16,7 +16,10 @@ export interface TestApp {
 }
 
 /** A migrated database of its own and an app on top of it, with captured logs. */
-export async function testApp(overrides: Partial<Config> = {}): Promise<TestApp> {
+export async function testApp(
+  overrides: Partial<Config> = {},
+  extra: { now?: () => Date } = {},
+): Promise<TestApp> {
   const { url, drop } = await createTestDatabase();
   const { db } = createDatabase({ url, maxConnections: 10 });
   await migrate(db);
@@ -27,7 +30,7 @@ export async function testApp(overrides: Partial<Config> = {}): Promise<TestApp>
     },
   });
   const config = { ...loadConfig({ FLAGSHIP_DATABASE_URL: url }), ...overrides };
-  const app = await buildApp({ config, db, logger });
+  const app = await buildApp({ config, db, logger, ...(extra.now ? { now: extra.now } : {}) });
   return {
     app,
     db,

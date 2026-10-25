@@ -22,7 +22,8 @@ export interface SessionsTable {
   token_hash: Buffer;
   user_id: string;
   csrf_token: string;
-  created_at: CreatedAt;
+  // Written from the app clock so expiry is computed against one time source.
+  created_at: ColumnType<Date, Date, never>;
   last_seen_at: Date;
   expires_at: Date;
 }
