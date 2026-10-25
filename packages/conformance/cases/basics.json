@@ -1,0 +1,240 @@
+{
+  "name": "basics",
+  "description": "Kill switch, default rule, unknown flags and the four variant types.",
+  "ruleset": {
+    "environment": "conformance",
+    "version": 1,
+    "flags": {
+      "off-flag": {
+        "key": "off-flag",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": false,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "off-flag",
+        "clientSide": true,
+        "version": 1
+      },
+      "default-on": {
+        "key": "default-on",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "default-on",
+        "clientSide": true,
+        "version": 1
+      },
+      "banner-text": {
+        "key": "banner-text",
+        "type": "string",
+        "variants": [
+          {
+            "key": "a",
+            "value": "Welcome"
+          },
+          {
+            "key": "b",
+            "value": "Hello 👋"
+          }
+        ],
+        "enabled": true,
+        "offVariant": "a",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "de",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "equals",
+                "values": ["de"]
+              }
+            ],
+            "serve": {
+              "variant": "b"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "a"
+        },
+        "salt": "banner-text",
+        "clientSide": true,
+        "version": 3
+      },
+      "page-size": {
+        "key": "page-size",
+        "type": "number",
+        "variants": [
+          {
+            "key": "small",
+            "value": 10
+          },
+          {
+            "key": "large",
+            "value": 50.5
+          }
+        ],
+        "enabled": true,
+        "offVariant": "small",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "variant": "large"
+        },
+        "salt": "page-size",
+        "clientSide": true,
+        "version": 1
+      },
+      "theme": {
+        "key": "theme",
+        "type": "json",
+        "variants": [
+          {
+            "key": "light",
+            "value": {
+              "bg": "#fff",
+              "accents": [1, 2]
+            }
+          },
+          {
+            "key": "dark",
+            "value": {
+              "bg": "#000",
+              "accents": []
+            }
+          }
+        ],
+        "enabled": false,
+        "offVariant": "dark",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "variant": "light"
+        },
+        "salt": "theme",
+        "clientSide": true,
+        "version": 1
+      }
+    },
+    "segments": {}
+  },
+  "tests": [
+    {
+      "name": "kill switch serves the off variant",
+      "flag": "off-flag",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DISABLED",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "default rule",
+      "flag": "default-on",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "string variant from a rule",
+      "flag": "banner-text",
+      "context": {
+        "key": "alice",
+        "country": "de"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "b",
+        "value": "Hello 👋"
+      }
+    },
+    {
+      "name": "string variant by default",
+      "flag": "banner-text",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "a",
+        "value": "Welcome"
+      }
+    },
+    {
+      "name": "number variant",
+      "flag": "page-size",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "large",
+        "value": 50.5
+      }
+    },
+    {
+      "name": "json variant when disabled",
+      "flag": "theme",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DISABLED",
+        "variant": "dark",
+        "value": {
+          "bg": "#000",
+          "accents": []
+        }
+      }
+    },
+    {
+      "name": "unknown flag",
+      "flag": "nope",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "ERROR",
+        "errorCode": "FLAG_NOT_FOUND"
+      }
+    }
+  ]
+}

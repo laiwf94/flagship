@@ -1,0 +1,249 @@
+{
+  "name": "segments",
+  "description": "Include lists, exclude lists, segment rules and negated segment clauses.",
+  "ruleset": {
+    "environment": "conformance",
+    "version": 1,
+    "flags": {
+      "beta-ui": {
+        "key": "beta-ui",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "beta",
+            "clauses": [
+              {
+                "operator": "inSegment",
+                "segments": ["beta-testers"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "beta-ui",
+        "clientSide": true,
+        "version": 1
+      },
+      "either": {
+        "key": "either",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "any",
+            "clauses": [
+              {
+                "operator": "inSegment",
+                "segments": ["beta-testers", "germany"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "either",
+        "clientSide": true,
+        "version": 1
+      },
+      "not-beta": {
+        "key": "not-beta",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "nb",
+            "clauses": [
+              {
+                "operator": "inSegment",
+                "segments": ["beta-testers"],
+                "negate": true
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "not-beta",
+        "clientSide": true,
+        "version": 1
+      }
+    },
+    "segments": {
+      "beta-testers": {
+        "key": "beta-testers",
+        "included": ["alice"],
+        "excluded": ["mallory", "bob"],
+        "rules": [
+          {
+            "id": "staff",
+            "clauses": [
+              {
+                "attribute": "email",
+                "operator": "endsWith",
+                "values": ["@acme.com"]
+              }
+            ]
+          }
+        ],
+        "version": 1
+      },
+      "germany": {
+        "key": "germany",
+        "included": [],
+        "excluded": [],
+        "rules": [
+          {
+            "id": "de",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "equals",
+                "values": ["de"]
+              }
+            ]
+          }
+        ],
+        "version": 1
+      }
+    }
+  },
+  "tests": [
+    {
+      "name": "included key",
+      "flag": "beta-ui",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "matched by segment rule",
+      "flag": "beta-ui",
+      "context": {
+        "key": "carol",
+        "email": "carol@acme.com"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "excluded beats segment rule",
+      "flag": "beta-ui",
+      "context": {
+        "key": "bob",
+        "email": "bob@acme.com"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "not in segment",
+      "flag": "beta-ui",
+      "context": {
+        "key": "dave"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "any of several segments",
+      "flag": "either",
+      "context": {
+        "key": "dave",
+        "country": "de"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "negated segment, outside",
+      "flag": "not-beta",
+      "context": {
+        "key": "dave"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "negated segment, inside",
+      "flag": "not-beta",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    }
+  ]
+}

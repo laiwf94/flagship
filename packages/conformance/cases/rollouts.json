@@ -1,0 +1,818 @@
+{
+  "name": "rollouts",
+  "description": "Pinned bucket outcomes. Any evaluator that hashes differently fails here.",
+  "ruleset": {
+    "environment": "conformance",
+    "version": 1,
+    "flags": {
+      "ten-percent": {
+        "key": "ten-percent",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "rollout": {
+            "variants": [
+              {
+                "variant": "on",
+                "weight": 10000
+              },
+              {
+                "variant": "off",
+                "weight": 90000
+              }
+            ]
+          }
+        },
+        "salt": "ten-percent",
+        "clientSide": true,
+        "version": 1
+      },
+      "fifty-percent": {
+        "key": "fifty-percent",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "rollout": {
+            "variants": [
+              {
+                "variant": "on",
+                "weight": 50000
+              },
+              {
+                "variant": "off",
+                "weight": 50000
+              }
+            ]
+          }
+        },
+        "salt": "ten-percent",
+        "clientSide": true,
+        "version": 1
+      },
+      "three-way": {
+        "key": "three-way",
+        "type": "string",
+        "variants": [
+          {
+            "key": "a",
+            "value": "A"
+          },
+          {
+            "key": "b",
+            "value": "B"
+          },
+          {
+            "key": "c",
+            "value": "C"
+          }
+        ],
+        "enabled": true,
+        "offVariant": "a",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "rollout": {
+            "variants": [
+              {
+                "variant": "a",
+                "weight": 33334
+              },
+              {
+                "variant": "b",
+                "weight": 33333
+              },
+              {
+                "variant": "c",
+                "weight": 33333
+              }
+            ]
+          }
+        },
+        "salt": "exp-42",
+        "clientSide": true,
+        "version": 1
+      },
+      "by-org": {
+        "key": "by-org",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "rollout": {
+            "variants": [
+              {
+                "variant": "on",
+                "weight": 50000
+              },
+              {
+                "variant": "off",
+                "weight": 50000
+              }
+            ],
+            "bucketBy": "org"
+          }
+        },
+        "salt": "by-org",
+        "clientSide": true,
+        "version": 1
+      },
+      "rule-rollout": {
+        "key": "rule-rollout",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "pro",
+            "clauses": [
+              {
+                "attribute": "plan",
+                "operator": "equals",
+                "values": ["pro"]
+              }
+            ],
+            "serve": {
+              "rollout": {
+                "variants": [
+                  {
+                    "variant": "on",
+                    "weight": 50000
+                  },
+                  {
+                    "variant": "off",
+                    "weight": 50000
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "rule-rollout",
+        "clientSide": true,
+        "version": 1
+      }
+    },
+    "segments": {}
+  },
+  "tests": [
+    {
+      "name": "ten-percent alice (bucket 91677)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent alice (bucket 91677)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "three-way alice (bucket 49940)",
+      "flag": "three-way",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "b",
+        "value": "B"
+      }
+    },
+    {
+      "name": "ten-percent bob (bucket 60870)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "bob"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent bob (bucket 60870)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "bob"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "three-way bob (bucket 13323)",
+      "flag": "three-way",
+      "context": {
+        "key": "bob"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "a",
+        "value": "A"
+      }
+    },
+    {
+      "name": "ten-percent carol (bucket 80754)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "carol"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent carol (bucket 80754)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "carol"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "three-way carol (bucket 33184)",
+      "flag": "three-way",
+      "context": {
+        "key": "carol"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "a",
+        "value": "A"
+      }
+    },
+    {
+      "name": "ten-percent dave (bucket 94311)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "dave"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent dave (bucket 94311)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "dave"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "three-way dave (bucket 90504)",
+      "flag": "three-way",
+      "context": {
+        "key": "dave"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "c",
+        "value": "C"
+      }
+    },
+    {
+      "name": "ten-percent erin (bucket 24187)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "erin"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent erin (bucket 24187)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "erin"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "three-way erin (bucket 30259)",
+      "flag": "three-way",
+      "context": {
+        "key": "erin"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "a",
+        "value": "A"
+      }
+    },
+    {
+      "name": "ten-percent frank (bucket 33672)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "frank"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent frank (bucket 33672)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "frank"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "three-way frank (bucket 82292)",
+      "flag": "three-way",
+      "context": {
+        "key": "frank"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "c",
+        "value": "C"
+      }
+    },
+    {
+      "name": "ten-percent grace (bucket 8524)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "grace"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "fifty-percent grace (bucket 8524)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "grace"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "three-way grace (bucket 59368)",
+      "flag": "three-way",
+      "context": {
+        "key": "grace"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "b",
+        "value": "B"
+      }
+    },
+    {
+      "name": "ten-percent heidi (bucket 48747)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "heidi"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent heidi (bucket 48747)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "heidi"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "three-way heidi (bucket 46814)",
+      "flag": "three-way",
+      "context": {
+        "key": "heidi"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "b",
+        "value": "B"
+      }
+    },
+    {
+      "name": "ten-percent ivan (bucket 36254)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "ivan"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent ivan (bucket 36254)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "ivan"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "three-way ivan (bucket 43168)",
+      "flag": "three-way",
+      "context": {
+        "key": "ivan"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "b",
+        "value": "B"
+      }
+    },
+    {
+      "name": "ten-percent judy (bucket 27441)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "judy"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent judy (bucket 27441)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "judy"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "three-way judy (bucket 31230)",
+      "flag": "three-way",
+      "context": {
+        "key": "judy"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "a",
+        "value": "A"
+      }
+    },
+    {
+      "name": "ten-percent user-1 (bucket 91236)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "user-1"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent user-1 (bucket 91236)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "user-1"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "three-way user-1 (bucket 24505)",
+      "flag": "three-way",
+      "context": {
+        "key": "user-1"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "a",
+        "value": "A"
+      }
+    },
+    {
+      "name": "ten-percent user-2 (bucket 37486)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "user-2"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent user-2 (bucket 37486)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "user-2"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "three-way user-2 (bucket 40246)",
+      "flag": "three-way",
+      "context": {
+        "key": "user-2"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "b",
+        "value": "B"
+      }
+    },
+    {
+      "name": "ten-percent 用户 (bucket 97327)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "用户"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent 用户 (bucket 97327)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "用户"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "three-way 用户 (bucket 21045)",
+      "flag": "three-way",
+      "context": {
+        "key": "用户"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "a",
+        "value": "A"
+      }
+    },
+    {
+      "name": "ten-percent 😀 (bucket 83176)",
+      "flag": "ten-percent",
+      "context": {
+        "key": "😀"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "fifty-percent 😀 (bucket 83176)",
+      "flag": "fifty-percent",
+      "context": {
+        "key": "😀"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "three-way 😀 (bucket 44069)",
+      "flag": "three-way",
+      "context": {
+        "key": "😀"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "b",
+        "value": "B"
+      }
+    },
+    {
+      "name": "by-org alice in acme",
+      "flag": "by-org",
+      "context": {
+        "key": "alice",
+        "org": "acme"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "by-org bob in acme",
+      "flag": "by-org",
+      "context": {
+        "key": "bob",
+        "org": "acme"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "by-org carol in globex",
+      "flag": "by-org",
+      "context": {
+        "key": "carol",
+        "org": "globex"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "by-org dave in no org (falls back to key)",
+      "flag": "by-org",
+      "context": {
+        "key": "dave"
+      },
+      "expect": {
+        "reason": "SPLIT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "rule-rollout alice",
+      "flag": "rule-rollout",
+      "context": {
+        "key": "alice",
+        "plan": "pro"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "rule-rollout bob",
+      "flag": "rule-rollout",
+      "context": {
+        "key": "bob",
+        "plan": "pro"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "rule-rollout carol",
+      "flag": "rule-rollout",
+      "context": {
+        "key": "carol",
+        "plan": "pro"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "rule-rollout dave",
+      "flag": "rule-rollout",
+      "context": {
+        "key": "dave",
+        "plan": "pro"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "off",
+        "value": false
+      }
+    }
+  ]
+}

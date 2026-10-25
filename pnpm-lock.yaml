@@ -36,6 +36,12 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@22.20.4)(@vitest/coverage-v8@5.0.3)(vite@8.3.4(@types/node@22.20.4))
 
+  packages/conformance:
+    dependencies:
+      '@flagship/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/core:
     dependencies:
       zod:

@@ -1,0 +1,224 @@
+{
+  "name": "prerequisites",
+  "description": "Prerequisite flags must be on and serve the required variant.",
+  "ruleset": {
+    "environment": "conformance",
+    "version": 1,
+    "flags": {
+      "payments": {
+        "key": "payments",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "no-jp",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "equals",
+                "values": ["jp"]
+              }
+            ],
+            "serve": {
+              "variant": "off"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "payments",
+        "clientSide": true,
+        "version": 1
+      },
+      "wallet": {
+        "key": "wallet",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [
+          {
+            "flag": "payments",
+            "variant": "on"
+          }
+        ],
+        "rules": [],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "wallet",
+        "clientSide": true,
+        "version": 1
+      },
+      "wallet-promo": {
+        "key": "wallet-promo",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [
+          {
+            "flag": "wallet",
+            "variant": "on"
+          }
+        ],
+        "rules": [],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "wallet-promo",
+        "clientSide": true,
+        "version": 1
+      },
+      "legacy": {
+        "key": "legacy",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": false,
+        "offVariant": "on",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "legacy",
+        "clientSide": true,
+        "version": 1
+      },
+      "needs-legacy": {
+        "key": "needs-legacy",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [
+          {
+            "flag": "legacy",
+            "variant": "on"
+          }
+        ],
+        "rules": [],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "needs-legacy",
+        "clientSide": true,
+        "version": 1
+      }
+    },
+    "segments": {}
+  },
+  "tests": [
+    {
+      "name": "met",
+      "flag": "wallet",
+      "context": {
+        "key": "a"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "not met",
+      "flag": "wallet",
+      "context": {
+        "key": "a",
+        "country": "jp"
+      },
+      "expect": {
+        "reason": "PREREQUISITE_FAILED",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "transitive, met",
+      "flag": "wallet-promo",
+      "context": {
+        "key": "a"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "transitive, not met",
+      "flag": "wallet-promo",
+      "context": {
+        "key": "a",
+        "country": "jp"
+      },
+      "expect": {
+        "reason": "PREREQUISITE_FAILED",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "disabled prerequisite is not met even if its off variant matches",
+      "flag": "needs-legacy",
+      "context": {
+        "key": "a"
+      },
+      "expect": {
+        "reason": "PREREQUISITE_FAILED",
+        "variant": "off",
+        "value": false
+      }
+    }
+  ]
+}

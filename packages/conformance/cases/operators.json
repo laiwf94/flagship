@@ -1,0 +1,1389 @@
+{
+  "name": "operators",
+  "description": "Every clause operator, negation, list attributes and type mismatches.",
+  "ruleset": {
+    "environment": "conformance",
+    "version": 1,
+    "flags": {
+      "equals-string": {
+        "key": "equals-string",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "equals",
+                "values": ["de"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "equals-string",
+        "clientSide": true,
+        "version": 1
+      },
+      "equals-number": {
+        "key": "equals-number",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "seats",
+                "operator": "equals",
+                "values": [5]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "equals-number",
+        "clientSide": true,
+        "version": 1
+      },
+      "equals-bool": {
+        "key": "equals-bool",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "beta",
+                "operator": "equals",
+                "values": [true]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "equals-bool",
+        "clientSide": true,
+        "version": 1
+      },
+      "in": {
+        "key": "in",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "in",
+                "values": ["us", "ca"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "in",
+        "clientSide": true,
+        "version": 1
+      },
+      "in-list-attribute": {
+        "key": "in-list-attribute",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "groups",
+                "operator": "in",
+                "values": ["staff"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "in-list-attribute",
+        "clientSide": true,
+        "version": 1
+      },
+      "contains": {
+        "key": "contains",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "email",
+                "operator": "contains",
+                "values": ["@acme."]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "contains",
+        "clientSide": true,
+        "version": 1
+      },
+      "starts-with": {
+        "key": "starts-with",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "path",
+                "operator": "startsWith",
+                "values": ["/admin"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "starts-with",
+        "clientSide": true,
+        "version": 1
+      },
+      "ends-with": {
+        "key": "ends-with",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "email",
+                "operator": "endsWith",
+                "values": [".edu", ".ac.uk"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "ends-with",
+        "clientSide": true,
+        "version": 1
+      },
+      "matches": {
+        "key": "matches",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "email",
+                "operator": "matches",
+                "values": ["^[a-z]+\\.[a-z]+@acme\\.(?:com|io)$"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "matches",
+        "clientSide": true,
+        "version": 1
+      },
+      "matches-unicode": {
+        "key": "matches-unicode",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "name",
+                "operator": "matches",
+                "values": ["^.{2}$"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "matches-unicode",
+        "clientSide": true,
+        "version": 1
+      },
+      "lt": {
+        "key": "lt",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "age",
+                "operator": "lt",
+                "values": [18]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "lt",
+        "clientSide": true,
+        "version": 1
+      },
+      "lte": {
+        "key": "lte",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "age",
+                "operator": "lte",
+                "values": [18]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "lte",
+        "clientSide": true,
+        "version": 1
+      },
+      "gt": {
+        "key": "gt",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "age",
+                "operator": "gt",
+                "values": [65]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "gt",
+        "clientSide": true,
+        "version": 1
+      },
+      "gte": {
+        "key": "gte",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "age",
+                "operator": "gte",
+                "values": [65]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "gte",
+        "clientSide": true,
+        "version": 1
+      },
+      "semver-eq": {
+        "key": "semver-eq",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "app",
+                "operator": "semverEq",
+                "values": ["2.0"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "semver-eq",
+        "clientSide": true,
+        "version": 1
+      },
+      "semver-lt": {
+        "key": "semver-lt",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "app",
+                "operator": "semverLt",
+                "values": ["2.0.0"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "semver-lt",
+        "clientSide": true,
+        "version": 1
+      },
+      "semver-gt": {
+        "key": "semver-gt",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "app",
+                "operator": "semverGt",
+                "values": ["1.9.9"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "semver-gt",
+        "clientSide": true,
+        "version": 1
+      },
+      "negate": {
+        "key": "negate",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "in",
+                "values": ["us"],
+                "negate": true
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "negate",
+        "clientSide": true,
+        "version": 1
+      },
+      "missing-attribute": {
+        "key": "missing-attribute",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "plan",
+                "operator": "equals",
+                "values": ["pro"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "missing-attribute",
+        "clientSide": true,
+        "version": 1
+      },
+      "all-clauses": {
+        "key": "all-clauses",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "r",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "equals",
+                "values": ["de"]
+              },
+              {
+                "attribute": "plan",
+                "operator": "equals",
+                "values": ["pro"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "all-clauses",
+        "clientSide": true,
+        "version": 1
+      },
+      "first-rule-wins": {
+        "key": "first-rule-wins",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "a",
+            "clauses": [
+              {
+                "attribute": "plan",
+                "operator": "equals",
+                "values": ["pro"]
+              }
+            ],
+            "serve": {
+              "variant": "off"
+            }
+          },
+          {
+            "id": "b",
+            "clauses": [
+              {
+                "attribute": "plan",
+                "operator": "in",
+                "values": ["pro", "free"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "first-rule-wins",
+        "clientSide": true,
+        "version": 1
+      }
+    },
+    "segments": {}
+  },
+  "tests": [
+    {
+      "name": "equals-string #1",
+      "flag": "equals-string",
+      "context": {
+        "key": "alice",
+        "country": "de"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "equals-string #2",
+      "flag": "equals-string",
+      "context": {
+        "key": "alice",
+        "country": "DE"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "equals-number #1",
+      "flag": "equals-number",
+      "context": {
+        "key": "alice",
+        "seats": 5
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "equals-number #2",
+      "flag": "equals-number",
+      "context": {
+        "key": "alice",
+        "seats": "5"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "equals-bool #1",
+      "flag": "equals-bool",
+      "context": {
+        "key": "alice",
+        "beta": true
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "equals-bool #2",
+      "flag": "equals-bool",
+      "context": {
+        "key": "alice",
+        "beta": "true"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "in #1",
+      "flag": "in",
+      "context": {
+        "key": "alice",
+        "country": "ca"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "in #2",
+      "flag": "in",
+      "context": {
+        "key": "alice",
+        "country": "mx"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "in-list-attribute #1",
+      "flag": "in-list-attribute",
+      "context": {
+        "key": "alice",
+        "groups": ["beta", "staff"]
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "in-list-attribute #2",
+      "flag": "in-list-attribute",
+      "context": {
+        "key": "alice",
+        "groups": []
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "contains #1",
+      "flag": "contains",
+      "context": {
+        "key": "alice",
+        "email": "bob@acme.io"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "contains #2",
+      "flag": "contains",
+      "context": {
+        "key": "alice",
+        "email": "bob@acme"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "starts-with #1",
+      "flag": "starts-with",
+      "context": {
+        "key": "alice",
+        "path": "/admin/users"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "starts-with #2",
+      "flag": "starts-with",
+      "context": {
+        "key": "alice",
+        "path": "/ad"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "ends-with #1",
+      "flag": "ends-with",
+      "context": {
+        "key": "alice",
+        "email": "x@ox.ac.uk"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "ends-with #2",
+      "flag": "ends-with",
+      "context": {
+        "key": "alice",
+        "email": "x@edu.com"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "matches #1",
+      "flag": "matches",
+      "context": {
+        "key": "alice",
+        "email": "jane.doe@acme.io"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "matches #2",
+      "flag": "matches",
+      "context": {
+        "key": "alice",
+        "email": "jane@acme.io"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "matches-unicode #1",
+      "flag": "matches-unicode",
+      "context": {
+        "key": "alice",
+        "name": "😀😀"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "matches-unicode #2",
+      "flag": "matches-unicode",
+      "context": {
+        "key": "alice",
+        "name": "😀"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "lt #1",
+      "flag": "lt",
+      "context": {
+        "key": "alice",
+        "age": 17.5
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "lt #2",
+      "flag": "lt",
+      "context": {
+        "key": "alice",
+        "age": 18
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "lte #1",
+      "flag": "lte",
+      "context": {
+        "key": "alice",
+        "age": 18
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "lte #2",
+      "flag": "lte",
+      "context": {
+        "key": "alice",
+        "age": 19
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "gt #1",
+      "flag": "gt",
+      "context": {
+        "key": "alice",
+        "age": 66
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "gt #2",
+      "flag": "gt",
+      "context": {
+        "key": "alice",
+        "age": 65
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "gte #1",
+      "flag": "gte",
+      "context": {
+        "key": "alice",
+        "age": 65
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "gte #2",
+      "flag": "gte",
+      "context": {
+        "key": "alice",
+        "age": "70"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "semver-eq #1",
+      "flag": "semver-eq",
+      "context": {
+        "key": "alice",
+        "app": "2.0.0+build.7"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "semver-eq #2",
+      "flag": "semver-eq",
+      "context": {
+        "key": "alice",
+        "app": "2.0.0-rc.1"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "semver-lt #1",
+      "flag": "semver-lt",
+      "context": {
+        "key": "alice",
+        "app": "2.0.0-rc.1"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "semver-lt #2",
+      "flag": "semver-lt",
+      "context": {
+        "key": "alice",
+        "app": "2.0.0"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "semver-gt #1",
+      "flag": "semver-gt",
+      "context": {
+        "key": "alice",
+        "app": "v1.10.0"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "semver-gt #2",
+      "flag": "semver-gt",
+      "context": {
+        "key": "alice",
+        "app": "not-a-version"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "negate #1",
+      "flag": "negate",
+      "context": {
+        "key": "alice",
+        "country": "de"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "negate #2",
+      "flag": "negate",
+      "context": {
+        "key": "alice",
+        "country": "us"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "negate #3",
+      "flag": "negate",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "missing-attribute #1",
+      "flag": "missing-attribute",
+      "context": {
+        "key": "alice"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "missing-attribute #2",
+      "flag": "missing-attribute",
+      "context": {
+        "key": "alice",
+        "plan": null
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "all clauses must match",
+      "flag": "all-clauses",
+      "context": {
+        "key": "a",
+        "country": "de",
+        "plan": "pro"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "one clause failing fails the rule",
+      "flag": "all-clauses",
+      "context": {
+        "key": "a",
+        "country": "de",
+        "plan": "free"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "first matching rule wins",
+      "flag": "first-rule-wins",
+      "context": {
+        "key": "a",
+        "plan": "pro"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "second rule when first misses",
+      "flag": "first-rule-wins",
+      "context": {
+        "key": "a",
+        "plan": "free"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    }
+  ]
+}

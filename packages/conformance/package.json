@@ -1,0 +1,20 @@
+{
+  "name": "@flagship/conformance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JSON evaluation cases that every flagship evaluator must pass.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@flagship/source": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@flagship/core": "workspace:*"
+  }
+}
