@@ -2,6 +2,9 @@ import { useParams, useSearchParams, Link } from 'react-router';
 import { api, type FlagDetail as Detail } from '../api';
 import { Icon } from '../components/icons';
 import { ErrorState, Loading } from '../components/ui';
+import { Exposures } from '../flags/Exposures';
+import { FlagSettings } from '../flags/FlagSettings';
+import { History } from '../flags/History';
 import { Schedules } from '../flags/Schedules';
 import { StatusBadge, TYPE_LABEL } from '../flags/status';
 import { Targeting } from '../flags/Targeting';
@@ -12,6 +15,9 @@ import { useScope } from './Layout';
 const TABS = [
   { key: 'targeting', label: 'Targeting' },
   { key: 'schedules', label: 'Schedules' },
+  { key: 'exposures', label: 'Evaluations' },
+  { key: 'history', label: 'History' },
+  { key: 'settings', label: 'Settings' },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];
@@ -146,6 +152,23 @@ export function FlagDetail() {
           ))}
         {tab === 'schedules' && (
           <Schedules project={project.key} flag={f} env={env} envName={envName} canEdit={canEdit} />
+        )}
+        {tab === 'exposures' && (
+          <Exposures project={project.key} flag={f} env={env} envName={envName} />
+        )}
+        {tab === 'history' && <History project={project.key} flag={f.key} />}
+        {tab === 'settings' && (
+          <FlagSettings
+            key={f.version}
+            project={project.key}
+            flag={f}
+            canEdit={can('editor')}
+            onSaved={(next) => {
+              flag.set(next);
+              ruleset.reload();
+            }}
+            onReload={flag.reload}
+          />
         )}
       </div>
     </div>

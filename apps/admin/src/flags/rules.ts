@@ -1,7 +1,6 @@
 import {
   ROLLOUT_TOTAL,
   type AttributeClause,
-  type Clause,
   type Rule,
   type Serve,
   type Variant,
@@ -46,7 +45,7 @@ export function operatorKind(op: OperatorKey) {
 
 let counter = 0;
 /** Rule ids only need to be unique within a flag; a short random suffix does that. */
-export function newRuleId(existing: readonly Rule[]): string {
+export function newRuleId(existing: readonly { id: string }[]): string {
   for (;;) {
     counter++;
     const id = `rule-${Math.random().toString(36).slice(2, 7)}${counter}`;
@@ -54,7 +53,7 @@ export function newRuleId(existing: readonly Rule[]): string {
   }
 }
 
-export function newClause(): Clause {
+export function newClause(): AttributeClause {
   return { attribute: 'email', operator: 'endsWith', values: [''] };
 }
 

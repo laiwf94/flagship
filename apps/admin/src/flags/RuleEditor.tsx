@@ -29,7 +29,7 @@ function parseValues(
     : parts.map((p) => (p === 'true' ? true : p === 'false' ? false : p));
 }
 
-function ClauseRow({
+export function ClauseRow({
   clause,
   index,
   segments,
@@ -37,7 +37,9 @@ function ClauseRow({
   onRemove,
   canRemove,
   error,
+  allowSegments = true,
 }: {
+  allowSegments?: boolean;
   clause: Clause;
   index: number;
   segments: string[];
@@ -113,7 +115,7 @@ function ClauseRow({
           }
         }}
       >
-        {OPERATORS.map((o) => (
+        {OPERATORS.filter((o) => allowSegments || o.value !== 'inSegment').map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>

@@ -10,9 +10,12 @@ import { ToastProvider } from './components/toast';
 import { Loading } from './components/ui';
 import { FlagDetail } from './pages/FlagDetail';
 import { FlagList } from './pages/FlagList';
+import { HistoryPage } from './pages/HistoryPage';
 import { Home } from './pages/Home';
 import { Layout } from './pages/Layout';
 import { NotFound } from './pages/NotFound';
+import { Segments } from './pages/Segments';
+import { Settings } from './pages/Settings';
 import { SignIn } from './pages/SignIn';
 import { SessionProvider, useSession } from './session';
 
@@ -57,6 +60,9 @@ export const routes: RouteObject[] = [
               { index: true, element: <Navigate to="flags" replace /> },
               { path: 'flags', element: <FlagList /> },
               { path: 'flags/:flag', element: <FlagDetail /> },
+              { path: 'segments', element: <Segments /> },
+              { path: 'history', element: <HistoryPage /> },
+              { path: 'settings', element: <Settings /> },
               { path: '*', element: <NotFound /> },
             ],
           },
