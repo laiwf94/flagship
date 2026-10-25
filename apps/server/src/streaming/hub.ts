@@ -164,8 +164,13 @@ export class Hub {
   private async catchUp(environmentId: string): Promise<void> {
     const set = this.subscribers.get(environmentId);
     if (set === undefined || set.size === 0) return;
-    const from =
-      this.broadcastVersion.get(environmentId) ?? Math.min(...[...set].map((s) => s.sent));
+    // A loop rather than Math.min(...spread): spreading tens of thousands of
+    // subscribers as call arguments can overflow the stack.
+    let from = this.broadcastVersion.get(environmentId);
+    if (from === undefined) {
+      from = Infinity;
+      for (const s of set) from = Math.min(from, s.sent);
+    }
     const changes = await this.changesSince(environmentId, from);
     if (changes === undefined) {
       // History was pruned past what we last sent: resend everything.

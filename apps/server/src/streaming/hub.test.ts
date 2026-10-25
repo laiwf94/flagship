@@ -108,6 +108,17 @@ describe('Hub', () => {
     stop();
   });
 
+  it('catches up from the oldest subscriber when it has no broadcast record', async () => {
+    const sinks = Array.from({ length: 3 }, () => new MemorySink());
+    const stops = await Promise.all(
+      sinks.map((s, i) => t.app.hub.subscribe(identity(`m${i}`), s, undefined)),
+    );
+    (t.app.hub as unknown as { broadcastVersion: Map<string, number> }).broadcastVersion.clear();
+    await kill('f', true);
+    await until(() => sinks.every((s) => s.events('patch').length === 1));
+    for (const stop of stops) stop();
+  });
+
   it('refuses new subscribers past the total limit', async () => {
     const small = await testApp({ maxStreams: 1 });
     try {
