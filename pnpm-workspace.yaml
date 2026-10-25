@@ -5,3 +5,15 @@ packages:
 
 # Refuse any package version, direct or transitive, published less than 14 days ago.
 minimumReleaseAge: 20160
+# Security fixes published inside that window, taken on purpose. Each is
+# listed with its advisory in docs/DESIGN.md#dependencies.
+minimumReleaseAgeExclude:
+  - fastify
+  - fast-uri
+  - undici
+  - zod
+
+overrides:
+  fast-uri@>=3.0.0 <3.1.9: 3.1.9
+  fast-uri@>=4.0.0 <4.2.3: 4.2.3
+  undici@>=8.0.0 <8.12.2: 8.12.2
