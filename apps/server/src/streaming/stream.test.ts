@@ -75,7 +75,7 @@ describe('ruleset snapshot', () => {
       headers: { authorization: `Bearer ${serverKey}`, 'if-none-match': etag },
     });
     expect(changed.status).toBe(200);
-    expect(((await changed.json()) as any).flags['etag-flag'].enabled).toBe(true);
+    expect((await changed.json()).flags['etag-flag'].enabled).toBe(true);
   });
 
   it('refuses client keys, which never see rules', async () => {

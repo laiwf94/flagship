@@ -147,8 +147,21 @@ export function sdkRoutes(ctx: Context, deps: SdkDeps) {
       return { version: snapshot.version, flags };
     });
 
+    // navigator.sendBeacon posts text/plain so the browser skips the CORS preflight.
+    sdk.addContentTypeParser(
+      'text/plain',
+      { parseAs: 'string', bodyLimit: 256 * 1024 },
+      (_req, body, done) => {
+        try {
+          done(null, JSON.parse(body as string));
+        } catch {
+          done(new AppError('invalid_argument', 'request body is not valid JSON'), undefined);
+        }
+      },
+    );
+
     sdk.post('/events', { bodyLimit: 256 * 1024 }, async (request, reply) => {
-      const id = await authenticateSdk(ctx.keys, request, ['client', 'server']);
+      const id = await authenticateSdk(ctx.keys, request, ['client', 'server'], true);
       const { events } = parse(eventsBody, request.body, 'events');
       const result = deps.exposures.offer(id.environmentId, events);
       if (result === undefined) {
