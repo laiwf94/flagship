@@ -11,6 +11,7 @@ import { AppError, errorHandler, sendError } from './errors.js';
 import { createLogger } from './log.js';
 import { createMetrics, type Metrics } from './metrics.js';
 import { sessionRoutes } from './routes/session.js';
+import { flagRoutes } from './routes/flags.js';
 import { projectRoutes } from './routes/projects.js';
 import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
@@ -133,6 +134,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
       await api.register(sessionRoutes(ctx));
       await api.register(userRoutes(ctx));
       await api.register(projectRoutes(ctx));
+      await api.register(flagRoutes(ctx));
     },
     { prefix: '/api' },
   );

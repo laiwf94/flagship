@@ -16,7 +16,10 @@ export default tseslint.config(
     },
     rules: {
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
       // Handlers and hooks are async by contract even when a branch doesn't await.
       '@typescript-eslint/require-await': 'off',
       eqeqeq: ['error', 'always'],
@@ -33,6 +36,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-argument': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/restrict-plus-operands': 'off',
     },
   },
   {

@@ -1,3 +1,4 @@
+import type { Flag, Segment } from '@flagship/core';
 import type { ColumnType, Generated } from 'kysely';
 
 type CreatedAt = ColumnType<Date, never, never>;
@@ -64,7 +65,7 @@ export interface FlagsTable {
   name: string;
   description: string;
   type: 'boolean' | 'string' | 'number' | 'json';
-  variants: Json<{ key: string; value: unknown; name?: string }[]>;
+  variants: Json<Flag['variants']>;
   salt: string;
   client_side: boolean;
   version: Generated<number>;
@@ -78,9 +79,9 @@ export interface FlagConfigsTable {
   environment_id: string;
   enabled: boolean;
   off_variant: string;
-  prerequisites: Json<unknown[]>;
-  rules: Json<unknown[]>;
-  fallthrough: Json<unknown>;
+  prerequisites: Json<Flag['prerequisites']>;
+  rules: Json<Flag['rules']>;
+  fallthrough: Json<Flag['fallthrough']>;
   updated_at: UpdatedAt;
 }
 
@@ -92,7 +93,7 @@ export interface SegmentsTable {
   description: string;
   included: Json<string[]>;
   excluded: Json<string[]>;
-  rules: Json<unknown[]>;
+  rules: Json<Segment['rules']>;
   version: Generated<number>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;

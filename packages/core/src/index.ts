@@ -6,3 +6,4 @@ export * from './semver.js';
 export * from './regex.js';
 export * from './operators.js';
 export * from './evaluate.js';
+export * from './diff.js';

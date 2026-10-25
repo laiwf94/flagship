@@ -1,6 +1,7 @@
 import type { Db } from '../db/database.js';
 import { AppError, notFound } from '../errors.js';
 import { recordAudit, type Actor } from './audit.js';
+import { configColumns, defaultEnvConfig } from './flags.js';
 
 export interface EnvironmentView {
   key: string;
@@ -81,27 +82,6 @@ export async function listProjects(db: Db): Promise<ProjectView[]> {
   }));
 }
 
-/**
- * The configuration a flag gets in an environment it has never been edited in:
- * off, serving its "off" variant (false for boolean flags, else the first).
- */
-export function defaultConfig(variants: readonly { key: string; value: unknown }[]): {
-  enabled: boolean;
-  off_variant: string;
-  prerequisites: string;
-  rules: string;
-  fallthrough: string;
-} {
-  const off = (variants.find((v) => v.value === false) ?? variants[0])?.key ?? 'off';
-  return {
-    enabled: false,
-    off_variant: off,
-    prerequisites: '[]',
-    rules: '[]',
-    fallthrough: JSON.stringify({ variant: off }),
-  };
-}
-
 async function insertEnvironment(
   trx: Db,
   projectId: string,
@@ -121,7 +101,11 @@ async function insertEnvironment(
     await trx
       .insertInto('flag_configs')
       .values(
-        flags.map((f) => ({ flag_id: f.id, environment_id: row.id, ...defaultConfig(f.variants) })),
+        flags.map((f) => ({
+          flag_id: f.id,
+          environment_id: row.id,
+          ...configColumns(defaultEnvConfig(f.variants)),
+        })),
       )
       .execute();
   }
