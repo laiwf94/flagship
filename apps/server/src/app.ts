@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import cookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { sql } from 'kysely';
 import type { Logger } from 'pino';
@@ -80,19 +81,39 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   server.decorateRequest('session', null);
   await server.register(cookie);
   server.setErrorHandler(errorHandler);
-  server.setNotFoundHandler((request, reply) =>
-    sendError(
+  const uiDir = config.adminUiDir;
+  if (uiDir !== undefined) {
+    await server.register(fastifyStatic, { root: uiDir, wildcard: false, index: false });
+  }
+  server.setNotFoundHandler((request, reply) => {
+    const path = request.url.split('?')[0] ?? '';
+    // Client-side routes of the admin UI all load index.html.
+    if (
+      uiDir !== undefined &&
+      request.method === 'GET' &&
+      !/^\/(api|sdk|metrics|healthz|readyz)(\/|$)/.test(path)
+    ) {
+      return reply
+        .header('cache-control', 'no-cache')
+        .sendFile('index.html', { cacheControl: false });
+    }
+    return sendError(
       reply,
       request,
-      new AppError(
-        'not_found',
-        `no route for ${request.method} ${request.url.split('?')[0] ?? ''}`,
-      ),
-    ),
-  );
+      new AppError('not_found', `no route for ${request.method} ${path}`),
+    );
+  });
 
   server.addHook('onRequest', async (request, reply) => {
     void reply.header('x-request-id', request.id);
+    void reply.headers({
+      'content-security-policy':
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'same-origin',
+      'x-frame-options': 'DENY',
+    });
     if (draining && !request.url.startsWith('/healthz')) {
       throw new AppError('unavailable', 'server is shutting down', undefined, {
         'retry-after': '1',

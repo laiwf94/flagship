@@ -1,4 +1,5 @@
 import js from '@eslint/js';
+import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -25,6 +26,10 @@ export default tseslint.config(
       eqeqeq: ['error', 'always'],
       'no-console': 'error',
     },
+  },
+  {
+    files: ['apps/admin/**/*.tsx', 'apps/admin/**/*.ts'],
+    ...reactHooks.configs.flat.recommended,
   },
   {
     // Tests read untyped JSON responses; asserting on them is the point.
