@@ -1,10 +1,12 @@
 import type { z } from 'zod';
+import { clauseValueProblems } from './operators.js';
 import {
   LIMITS,
   flagSchema,
   own,
   rulesetSchema,
   segmentSchema,
+  type Clause,
   type Flag,
   type Ruleset,
   type Segment,
@@ -92,6 +94,15 @@ function checkServe(serve: Serve, variants: ReadonlySet<string>, path: Path, iss
     issues.add([...path, 'rollout', 'variants'], `variant "${d}" appears more than once`);
 }
 
+function checkClauses(clauses: readonly Clause[], path: Path, issues: Issues): void {
+  clauses.forEach((clause, c) => {
+    if (clause.operator === 'inSegment') return;
+    for (const [i, message] of clauseValueProblems(clause)) {
+      issues.add([...path, c, 'values', ...(i === undefined ? [] : [i])], message);
+    }
+  });
+}
+
 /** Checks inside one flag that don't depend on other flags or segments. */
 function checkFlag(flag: Flag, issues: Issues): void {
   const keys = flag.variants.map((v) => v.key);
@@ -110,6 +121,7 @@ function checkFlag(flag: Flag, issues: Issues): void {
     issues.add(['offVariant'], `unknown variant "${flag.offVariant}"`);
   checkServe(flag.fallthrough, variants, ['fallthrough'], issues);
   flag.rules.forEach((rule, i) => {
+    checkClauses(rule.clauses, ['rules', i, 'clauses'], issues);
     checkServe(rule.serve, variants, ['rules', i, 'serve'], issues);
   });
   for (const d of duplicates(flag.rules.map((r) => r.id)))
@@ -124,6 +136,9 @@ function checkFlag(flag: Flag, issues: Issues): void {
 }
 
 function checkSegment(segment: Segment, issues: Issues): void {
+  segment.rules.forEach((rule, i) => {
+    checkClauses(rule.clauses, ['rules', i, 'clauses'], issues);
+  });
   for (const d of duplicates(segment.rules.map((r) => r.id)))
     issues.add(['rules'], `duplicate rule id "${d}"`);
 }
