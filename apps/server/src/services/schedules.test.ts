@@ -192,6 +192,38 @@ describe('scheduled changes', () => {
     expect(onArchived.statusCode).toBe(400);
   });
 
+  it('marks a stored change that no longer parses as failed instead of retrying it forever', async () => {
+    const row = await t.db
+      .selectFrom('flags')
+      .innerJoin('flag_configs', 'flag_configs.flag_id', 'flags.id')
+      .select(['flags.id', 'flag_configs.environment_id'])
+      .where('flags.key', '=', 'race')
+      .executeTakeFirstOrThrow();
+    const bad = await t.db
+      .insertInto('scheduled_changes')
+      .values({
+        flag_id: row.id,
+        environment_id: row.environment_id,
+        run_at: new Date(clock.getTime() - 1000),
+        change: JSON.stringify({ enabled: 'yes please' }),
+        created_by: null,
+        created_by_name: 'someone',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    expect(await t.app.scheduler.runOnce()).toBe(1);
+    expect(await t.app.scheduler.runOnce()).toBe(0);
+    const after = await t.db
+      .selectFrom('scheduled_changes')
+      .select(['status', 'error'])
+      .where('id', '=', bad.id)
+      .executeTakeFirstOrThrow();
+    expect(after).toEqual({
+      status: 'failed',
+      error: 'stored change is not a valid scheduled change',
+    });
+  });
+
   it('runs on its own timer', async () => {
     const quick = await testApp({
       bootstrapAdmin: { email: 'a@example.com', password: PASSWORD },

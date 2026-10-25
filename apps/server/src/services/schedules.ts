@@ -309,31 +309,38 @@ export class Scheduler {
         actor,
         retention: this.o.retention,
       };
-      const change = changeSchema.parse(due.change);
-      const sp = await trx.savepoint('apply').execute();
+      const parsed = changeSchema.safeParse(due.change);
       let status: ScheduleStatus = 'applied';
       let error: string | null = null;
-      try {
-        await writeConfig(
-          sp,
-          scope,
-          { id: due.environment_id, key: due.environment_key },
-          due.flag_key,
-          (c) => applyChange(c, change),
-          undefined,
-          'flag.schedule.apply',
-        );
-        await sp.releaseSavepoint('apply').execute();
-      } catch (err) {
-        if (!(err instanceof AppError)) throw err;
-        await sp.rollbackToSavepoint('apply').execute();
+      if (!parsed.success) {
+        // A row that no longer parses would otherwise be retried on every tick.
         status = 'failed';
-        const details = Array.isArray(err.details)
-          ? (err.details as { path: string; message: string }[]).map(
-              (d) => `${d.path}: ${d.message}`,
-            )
-          : [];
-        error = [err.message, ...details].join('; ').slice(0, 1000);
+        error = 'stored change is not a valid scheduled change';
+      } else {
+        const change = parsed.data;
+        const sp = await trx.savepoint('apply').execute();
+        try {
+          await writeConfig(
+            sp,
+            scope,
+            { id: due.environment_id, key: due.environment_key },
+            due.flag_key,
+            (c) => applyChange(c, change),
+            undefined,
+            'flag.schedule.apply',
+          );
+          await sp.releaseSavepoint('apply').execute();
+        } catch (err) {
+          if (!(err instanceof AppError)) throw err;
+          await sp.rollbackToSavepoint('apply').execute();
+          status = 'failed';
+          const details = Array.isArray(err.details)
+            ? (err.details as { path: string; message: string }[]).map(
+                (d) => `${d.path}: ${d.message}`,
+              )
+            : [];
+          error = [err.message, ...details].join('; ').slice(0, 1000);
+        }
       }
       await trx
         .updateTable('scheduled_changes')
