@@ -12,6 +12,8 @@ export type Db = Kysely<Database>;
 export interface DatabaseOptions {
   url: string;
   maxConnections?: number;
+  /** Called when an idle pooled connection dies (database restart, failover). */
+  onIdleError?: (err: Error) => void;
 }
 
 export function createDatabase(options: DatabaseOptions): { db: Db; pool: pg.Pool } {
@@ -22,6 +24,12 @@ export function createDatabase(options: DatabaseOptions): { db: Db; pool: pg.Poo
     connectionTimeoutMillis: 5_000,
     // Keeps a stuck query from holding a pooled connection forever.
     statement_timeout: 15_000,
+  });
+  // pg emits 'error' when an idle connection is cut. Unhandled, that event
+  // would crash the process; the pool already drops the dead client and
+  // opens a new one on the next query.
+  pool.on('error', (err) => {
+    options.onIdleError?.(err);
   });
   return { db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), pool };
 }

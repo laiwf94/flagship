@@ -42,7 +42,13 @@ async function main(): Promise<void> {
   }
 
   const logger = createLogger(config.logLevel);
-  const { db } = createDatabase({ url: config.databaseUrl, maxConnections: config.dbPoolSize });
+  const { db } = createDatabase({
+    url: config.databaseUrl,
+    maxConnections: config.dbPoolSize,
+    onIdleError: (err) => {
+      logger.warn({ err }, 'idle database connection lost');
+    },
+  });
   await migrate(db);
   const app = await buildApp({ config, db, logger });
   await app.server.listen({ host: config.host, port: config.port });

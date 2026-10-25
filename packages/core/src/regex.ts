@@ -432,10 +432,13 @@ export function search(pattern: CompiledPattern, input: string): boolean {
     return matched;
   };
 
+  // A pattern that starts with ^ can only begin at position 0, so there is no
+  // need to start a thread anywhere else, and no live threads means no match.
+  const anchored = prog[0]?.op === 'start';
   for (let i = 0; i <= n; i++) {
     // Unanchored search: a new thread starts at every position.
-    if (add(current, 0, i)) return true;
-    if (i === n) break;
+    if ((i === 0 || !anchored) && add(current, 0, i)) return true;
+    if (i === n || (anchored && current.length === 0)) break;
     const cp = cps[i] ?? 0;
     generation++;
     next.length = 0;

@@ -77,6 +77,21 @@ describe('migrations', () => {
     ).rejects.toThrow(/check constraint/);
   });
 
+  it('survives idle connections being cut', async () => {
+    const errors: Error[] = [];
+    const own = createDatabase({ url, onIdleError: (e) => errors.push(e) });
+    await sql`SELECT 1`.execute(own.db);
+    await sql`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+              WHERE datname = current_database() AND pid <> pg_backend_pid()
+              AND application_name = ''`.execute(db);
+    for (let i = 0; i < 50 && errors.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    expect(errors.length).toBeGreaterThan(0);
+    const r = await sql<{ n: number }>`SELECT 1 AS n`.execute(own.db);
+    expect(r.rows[0]?.n).toBe(1);
+    await own.db.destroy();
+    await sql`SELECT 1`.execute(db);
+  });
+
   it('read bigint columns as numbers', async () => {
     const r = await sql<{ n: number }>`SELECT 9007199254740991::bigint AS n`.execute(db);
     expect(r.rows[0]?.n).toBe(Number.MAX_SAFE_INTEGER);

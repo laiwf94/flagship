@@ -49,4 +49,17 @@ export default tseslint.config(
     files: ['**/*.js', '**/*.mjs'],
     ...tseslint.configs.disableTypeChecked,
   },
+  {
+    // Benchmark scripts are plain Node programs that print their results.
+    files: ['bench/**/*.mjs'],
+    languageOptions: {
+      globals: Object.fromEntries(
+        ['process', 'console', 'performance', 'setTimeout', 'fetch', 'URL'].map((g) => [
+          g,
+          'readonly',
+        ]),
+      ),
+    },
+    rules: { 'no-console': 'off', 'no-empty': ['error', { allowEmptyCatch: true }] },
+  },
 );
