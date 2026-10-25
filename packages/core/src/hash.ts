@@ -1,4 +1,31 @@
-const encoder = new TextEncoder();
+/**
+ * UTF-8 bytes of a string, written out so the core has no dependency on
+ * TextEncoder. Lone surrogates become U+FFFD, exactly as TextEncoder does.
+ */
+export function utf8(input: string): Uint8Array {
+  const out = new Uint8Array(input.length * 3);
+  let n = 0;
+  for (const ch of input) {
+    let cp = ch.codePointAt(0) ?? 0;
+    if (cp >= 0xd800 && cp <= 0xdfff) cp = 0xfffd;
+    if (cp < 0x80) {
+      out[n++] = cp;
+    } else if (cp < 0x800) {
+      out[n++] = 0xc0 | (cp >> 6);
+      out[n++] = 0x80 | (cp & 0x3f);
+    } else if (cp < 0x10000) {
+      out[n++] = 0xe0 | (cp >> 12);
+      out[n++] = 0x80 | ((cp >> 6) & 0x3f);
+      out[n++] = 0x80 | (cp & 0x3f);
+    } else {
+      out[n++] = 0xf0 | (cp >> 18);
+      out[n++] = 0x80 | ((cp >> 12) & 0x3f);
+      out[n++] = 0x80 | ((cp >> 6) & 0x3f);
+      out[n++] = 0x80 | (cp & 0x3f);
+    }
+  }
+  return out.subarray(0, n);
+}
 
 /**
  * MurmurHash3, x86 32-bit variant, over the UTF-8 bytes of `input`.
@@ -7,7 +34,7 @@ const encoder = new TextEncoder();
  * bucketing, so the algorithm is easy to reproduce in any language.
  */
 export function murmur3(input: string, seed = 0): number {
-  const data = encoder.encode(input);
+  const data = utf8(input);
   const length = data.length;
   const tail = length & ~3;
   let h = seed >>> 0;

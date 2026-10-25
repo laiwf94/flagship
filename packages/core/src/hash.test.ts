@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { murmur3 } from './hash.js';
+import { murmur3, utf8 } from './hash.js';
 
 /**
  * A deliberately naive MurmurHash3 written straight from the reference C code
@@ -32,6 +32,18 @@ function referenceMurmur3(input: string, seed: number): number {
   h ^= h >> 16n;
   return Number(h);
 }
+
+describe('utf8', () => {
+  it('matches TextEncoder, including lone surrogates', () => {
+    fc.assert(
+      fc.property(fc.string({ unit: 'binary', maxLength: 40 }), (s) => {
+        expect([...utf8(s)]).toEqual([...new TextEncoder().encode(s)]);
+      }),
+      { numRuns: 3000 },
+    );
+    expect([...utf8('\ud800x')]).toEqual([0xef, 0xbf, 0xbd, 0x78]);
+  });
+});
 
 describe('murmur3', () => {
   it.each([
