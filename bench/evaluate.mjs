@@ -151,7 +151,7 @@ rows.push([
   'evaluateAll: 200 typical flags (one client-side request)',
   measure((i) => {
     sink += Object.keys(evaluateAll(many, contexts[i & 1023])).length;
-  }, 2_000),
+  }, 10_000),
 ]);
 
 const fmt = (ns) =>
