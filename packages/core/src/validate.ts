@@ -220,7 +220,49 @@ export function validateRuleset(input: unknown): ValidationResult<Ruleset> {
     checkReferences(ruleset, flag, issues);
   }
 
+  if (issues.list.length === 0) checkPrerequisiteGraph(ruleset, issues);
+
   return issues.list.length > 0 ? { ok: false, issues: issues.list } : { ok: true, value: ruleset };
+}
+
+/**
+ * Rejects prerequisite cycles and chains longer than LIMITS.prerequisiteDepth
+ * flags. Runs only once references are known to be valid, so every edge
+ * points at an existing flag.
+ */
+function checkPrerequisiteGraph(ruleset: Ruleset, issues: Issues): void {
+  const state = new Map<string, 'visiting' | 'done'>();
+  const depth = new Map<string, number>();
+  const path: string[] = [];
+
+  const visit = (key: string): void => {
+    state.set(key, 'visiting');
+    path.push(key);
+    let deepest = 0;
+    for (const p of own(ruleset.flags, key)?.prerequisites ?? []) {
+      const seen = state.get(p.flag);
+      if (seen === 'visiting') {
+        const cycle = [...path.slice(path.indexOf(p.flag)), p.flag].join(' -> ');
+        issues.add(['flags', key, 'prerequisites'], `prerequisites form a cycle: ${cycle}`);
+        continue;
+      }
+      if (seen === undefined) visit(p.flag);
+      deepest = Math.max(deepest, depth.get(p.flag) ?? 0);
+    }
+    path.pop();
+    state.set(key, 'done');
+    depth.set(key, deepest + 1);
+  };
+
+  for (const key of Object.keys(ruleset.flags)) {
+    if (!state.has(key)) visit(key);
+    if ((depth.get(key) ?? 0) > LIMITS.prerequisiteDepth) {
+      issues.add(
+        ['flags', key, 'prerequisites'],
+        `prerequisite chain is longer than ${LIMITS.prerequisiteDepth} flags`,
+      );
+    }
+  }
 }
 
 function checkReferences(ruleset: Ruleset, flag: Flag, issues: Issues): void {
