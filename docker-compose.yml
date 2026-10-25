@@ -1,0 +1,43 @@
+# Local stack: Postgres and the flagship server with the admin UI on :8080.
+# The admin password below is for this demo only.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: flagship
+      POSTGRES_PASSWORD: flagship
+      POSTGRES_DB: flagship
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U flagship']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  flagship:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FLAGSHIP_DATABASE_URL: postgres://flagship:flagship@postgres:5432/flagship
+      FLAGSHIP_ADMIN_EMAIL: admin@example.com
+      FLAGSHIP_ADMIN_PASSWORD: demo-password-change-me
+    ports:
+      - '8080:8080'
+    healthcheck:
+      test:
+        - CMD
+        - /nodejs/bin/node
+        - -e
+        - "fetch('http://127.0.0.1:8080/readyz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+
+volumes:
+  pgdata:

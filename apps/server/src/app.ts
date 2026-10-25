@@ -90,7 +90,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     // Client-side routes of the admin UI all load index.html.
     if (
       uiDir !== undefined &&
-      request.method === 'GET' &&
+      (request.method === 'GET' || request.method === 'HEAD') &&
       !/^\/(api|sdk|metrics|healthz|readyz)(\/|$)/.test(path)
     ) {
       return reply

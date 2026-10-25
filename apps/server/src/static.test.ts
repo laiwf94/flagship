@@ -28,6 +28,11 @@ describe('admin UI hosting', () => {
     }
   });
 
+  it('answers HEAD for client-side routes too', async () => {
+    const head = await t.app.server.inject({ method: 'HEAD', url: '/p/default/production/flags' });
+    expect(head.statusCode).toBe(200);
+  });
+
   it('keeps JSON 404s for the API and sends security headers everywhere', async () => {
     const api = await t.app.server.inject({ url: '/api/nope' });
     expect(api.statusCode).toBe(404);
