@@ -11,7 +11,11 @@ import { AppError, errorHandler, sendError } from './errors.js';
 import { createLogger } from './log.js';
 import { createMetrics, type Metrics } from './metrics.js';
 import { sessionRoutes } from './routes/session.js';
+import { projectRoutes } from './routes/projects.js';
+import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
+import { KeyAuthenticator } from './services/apikeys.js';
+import { bootstrapProject } from './services/projects.js';
 import { safeEqual } from './util.js';
 import { bootstrapAdmin } from './services/users.js';
 
@@ -33,6 +37,7 @@ export interface AppDeps {
 export interface App {
   server: FastifyInstance;
   metrics: Metrics;
+  ctx: Context;
   /** Stops accepting work, drains streams and background jobs, closes the server. */
   close: () => Promise<void>;
 }
@@ -43,7 +48,8 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 export async function buildApp(deps: AppDeps): Promise<App> {
   const { config, db } = deps;
   const metrics = createMetrics();
-  const ctx: Context = { config, db, metrics, now: deps.now ?? (() => new Date()) };
+  const now = deps.now ?? (() => new Date());
+  const ctx: Context = { config, db, metrics, now, keys: new KeyAuthenticator(db, now) };
   const logger = deps.logger ?? createLogger(config.logLevel);
   // Widened so the instance type stays FastifyInstance with the default logger.
   const baseLogger: FastifyBaseLogger = logger;
@@ -126,11 +132,14 @@ export async function buildApp(deps: AppDeps): Promise<App> {
       api.addHook('onRequest', sessionGuard(ctx));
       await api.register(sessionRoutes(ctx));
       await api.register(userRoutes(ctx));
+      await api.register(projectRoutes(ctx));
     },
     { prefix: '/api' },
   );
+  await server.register(sdkRoutes(ctx), { prefix: '/sdk/v1' });
 
-  await bootstrapAdmin(db, config.bootstrapAdmin);
+  const admin = await bootstrapAdmin(db, config.bootstrapAdmin);
+  if (admin !== undefined) await bootstrapProject(db, { id: admin.id, name: admin.name });
 
   const closers: (() => Promise<void>)[] = [];
 
@@ -139,6 +148,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   return {
     server,
     metrics,
+    ctx,
     close: async () => {
       draining = true;
       for (const close of closers) await close();
