@@ -10,6 +10,11 @@
       "@flagship/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./openfeature": {
+      "@flagship/source": "./src/openfeature.ts",
+      "types": "./dist/openfeature.d.ts",
+      "default": "./dist/openfeature.js"
     }
   },
   "files": [
@@ -26,6 +31,16 @@
     "@flagship/core": "workspace:*"
   },
   "devDependencies": {
-    "@flagship/conformance": "workspace:*"
+    "@flagship/conformance": "workspace:*",
+    "@openfeature/core": "1.12.0",
+    "@openfeature/server-sdk": "1.23.0"
+  },
+  "peerDependencies": {
+    "@openfeature/server-sdk": "^1.23.0"
+  },
+  "peerDependenciesMeta": {
+    "@openfeature/server-sdk": {
+      "optional": true
+    }
   }
 }
