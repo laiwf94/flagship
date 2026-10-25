@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api, type FlagStatus } from '../api';
 import { Icon } from '../components/icons';
 import { useToast } from '../components/toast';
@@ -23,6 +23,7 @@ export function FlagList() {
   const { project, env, link } = useScope();
   const { can } = useSession();
   const toast = useToast();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
   const status = (params.get('status') ?? undefined) as FlagStatus | undefined;
@@ -199,7 +200,7 @@ export function FlagList() {
           onCreated={(flag) => {
             setCreating(false);
             toast(`Created ${flag.name}. It's off in every environment until you turn it on.`);
-            flags.reload();
+            void navigate(link(`flags/${encodeURIComponent(flag.key)}`));
           }}
         />
       )}

@@ -99,14 +99,14 @@ export function Switch({
       >
         <span className="switch-thumb" aria-hidden="true" />
       </button>
-      <label htmlFor={id} className="switch-label">
-        <span>{label}</span>
+      <div className="switch-label">
+        <label htmlFor={id}>{label}</label>
         {description !== undefined && (
           <span className="muted small" id={`${id}-d`}>
             {description}
           </span>
         )}
-      </label>
+      </div>
     </div>
   );
 }

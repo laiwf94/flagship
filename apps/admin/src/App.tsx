@@ -1,6 +1,14 @@
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router';
+import {
+  Navigate,
+  Outlet,
+  RouterProvider,
+  createBrowserRouter,
+  useLocation,
+  type RouteObject,
+} from 'react-router';
 import { ToastProvider } from './components/toast';
 import { Loading } from './components/ui';
+import { FlagDetail } from './pages/FlagDetail';
 import { FlagList } from './pages/FlagList';
 import { Home } from './pages/Home';
 import { Layout } from './pages/Layout';
@@ -23,31 +31,42 @@ function RequireSession() {
   return <Outlet />;
 }
 
-export function AppRoutes() {
-  return (
-    <Routes>
-      <Route path="/sign-in" element={<SignIn />} />
-      <Route element={<RequireSession />}>
-        <Route index element={<Home />} />
-        <Route path="/p/:project/:env" element={<Layout />}>
-          <Route index element={<Navigate to="flags" replace />} />
-          <Route path="flags" element={<FlagList />} />
-          <Route path="*" element={<NotFound />} />
-        </Route>
-      </Route>
-      <Route path="*" element={<NotFound />} />
-    </Routes>
-  );
-}
-
-export function App() {
+function Root() {
   return (
     <SessionProvider>
       <ToastProvider>
-        <BrowserRouter>
-          <AppRoutes />
-        </BrowserRouter>
+        <Outlet />
       </ToastProvider>
     </SessionProvider>
   );
+}
+
+export const routes: RouteObject[] = [
+  {
+    element: <Root />,
+    children: [
+      { path: '/sign-in', element: <SignIn /> },
+      {
+        element: <RequireSession />,
+        children: [
+          { index: true, element: <Home /> },
+          {
+            path: '/p/:project/:env',
+            element: <Layout />,
+            children: [
+              { index: true, element: <Navigate to="flags" replace /> },
+              { path: 'flags', element: <FlagList /> },
+              { path: 'flags/:flag', element: <FlagDetail /> },
+              { path: '*', element: <NotFound /> },
+            ],
+          },
+        ],
+      },
+      { path: '*', element: <NotFound /> },
+    ],
+  },
+];
+
+export function App() {
+  return <RouterProvider router={createBrowserRouter(routes)} />;
 }
