@@ -1,8 +1,10 @@
+import { contextSchema, evaluateAll } from '@flagship/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { authenticateSdk } from '../auth/sdk.js';
 import type { Context } from '../context.js';
 import type { KeyKind } from '../db/schema.js';
-import { AppError } from '../errors.js';
+import { AppError, parse } from '../errors.js';
 import type { RulesetCache } from '../services/cache.js';
 import type { Hub } from '../streaming/hub.js';
 
@@ -12,6 +14,8 @@ export interface SdkDeps {
 }
 
 const LAST_EVENT_ID = /^\d{1,15}$/;
+
+const evaluateBody = z.strictObject({ context: contextSchema });
 
 function lastEventId(request: FastifyRequest): number | undefined {
   const raw = request.headers['last-event-id'];
@@ -99,6 +103,32 @@ export function sdkRoutes(ctx: Context, deps: SdkDeps) {
       void reply.header('etag', snapshot.etag).header('cache-control', 'no-cache');
       if (request.headers['if-none-match'] === snapshot.etag) return reply.status(304).send();
       return reply.type('application/json; charset=utf-8').send(snapshot.json);
+    });
+
+    /**
+     * Evaluates every client-visible flag for the posted context. The answer
+     * holds values, variant keys and reasons only: no rules, no segment
+     * members, no rule ids. The context goes in the body, never a URL, so it
+     * stays out of access logs and caches.
+     */
+    sdk.post('/evaluate', { bodyLimit: 64 * 1024 }, async (request, reply) => {
+      const id = await authenticateSdk(ctx.keys, request, ['client', 'server']);
+      const { context } = parse(evaluateBody, request.body, 'evaluation request');
+      const snapshot = await deps.cache.get(id.environmentId);
+      const results = evaluateAll(
+        snapshot.ruleset,
+        context,
+        id.kind === 'client' ? (flag) => flag.clientSide : () => true,
+      );
+      const flags: Record<string, unknown> = {};
+      for (const [key, e] of Object.entries(results)) {
+        flags[key] =
+          e.reason === 'ERROR'
+            ? { reason: e.reason, errorCode: e.errorCode }
+            : { value: e.value, variant: e.variant, reason: e.reason };
+      }
+      void reply.header('cache-control', 'no-store');
+      return { version: snapshot.version, flags };
     });
 
     sdk.get('/stream', { config: { stream: true } }, (request, reply) =>
