@@ -32,30 +32,33 @@ if (
 
 ![Flag editor with a rule builder and a live preview of who gets what](docs/screenshots/flag-targeting-1440.png)
 
-## What it does
+## Flags, rules and rollouts
 
-- **Flags** with boolean, string, number or JSON variants, configured per environment.
-- **Targeting rules** on context attributes: equality and lists, string tests, number and
-  semantic-version comparisons, regular expressions (run by a linear-time engine, so a bad
-  pattern can't hang an SDK), and reusable **segments** with include and exclude lists.
-- **Percentage rollouts** by consistent hashing: the same user gets the same variant on
-  every server, and raising the percentage never moves anyone out. Bucket by user, or by
-  any attribute such as an organisation.
-- **Kill switch**, **prerequisites** between flags (cycles rejected), and **scheduled
-  changes** that apply on time, exactly once, across any number of server instances.
-- **Local evaluation** in server SDKs from a ruleset snapshot, kept current over SSE with
-  resume (`Last-Event-ID`) and ETag polling as a fallback. When the service is down, apps
-  keep the last ruleset or use their own defaults.
-- **Client-side keys** for browsers get evaluated values only, never rules or other users.
-- **Safe editing**: versioned edits with `409` on conflict, whole-ruleset validation before
-  commit, a diff before save, a live preview of who would change variant, and an audit log
-  of every change with who made it.
-- **Roles** (viewer, editor, admin), cookie sessions with CSRF protection, per-environment
-  server and client keys stored hashed.
-- **Exposure counts**: SDKs report which variants they served, batched and with
-  backpressure; the UI shows per-variant counts.
+A flag has boolean, string, number or JSON variants and is configured separately in each
+environment. Targeting rules look at attributes of the context: equality and lists, string
+tests, number and semantic-version comparisons, and regular expressions. A linear-time engine
+runs the patterns, so a bad one can't hang an SDK. Rules can also point at reusable segments,
+which have include and exclude lists.
 
-## Quick start
+Percentage rollouts use consistent hashing. The same user gets the same variant on every
+server, and raising the percentage never moves anyone out. You can bucket by user, or by any
+attribute such as an organisation. Each flag also has a kill switch, prerequisites on other
+flags (cycles are rejected), and scheduled changes that apply on time and exactly once, however
+many server instances are running.
+
+Server SDKs evaluate locally from a ruleset snapshot, kept current over SSE with resume
+(`Last-Event-ID`) and ETag polling as a fallback. When the service is down, apps keep the last
+ruleset or fall back to their own defaults. Browsers use client-side keys, which get evaluated
+values only, never rules or other users.
+
+Editing is versioned, and a stale edit gets `409`. The whole ruleset is validated before a
+change commits, and the UI shows a diff and a live preview of who would change variant before
+you save. An audit log records every change and who made it. Access uses three roles (viewer,
+editor, admin) and cookie sessions with CSRF protection, and each environment has its own
+server and client keys, stored hashed. SDKs also report which variants they served, batched
+and with backpressure, and the UI shows the counts per variant.
+
+## Running it locally
 
 ```console
 $ docker compose up -d --build --wait     # Postgres + flagship on http://localhost:8080
@@ -70,7 +73,7 @@ The demo prints each step's evidence as the app receives it over SSE: 0/1000 use
 about 100 after a 10% rollout, then about 500 at 50% with every user from the 10% step still
 on, then 0 after the kill switch. It fails if any step doesn't arrive within 15 seconds.
 
-For development: Node 22, pnpm and Docker.
+Working on flagship itself needs Node 22, pnpm and Docker.
 
 ```console
 $ pnpm install
@@ -88,7 +91,7 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 | `@flagship/browser`          | web apps    | client key; the server evaluates the user's context and the SDK caches the values for synchronous reads; refetches when the version changes |
 | `@flagship/core`             | everything  | model, validation, evaluator; also used by the admin UI's preview                                                                           |
 
-## API
+## HTTP API
 
 Admin routes use the session cookie and need `X-CSRF-Token` on writes. SDK routes take
 `Authorization: Bearer <key>`.
@@ -123,7 +126,7 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 `payload_too_large` 413, `unsupported_media_type` 415, `resource_exhausted` 429,
 `unavailable` 503.
 
-## How it is tested
+## Testing
 
 | What         | How                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -138,9 +141,10 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 
 819 Vitest tests at 96.7% line coverage (the gate requires 90%), plus 7 Playwright tests.
 
-## Performance
+## Benchmarks
 
-Apple M4 Max, Node 22. Local evaluation, with the context matching no rule (every clause checked):
+On an Apple M4 Max with Node 22, local evaluation, with the context matching no rule (so
+every clause is checked), takes:
 
 | Case                                                | Time       |
 | --------------------------------------------------- | ---------- |
@@ -159,7 +163,7 @@ it, 20 changes per run, client threads on the same machine:
 
 `pnpm bench` and `pnpm bench:fanout` reproduce these.
 
-## Screens
+## Admin screens
 
 | Flags                                                                              | Flag on a phone                                                   |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -167,14 +171,12 @@ it, 20 changes per run, client threads on the same machine:
 
 More in [docs/screenshots](docs/screenshots), all produced by the end-to-end run.
 
-## Design
+## Docs and source
 
 [docs/DESIGN.md](docs/DESIGN.md) covers the data model, evaluation order, the bucketing
 algorithm, why there is a regex engine, how streaming resumes and fans out across instances,
 client-side evaluation, sessions and CSRF, scheduled changes, exposure backpressure, failure
-modes, limits and what would change to scale further.
-
-## Layout
+modes, limits and what would change to scale further. The code is laid out like this:
 
 ```text
 packages/core          ruleset model, validation, evaluator, bucketing, semver, regex engine, diff

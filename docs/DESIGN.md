@@ -1,20 +1,19 @@
 # flagship design
 
-## Goals
+A flag should get the same answer wherever it is evaluated. The server, the Node SDK and the
+admin UI's preview run one evaluator from one package, and a shared set of JSON cases proves
+it. Evaluation never waits on the network: server SDKs hold the ruleset in memory, so a flag
+check is a function call, and when the service is down apps keep working on the last ruleset
+they saw, or on their own defaults if they never saw one.
 
-1. **Same answer everywhere.** The server, the Node SDK and the admin UI's preview run one
-   evaluator from one package, and a shared set of JSON cases proves it.
-2. **Evaluation never waits on the network.** Server SDKs hold the ruleset in memory; a
-   flag check is a function call. When the service is down, apps keep working on the
-   last ruleset they saw, or on their own defaults if they never saw one.
-3. **Changes are safe to make.** Edits are versioned, validated as a whole ruleset before
-   they commit, previewed before they are saved, and recorded with who made them.
-4. **Bounded cost.** Every input has a size limit, and no rule can make an SDK do
-   unbounded work. That includes regular expressions.
+Changes have to be safe to make. Edits are versioned, validated as a whole ruleset before
+they commit, previewed before they are saved, and recorded with who made them. Every input
+has a size limit, and no rule can make an SDK do unbounded work, regular expressions
+included.
 
-Non-goals for this version: experimentation statistics (we count exposures, we don't
-compute significance), per-user overrides beyond segments, and multi-region replication.
-See [Scaling out](#scaling-out).
+This version leaves out experimentation statistics (we count exposures, we don't compute
+significance), per-user overrides beyond segments, and multi-region replication. See
+[Larger deployments](#larger-deployments).
 
 ## Data model
 
@@ -42,7 +41,7 @@ A **context** is whoever a flag is evaluated for: `{ "key": "user-42", "country"
 "groups": ["beta"] }`. Attributes are flat: strings, numbers, booleans, null or lists
 of those.
 
-## Evaluation order
+## How a flag is evaluated
 
 `evaluate(ruleset, flagKey, context)` never throws. In order:
 
@@ -80,7 +79,7 @@ segment's rules. Exclusion wins over everything because it is the explicit "neve
 person" an operator reaches for. Include and exclude lists are indexed into sets the first
 time a segment object is evaluated, so a 10,000-member segment costs a hash lookup.
 
-## Bucketing
+## Sticky percentage rollouts
 
 A percentage rollout must give each context the same variant on every server and SDK,
 and growing it from 10% to 50% must not move anyone out of the 10%.
@@ -105,7 +104,7 @@ has a bias of 67,296 buckets getting one extra hash value in about 42,950, a rel
 skew of 2.3e-5, which no rollout can observe. Weights are integers out of 100,000, so
 the smallest step is 0.001%.
 
-Tests: published MurmurHash3 vectors, a property test against a BigInt reference
+The tests use published MurmurHash3 vectors, a property test against a BigInt reference
 implementation on arbitrary Unicode (lone surrogates included, since UTF-8 is encoded by
 hand to match `TextEncoder`), stickiness for random keys and percentages, and a
 distribution test over 100k keys. Pinned bucket outcomes in the conformance suite make
@@ -145,7 +144,7 @@ the chain it is on and refuses to recurse into a flag already on it or past ten 
 returning `PREREQUISITE_CYCLE`, so a ruleset that somehow skipped validation still
 cannot loop.
 
-## Storage
+## Storage and the write path
 
 PostgreSQL through Kysely, with typed tables and migrations in code. Twelve tables; the
 interesting ones:
@@ -179,7 +178,7 @@ back. `ruleset_changes` keeps the last 1,000 versions per environment
 Migrations run at start under Kysely's Postgres migrator, which takes an advisory lock;
 the test starts three migrators at once on an empty database.
 
-## Optimistic concurrency
+## Two people editing one flag
 
 Every flag and segment has a `version`. An edit names the version it was based on; if the
 row has moved on, the server answers `409 version_conflict` with the current version, and
@@ -191,12 +190,12 @@ false conflict when two people edit different environments of the same flag at t
 moment. We accepted that: it is rare, and the fix (reload) is cheap. The cost of a missed
 conflict is a silent overwrite.
 
-The **kill switch** is the exception. It takes no version, because someone reaching for it
+The kill switch is the exception. It takes no version, because someone reaching for it
 during an incident should not be asked to reload first, and flipping one boolean on top of
 whatever else changed is safe. It still bumps the version, so an editor with an older draft
 gets a 409 instead of silently turning the flag back on.
 
-## Streaming
+## Streaming changes to SDKs
 
 `GET /sdk/v1/stream` (server keys) speaks Server-Sent Events:
 
@@ -219,27 +218,33 @@ The `id` is the ruleset version. On reconnect, the SDK (or the browser's EventSo
 sends a fresh `put` when some of them have been pruned or the id is from the future (a
 restored database, say).
 
-**Fan-out across instances.** Each instance keeps one dedicated connection that LISTENs on
-`flagship_changes`. On a notification it reads the `ruleset_changes` rows it hasn't sent yet
-for that environment and writes them to its subscribers, serialised per environment so
-patches leave in version order. The rows are the source of truth, not the payloads:
-notifications can be coalesced, and the catch-up read covers that. If the listener
-connection drops, the instance reconnects, drops its snapshot cache and re-runs catch-up for
-every environment it serves; the test kills the LISTEN backend, makes twelve changes (more
-than the retention of ten) and sees the subscriber receive a fresh `put`.
+### Fan-out across instances
 
-**Joining without a gap.** A new subscriber is registered before its snapshot is read, and
-events that arrive meanwhile are held in a backlog. After the snapshot (or the replay) is
-written, the subscriber catches up from the database and drains the backlog, skipping
-versions it has already sent. Each subscriber tracks the highest version it has been sent,
-which makes delivery idempotent.
+Each instance keeps one dedicated connection that LISTENs on `flagship_changes`. On a
+notification it reads the `ruleset_changes` rows it hasn't sent yet for that environment and
+writes them to its subscribers, serialised per environment so patches leave in version
+order. The rows are the source of truth, not the payloads: notifications can be coalesced,
+and the catch-up read covers that. If the listener connection drops, the instance
+reconnects, drops its snapshot cache and re-runs catch-up for every environment it serves;
+the test kills the LISTEN backend, makes twelve changes (more than the retention of ten) and
+sees the subscriber receive a fresh `put`.
 
-**Slow clients.** A stream with more than 1 MB queued in its socket is closed rather than
-buffered further; it reconnects with its last id and loses nothing. **Limits:**
-`FLAGSHIP_MAX_STREAMS` per instance and `FLAGSHIP_MAX_STREAMS_PER_KEY` per server key, with
-`429` and `Retry-After` beyond. **Revocation:** revoking a key sends a NOTIFY on
-`flagship_keys`; every instance closes that key's streams at once. **Shutdown** ends every
-stream so clients reconnect to another instance.
+### Joining without a gap
+
+A new subscriber is registered before its snapshot is read, and events that arrive meanwhile
+are held in a backlog. After the snapshot (or the replay) is written, the subscriber catches
+up from the database and drains the backlog, skipping versions it has already sent. Each
+subscriber tracks the highest version it has been sent, which makes delivery idempotent.
+
+### Slow clients, limits, revocation and shutdown
+
+A stream with more than 1 MB queued in its socket is closed rather than buffered further; it
+reconnects with its last id and loses nothing. `FLAGSHIP_MAX_STREAMS` caps streams per
+instance and `FLAGSHIP_MAX_STREAMS_PER_KEY` per server key, with `429` and `Retry-After`
+beyond. Revoking a key sends a NOTIFY on `flagship_keys`, and every instance closes that
+key's streams at once. Shutdown ends every stream so clients reconnect to another instance.
+
+### Polling
 
 `GET /sdk/v1/ruleset` serves the same snapshot with a strong ETag
 (`"<env prefix>-<version>"`) and answers `304` when unchanged; SDKs poll it when streaming
@@ -247,7 +252,7 @@ is off or down. Snapshots are cached per environment, invalidated by the notific
 a 30 s TTL only as a backstop for a lost notification, and loaded in a read-only
 `REPEATABLE READ` transaction so flags, segments and version agree.
 
-## Client-side evaluation
+## Browsers get values, not rules
 
 Browser and mobile apps can't be trusted with rules: a rule like
 `email endsWith @acquisition-target.com` is itself a secret, and segment include lists are
@@ -294,7 +299,7 @@ form post fails with 415.
 
 Failed sign-ins are limited per email (10 per 15 minutes) and per IP (50). The limiter is in
 memory, so N instances give N times the budget: still small against scrypt per guess. A shared
-store is listed under scaling out.
+store is listed under [Larger deployments](#larger-deployments).
 
 Roles are `viewer` < `editor` < `admin`, set per route and enforced in one hook. Admins can't
 demote or disable themselves, so a project can't lose its last admin by accident.
@@ -336,18 +341,6 @@ hidden, posting `text/plain` (no CORS preflight) with the client key in the quer
 Counts are per instance until flushed, so a crash loses at most one flush interval. For a
 feature count that is the right trade against a write per request.
 
-## When the service is down
-
-| Situation                                | Node SDK                                                                                                                                             | Browser SDK                   |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Before the first ruleset                 | every call returns the caller's default, reason `ERROR`, code `PROVIDER_NOT_READY`; `ready()` resolves `false` after its timeout                     | same                          |
-| Service unreachable after start          | keeps evaluating the last ruleset; status `stale`; polls with ETags every 30 s while it reconnects the stream with jittered backoff (1 s up to 30 s) | keeps the last values         |
-| Stream silent past 60 s (no ping)        | reconnects, resuming from its last id                                                                                                                | EventSource reconnects itself |
-| Server sends an invalid ruleset or patch | ignored; the last good ruleset stays; `error` event                                                                                                  | n/a                           |
-| Key revoked or wrong                     | stops retrying, emits `error`                                                                                                                        | values stay at defaults       |
-
-The OpenFeature provider maps these to `PROVIDER_NOT_READY`, `Stale` and `Ready` events.
-
 ## Admin UI
 
 React and Vite, served by the same server with a strict CSP (`default-src 'self'`, no inline
@@ -366,7 +359,9 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
   by Playwright), and every page passes axe with no serious or critical WCAG 2.1 AA findings,
   in light and dark mode.
 
-## Failure modes
+## When things fail
+
+### On the server
 
 | Failure                          | Effect                                                                                                     | Recovery                                                                            |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -378,6 +373,18 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
 | Scheduled change no longer valid | not applied                                                                                                | marked `failed` with the reason                                                     |
 | Two edits at once                | one wins                                                                                                   | the other gets `409` and reloads                                                    |
 | Instance killed                  | in-flight transactions roll back; exposure counts since the last flush are lost                            | SDKs reconnect elsewhere and resume                                                 |
+
+### In the SDKs, when the service is down
+
+| Situation                                | Node SDK                                                                                                                                             | Browser SDK                   |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Before the first ruleset                 | every call returns the caller's default, reason `ERROR`, code `PROVIDER_NOT_READY`; `ready()` resolves `false` after its timeout                     | same                          |
+| Service unreachable after start          | keeps evaluating the last ruleset; status `stale`; polls with ETags every 30 s while it reconnects the stream with jittered backoff (1 s up to 30 s) | keeps the last values         |
+| Stream silent past 60 s (no ping)        | reconnects, resuming from its last id                                                                                                                | EventSource reconnects itself |
+| Server sends an invalid ruleset or patch | ignored; the last good ruleset stays; `error` event                                                                                                  | n/a                           |
+| Key revoked or wrong                     | stops retrying, emits `error`                                                                                                                        | values stay at defaults       |
+
+The OpenFeature provider maps these to `PROVIDER_NOT_READY`, `Stale` and `Ready` events.
 
 ## Limits
 
@@ -460,23 +467,26 @@ Not dependencies, on purpose: the MurmurHash, semver parser, regex engine, SSE p
 Prometheus exposition are each under 300 lines here, tested against references, and keep the
 SDKs free of transitive code.
 
-## Scaling out
+## Larger deployments
 
-- **More instances.** Already supported: streams, the scheduler and migrations coordinate
-  through Postgres. Put instances behind a load balancer that allows long-lived responses.
-- **Sign-in limiter** state should move to a shared store (Postgres or Redis) so the budget
-  doesn't multiply with instances.
-- **Millions of streams.** One LISTEN connection per instance is fine for hundreds of
-  instances. Beyond that, put a relay tier in front that holds client streams and subscribes
-  once per environment, which is how hosted flag services fan out to edge locations.
-- **Large rulesets.** Patches are per flag already; the snapshot is the expensive part. Serve
-  snapshots from object storage keyed by version and let the CDN carry them.
-- **Exposure volume.** Hourly upserts are one row per flag/variant/hour/environment. For
-  per-user analytics, send events to a log (Kafka, Kinesis) and aggregate there instead.
-- **Version per environment.** Splitting the flag version into one per environment would remove
-  the cross-environment false conflicts noted above, at the cost of a more complex API.
+More instances already work: streams, the scheduler and migrations coordinate through
+Postgres, so the only requirement is a load balancer that allows long-lived responses. The
+sign-in limiter is the exception. Its state should move to a shared store (Postgres or Redis)
+so the budget doesn't multiply with each instance.
 
-## References
+One LISTEN connection per instance is fine for hundreds of instances. For millions of streams,
+put a relay tier in front that holds the client streams and subscribes once per environment,
+which is how hosted flag services fan out to edge locations.
+
+For large rulesets, patches are already per flag, and the snapshot is the expensive part.
+Snapshots can be served from object storage, keyed by version, and carried by a CDN. Exposure
+volume grows by one row per flag, variant, hour and environment from the hourly upserts. For
+per-user analytics, send events to a log such as Kafka or Kinesis and aggregate them there.
+
+Splitting the flag version into one per environment would remove the false conflicts across
+environments described above, at the cost of a more complex API.
+
+## Further reading
 
 - OpenFeature, "Specification" — https://openfeature.dev/specification/
 - OpenFeature, "Providers" — https://openfeature.dev/docs/reference/concepts/provider
