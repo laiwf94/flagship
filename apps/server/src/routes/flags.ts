@@ -28,6 +28,12 @@ import {
 import { getEnvironment, getProject } from '../services/projects.js';
 import { loadRuleset } from '../services/rulesets.js';
 import {
+  cancelSchedule,
+  changeSchema,
+  createSchedule,
+  listSchedules,
+} from '../services/schedules.js';
+import {
   createSegment,
   deleteSegment,
   getSegment,
@@ -97,6 +103,11 @@ const flagParams = z.object({ project: keySchema, flag: keySchema });
 const envParams = z.object({ project: keySchema, environment: keySchema });
 const flagEnvParams = z.object({ project: keySchema, flag: keySchema, environment: keySchema });
 const segmentParams = z.object({ project: keySchema, environment: keySchema, segment: keySchema });
+const scheduleParams = flagEnvParams.extend({ id: z.uuid() });
+const scheduleInput = z.strictObject({
+  runAt: z.iso.datetime({ offset: true }),
+  change: changeSchema,
+});
 
 export function flagRoutes(ctx: Context) {
   const scope = async (request: FastifyRequest, projectKey: string): Promise<Scope> => {
@@ -179,6 +190,44 @@ export function flagRoutes(ctx: Context) {
         const body = parse(z.strictObject({ enabled: z.boolean() }), request.body, 'kill switch');
         const s = await scope(request, p.project);
         return setKillSwitch(s, await env(s.project.id, p.environment), p.flag, body.enabled);
+      },
+    );
+
+    api.get(
+      '/projects/:project/flags/:flag/environments/:environment/schedules',
+      async (request) => {
+        const p = parse(flagEnvParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        const e = await env(project.id, p.environment);
+        return { schedules: await listSchedules(ctx.db, project.id, e.id, p.flag) };
+      },
+    );
+
+    api.post(
+      '/projects/:project/flags/:flag/environments/:environment/schedules',
+      { config: { role: 'editor' } },
+      async (request, reply) => {
+        const p = parse(flagEnvParams, request.params, 'path');
+        const body = parse(scheduleInput, request.body, 'scheduled change');
+        const s = await scope(request, p.project);
+        const created = await createSchedule(
+          s,
+          await env(s.project.id, p.environment),
+          p.flag,
+          { runAt: new Date(body.runAt), change: body.change },
+          ctx.now(),
+        );
+        return reply.status(201).send(created);
+      },
+    );
+
+    api.delete(
+      '/projects/:project/flags/:flag/environments/:environment/schedules/:id',
+      { config: { role: 'editor' } },
+      async (request) => {
+        const p = parse(scheduleParams, request.params, 'path');
+        const s = await scope(request, p.project);
+        return cancelSchedule(s, await env(s.project.id, p.environment), p.flag, p.id, ctx.now());
       },
     );
 

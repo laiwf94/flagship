@@ -17,6 +17,7 @@ import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
 import { KeyAuthenticator } from './services/apikeys.js';
 import { RulesetCache } from './services/cache.js';
+import { Scheduler } from './services/schedules.js';
 import { Hub } from './streaming/hub.js';
 import { bootstrapProject } from './services/projects.js';
 import { safeEqual } from './util.js';
@@ -43,6 +44,7 @@ export interface App {
   ctx: Context;
   hub: Hub;
   cache: RulesetCache;
+  scheduler: Scheduler;
   /** Stops accepting work, drains streams and background jobs, closes the server. */
   close: () => Promise<void>;
 }
@@ -159,7 +161,17 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   const admin = await bootstrapAdmin(db, config.bootstrapAdmin);
   if (admin !== undefined) await bootstrapProject(db, { id: admin.id, name: admin.name });
 
-  const closers: (() => Promise<void>)[] = [() => hub.close()];
+  const scheduler = new Scheduler({
+    db,
+    metrics,
+    logger,
+    now,
+    intervalMs: config.schedulerIntervalMs,
+    retention: config.changeRetention,
+  });
+  scheduler.start();
+
+  const closers: (() => Promise<void>)[] = [() => scheduler.stop(), () => hub.close()];
 
   await server.ready();
 
@@ -169,6 +181,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     ctx,
     hub,
     cache,
+    scheduler,
     close: async () => {
       draining = true;
       for (const close of closers) await close();
