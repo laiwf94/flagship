@@ -16,6 +16,8 @@ import { projectRoutes } from './routes/projects.js';
 import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
 import { KeyAuthenticator } from './services/apikeys.js';
+import { RulesetCache } from './services/cache.js';
+import { Hub } from './streaming/hub.js';
 import { bootstrapProject } from './services/projects.js';
 import { safeEqual } from './util.js';
 import { bootstrapAdmin } from './services/users.js';
@@ -39,6 +41,8 @@ export interface App {
   server: FastifyInstance;
   metrics: Metrics;
   ctx: Context;
+  hub: Hub;
+  cache: RulesetCache;
   /** Stops accepting work, drains streams and background jobs, closes the server. */
   close: () => Promise<void>;
 }
@@ -138,12 +142,24 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     },
     { prefix: '/api' },
   );
-  await server.register(sdkRoutes(ctx), { prefix: '/sdk/v1' });
+  const cache = new RulesetCache(db, metrics);
+  const hub = new Hub({
+    db,
+    databaseUrl: config.databaseUrl,
+    cache,
+    metrics,
+    logger,
+    heartbeatMs: config.heartbeatSeconds * 1000,
+    maxStreams: config.maxStreams,
+    maxStreamsPerKey: config.maxStreamsPerKey,
+  });
+  await hub.start();
+  await server.register(sdkRoutes(ctx, { cache, hub }), { prefix: '/sdk/v1' });
 
   const admin = await bootstrapAdmin(db, config.bootstrapAdmin);
   if (admin !== undefined) await bootstrapProject(db, { id: admin.id, name: admin.name });
 
-  const closers: (() => Promise<void>)[] = [];
+  const closers: (() => Promise<void>)[] = [() => hub.close()];
 
   await server.ready();
 
@@ -151,6 +167,8 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     server,
     metrics,
     ctx,
+    hub,
+    cache,
     close: async () => {
       draining = true;
       for (const close of closers) await close();
