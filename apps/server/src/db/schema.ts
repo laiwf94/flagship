@@ -144,6 +144,16 @@ export interface ExposureCountsTable {
   count: number;
 }
 
+export interface LoginAttemptsTable {
+  scope: 'email' | 'ip';
+  key: string;
+  /** Attempts inside the current window, oldest first, at most the scope's limit. */
+  attempts: Date[];
+  last_at: Date;
+  /** Whether the most recent attempt was allowed; read back by the upsert. */
+  allowed: Generated<boolean>;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -157,4 +167,5 @@ export interface Database {
   ruleset_changes: RulesetChangesTable;
   scheduled_changes: ScheduledChangesTable;
   exposure_counts: ExposureCountsTable;
+  login_attempts: LoginAttemptsTable;
 }

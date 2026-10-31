@@ -3,7 +3,6 @@ import { testApp, type TestApp } from '../../test/app.js';
 import { addUser, PASSWORD, signIn, userWithRole, type Client } from '../../test/session.js';
 import { bootstrapAdmin } from '../services/users.js';
 import { hashPassword, verifyPassword } from './passwords.js';
-import { FailureLimiter } from './ratelimit.js';
 import { pruneExpiredSessions } from './sessions.js';
 
 let t: TestApp;
@@ -396,21 +395,5 @@ describe('passwords', () => {
     expect(await verifyPassword('x', 'bcrypt$2b$...')).toBe(false);
     expect(await verifyPassword('x', hash.replace('$32768$', '$99999999$'))).toBe(false);
     expect(await verifyPassword('x', `${hash.slice(0, -8)}AAAA`)).toBe(false);
-  });
-});
-
-describe('FailureLimiter', () => {
-  it('slides the window and stays bounded', () => {
-    const l = new FailureLimiter(2, 1000, 3);
-    l.fail('a', 0);
-    l.fail('a', 100);
-    expect(l.retryAfter('a', 200)).toBe(800);
-    expect(l.retryAfter('a', 1001)).toBe(0);
-    l.fail('b', 0);
-    l.fail('c', 0);
-    l.fail('d', 0);
-    expect(l.size).toBeLessThanOrEqual(3);
-    l.reset('d');
-    expect(l.retryAfter('d', 0)).toBe(0);
   });
 });

@@ -5,6 +5,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { sql } from 'kysely';
 import type { Logger } from 'pino';
 import { sessionGuard } from './auth/guard.js';
+import { SignInLimiter } from './auth/ratelimit.js';
 import type { Config } from './config.js';
 import type { Context } from './context.js';
 import type { Db } from './db/database.js';
@@ -60,6 +61,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   const metrics = createMetrics();
   const now = deps.now ?? (() => new Date());
   const ctx: Context = { config, db, metrics, now, keys: new KeyAuthenticator(db, now) };
+  const limiter = new SignInLimiter(db);
   const logger = deps.logger ?? createLogger(config.logLevel);
   // Widened so the instance type stays FastifyInstance with the default logger.
   const baseLogger: FastifyBaseLogger = logger;
@@ -160,7 +162,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   await server.register(
     async (api) => {
       api.addHook('onRequest', sessionGuard(ctx));
-      await api.register(sessionRoutes(ctx));
+      await api.register(sessionRoutes(ctx, limiter));
       await api.register(userRoutes(ctx));
       await api.register(projectRoutes(ctx));
       await api.register(flagRoutes(ctx));
@@ -200,6 +202,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     now,
     intervalMs: config.schedulerIntervalMs,
     retention: config.changeRetention,
+    housekeeping: [{ name: 'login_attempts', everyMs: 60_000, run: (at) => limiter.prune(at) }],
   });
   scheduler.start();
 

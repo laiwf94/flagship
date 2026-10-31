@@ -224,6 +224,15 @@ export interface SchedulerOptions {
   intervalMs: number;
   retention: number;
   batch?: number;
+  /** Bounded clean-up jobs run from the same loop, each at most every `everyMs`. */
+  housekeeping?: HousekeepingJob[];
+}
+
+export interface HousekeepingJob {
+  name: string;
+  everyMs: number;
+  /** Does a bounded amount of work and returns how many rows it removed. */
+  run: (now: Date) => Promise<number>;
 }
 
 /**
@@ -237,6 +246,7 @@ export interface SchedulerOptions {
 export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<number> | null = null;
+  private readonly lastRun = new Map<string, number>();
 
   constructor(private readonly o: SchedulerOptions) {}
 
@@ -269,7 +279,27 @@ export class Scheduler {
       if (!(await this.applyNext())) break;
       processed++;
     }
+    await this.housekeep();
     return processed;
+  }
+
+  /**
+   * Runs each housekeeping job that is due. A failing job is logged and
+   * retried on its next turn; it never stops scheduled changes from applying.
+   */
+  async housekeep(): Promise<void> {
+    for (const job of this.o.housekeeping ?? []) {
+      const now = this.o.now();
+      const last = this.lastRun.get(job.name);
+      if (last !== undefined && now.getTime() - last < job.everyMs) continue;
+      this.lastRun.set(job.name, now.getTime());
+      try {
+        const removed = await job.run(now);
+        if (removed > 0) this.o.logger.debug({ job: job.name, removed }, 'housekeeping');
+      } catch (err) {
+        this.o.logger.warn({ err, job: job.name }, 'housekeeping failed');
+      }
+    }
   }
 
   private async applyNext(): Promise<boolean> {

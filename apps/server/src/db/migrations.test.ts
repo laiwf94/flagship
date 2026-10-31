@@ -22,7 +22,7 @@ describe('migrations', () => {
     const others = [createDatabase({ url }).db, createDatabase({ url }).db];
     const results = await Promise.all([db, ...others].map((d) => migrate(d)));
     const applied = results.flatMap((r) => r.results ?? []).filter((r) => r.status === 'Success');
-    expect(applied.map((r) => r.migrationName)).toEqual(['001_initial']);
+    expect(applied.map((r) => r.migrationName)).toEqual(['001_initial', '002_login_attempts']);
     await Promise.all(others.map((d) => d.destroy()));
 
     const again = await migrate(db);
@@ -42,6 +42,7 @@ describe('migrations', () => {
       'exposure_counts',
       'flag_configs',
       'flags',
+      'login_attempts',
       'projects',
       'ruleset_changes',
       'scheduled_changes',
@@ -55,6 +56,7 @@ describe('migrations', () => {
       expect.arrayContaining([
         'audit_log_project_idx',
         'audit_log_target_idx',
+        'login_attempts_last_at_idx',
         'scheduled_changes_due_idx',
         'sessions_expires_idx',
         'api_keys_key_hash_key',

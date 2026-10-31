@@ -151,4 +151,15 @@ export const migrations: Record<string, Migration> = {
       PRIMARY KEY (environment_id, flag_key, hour, variant)
     )`,
   ]),
+  '002_login_attempts': statements([
+    `CREATE TABLE login_attempts (
+      scope text NOT NULL CHECK (scope IN ('email', 'ip')),
+      key text NOT NULL CHECK (length(key) <= 320),
+      attempts timestamptz[] NOT NULL,
+      last_at timestamptz NOT NULL,
+      allowed boolean NOT NULL DEFAULT true,
+      PRIMARY KEY (scope, key)
+    )`,
+    `CREATE INDEX login_attempts_last_at_idx ON login_attempts (last_at)`,
+  ]),
 };

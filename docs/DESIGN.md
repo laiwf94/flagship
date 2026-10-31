@@ -146,7 +146,7 @@ cannot loop.
 
 ## Storage and the write path
 
-PostgreSQL through Kysely, with typed tables and migrations in code. Twelve tables; the
+PostgreSQL through Kysely, with typed tables and migrations in code. Thirteen tables; the
 interesting ones:
 
 | Table                                                                               | Holds                                                                  |
@@ -157,6 +157,7 @@ interesting ones:
 | `environments`                                                                      | `ruleset_version`, bumped on every change                              |
 | `ruleset_changes`                                                                   | one row per version: kind, key, new value (or null for a delete)       |
 | `audit_log`                                                                         | actor, action, before and after JSON                                   |
+| `login_attempts`                                                                    | recent sign-in attempts per email and per address, shared by instances |
 | `scheduled_changes`, `exposure_counts`, `sessions`, `api_keys`, `users`, `projects` |                                                                        |
 
 Every write follows the same shape inside one transaction:
@@ -297,9 +298,20 @@ whose `Origin` is not ours (or an allowed origin) is refused before anything els
 covers sign-in, the one route without a session. Sign-in only accepts JSON, so a cross-site
 form post fails with 415.
 
-Failed sign-ins are limited per email (10 per 15 minutes) and per IP (50). The limiter is in
-memory, so N instances give N times the budget: still small against scrypt per guess. A shared
-store is listed under [Larger deployments](#larger-deployments).
+Failed sign-ins are limited per email (10 per 15 minutes, sliding) and per client address (50).
+The budget lives in Postgres, in `login_attempts`, so every instance draws on the same one. Each
+attempt is reserved before the password is checked, with one `INSERT ... ON CONFLICT DO UPDATE
+... RETURNING` for both keys: the decision is made on the row Postgres has locked, so thirty
+guesses fired at once across two instances get exactly ten password checks (the test does
+that). A refused attempt is not recorded, so hammering a locked email does not extend its
+lockout, and the answer is `429` with `Retry-After` set to when the oldest counted attempt leaves
+the window. After the check, a failure keeps the reservation; a success clears the email's
+budget and hands the address its attempt back, so an office behind one address is only limited
+on wrong passwords. A row holds at most its limit of timestamps, and the scheduler loop deletes
+expired rows once a minute, 1,000 at a time, oldest first.
+
+If the limiter's query fails, sign-in fails closed with `503` and `Retry-After: 5`: no session is
+issued without a counted attempt. Signed-in users are unaffected, since only sign-in uses it.
 
 Roles are `viewer` < `editor` < `admin`, set per route and enforced in one hook. Admins can't
 demote or disable themselves, so a project can't lose its last admin by accident.
@@ -370,6 +382,7 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
 | Notification missed              | same, for one change                                                                                       | the next change's catch-up includes it; cache TTL bounds snapshot staleness to 30 s |
 | Slow SSE client                  | its socket buffer grows                                                                                    | closed at 1 MB; it resumes from its last id                                         |
 | Event queue full                 | `429` + `Retry-After`                                                                                      | SDK keeps and retries the batch                                                     |
+| Sign-in limiter unreachable      | sign-in answers `503` with `Retry-After: 5` (fails closed)                                                 | automatic when the query succeeds again                                             |
 | Scheduled change no longer valid | not applied                                                                                                | marked `failed` with the reason                                                     |
 | Two edits at once                | one wins                                                                                                   | the other gets `409` and reloads                                                    |
 | Instance killed                  | in-flight transactions roll back; exposure counts since the last flush are lost                            | SDKs reconnect elsewhere and resume                                                 |
@@ -469,10 +482,9 @@ SDKs free of transitive code.
 
 ## Larger deployments
 
-More instances already work: streams, the scheduler and migrations coordinate through
-Postgres, so the only requirement is a load balancer that allows long-lived responses. The
-sign-in limiter is the exception. Its state should move to a shared store (Postgres or Redis)
-so the budget doesn't multiply with each instance.
+More instances already work: streams, the scheduler, migrations and the sign-in limiter
+coordinate through Postgres, so the only requirement is a load balancer that allows long-lived
+responses.
 
 One LISTEN connection per instance is fine for hundreds of instances. For millions of streams,
 put a relay tier in front that holds the client streams and subscribes once per environment,

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { dummyHash, hashPassword, verifyPassword } from '../auth/passwords.js';
-import { FailureLimiter } from '../auth/ratelimit.js';
+import type { SignInLimiter } from '../auth/ratelimit.js';
 import {
   createSession,
   deleteOtherSessions,
@@ -12,8 +12,6 @@ import { currentUser } from '../auth/guard.js';
 import type { Context } from '../context.js';
 import { AppError, parse } from '../errors.js';
 import { recordAudit } from '../services/audit.js';
-
-const WINDOW_MS = 15 * 60_000;
 
 export const passwordSchema = z.string().min(12, 'use at least 12 characters').max(256);
 
@@ -41,16 +39,28 @@ function clearCookie(ctx: Context, request: FastifyRequest, reply: FastifyReply)
   });
 }
 
-export function sessionRoutes(ctx: Context) {
-  const byEmail = new FailureLimiter(10, WINDOW_MS);
-  const byIp = new FailureLimiter(50, WINDOW_MS);
+/**
+ * Runs a limiter call and fails closed: if the shared budget cannot be read or
+ * written, nobody signs in, rather than everybody guessing without a limit.
+ */
+async function limited<T>(request: FastifyRequest, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    request.log.error({ err }, 'sign-in limiter unavailable');
+    throw new AppError('unavailable', 'sign-in is temporarily unavailable', undefined, {
+      'retry-after': '5',
+    });
+  }
+}
 
+export function sessionRoutes(ctx: Context, limiter: SignInLimiter) {
   return async (api: FastifyInstance): Promise<void> => {
     api.post('/session', { config: { public: true } }, async (request, reply) => {
       const { email, password } = parse(loginSchema, request.body, 'sign-in');
       const normalized = email.toLowerCase();
-      const now = ctx.now().getTime();
-      const wait = Math.max(byEmail.retryAfter(normalized, now), byIp.retryAfter(request.ip, now));
+      const now = ctx.now();
+      const wait = await limited(request, () => limiter.begin(normalized, request.ip, now));
       if (wait > 0) {
         throw new AppError(
           'resource_exhausted',
@@ -69,11 +79,10 @@ export function sessionRoutes(ctx: Context) {
         .executeTakeFirst();
       const ok = await verifyPassword(password, user?.password_hash ?? (await dummyHash()));
       if (user === undefined || !ok || user.disabled_at !== null) {
-        byEmail.fail(normalized, now);
-        byIp.fail(request.ip, now);
+        // The reserved attempt stays counted against both keys.
         throw new AppError('unauthenticated', 'email or password is incorrect');
       }
-      byEmail.reset(normalized);
+      await limited(request, () => limiter.succeeded(normalized, request.ip, now));
 
       const session = await createSession(ctx.db, ctx.config, user.id, ctx.now());
       void reply.setCookie(SESSION_COOKIE, session.token, {
