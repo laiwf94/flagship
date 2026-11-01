@@ -10,6 +10,7 @@ const flag = (key: string, status: string, extra: Record<string, unknown> = {}) 
   type: 'boolean',
   clientSide: false,
   version: 1,
+  targetingVersion: 1,
   updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
   status,
   ruleCount: 0,

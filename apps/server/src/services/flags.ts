@@ -32,10 +32,13 @@ export interface FlagView {
   clientSide: boolean;
   salt: string;
   archived: boolean;
+  /** Metadata version: name, description, variants, client side, archived. */
   version: number;
   createdAt: string;
+  /** The latest change to the metadata or to any environment's targeting. */
   updatedAt: string;
-  environments: Record<string, EnvConfig & { updatedAt: string }>;
+  /** Each environment's targeting, with its own version. */
+  environments: Record<string, EnvConfig & { version: number; updatedAt: string }>;
 }
 
 export interface FlagSummary {
@@ -44,7 +47,11 @@ export interface FlagSummary {
   description: string;
   type: Flag['type'];
   clientSide: boolean;
+  /** Metadata version. */
   version: number;
+  /** Targeting version in the listed environment. */
+  targetingVersion: number;
+  /** The latest change to the metadata or to the listed environment's targeting. */
   updatedAt: string;
   status: FlagStatus;
   ruleCount: number;
@@ -141,14 +148,23 @@ async function environmentsOf(db: Db, projectId: string) {
     .execute();
 }
 
-async function lockFlag(trx: Db, projectId: string, key: string): Promise<FlagRow> {
-  const row = await trx
+/**
+ * Locks the flag row. Metadata writers take it exclusively; targeting writers
+ * share it, so edits to two environments of one flag run side by side while
+ * the variants they are validated against cannot change underneath them.
+ */
+async function lockFlag(
+  trx: Db,
+  projectId: string,
+  key: string,
+  mode: 'update' | 'share' = 'update',
+): Promise<FlagRow> {
+  const query = trx
     .selectFrom('flags')
     .selectAll()
     .where('project_id', '=', projectId)
-    .where('key', '=', key)
-    .forUpdate()
-    .executeTakeFirst();
+    .where('key', '=', key);
+  const row = await (mode === 'update' ? query.forUpdate() : query.forShare()).executeTakeFirst();
   if (row === undefined) throw notFound(`flag "${key}"`);
   return row;
 }
@@ -186,15 +202,6 @@ export async function validateCandidate(
   }
 }
 
-async function touchFlag(trx: Db, flag: FlagRow): Promise<FlagRow> {
-  return trx
-    .updateTable('flags')
-    .set({ version: flag.version + 1, updated_at: new Date() })
-    .where('id', '=', flag.id)
-    .returningAll()
-    .executeTakeFirstOrThrow();
-}
-
 export async function listFlags(
   db: Db,
   projectId: string,
@@ -217,7 +224,8 @@ export async function listFlags(
       'flags.type',
       'flags.client_side',
       'flags.version',
-      'flags.updated_at',
+      'flag_configs.version as targeting_version',
+      sql<Date>`greatest(flags.updated_at, flag_configs.updated_at)`.as('updated_at'),
       STATUS.as('status'),
       sql<number>`jsonb_array_length(flag_configs.rules)`.as('rule_count'),
     ])
@@ -241,6 +249,7 @@ export async function listFlags(
     type: r.type,
     clientSide: r.client_side,
     version: r.version,
+    targetingVersion: r.targeting_version,
     updatedAt: r.updated_at.toISOString(),
     status: r.status,
     ruleCount: r.rule_count,
@@ -265,6 +274,7 @@ export async function getFlag(db: Db, projectId: string, key: string): Promise<F
       'flag_configs.prerequisites',
       'flag_configs.rules',
       'flag_configs.fallthrough',
+      'flag_configs.version',
       'flag_configs.updated_at',
     ])
     .where('flag_configs.flag_id', '=', flag.id)
@@ -281,9 +291,14 @@ export async function getFlag(db: Db, projectId: string, key: string): Promise<F
     archived: flag.archived_at !== null,
     version: flag.version,
     createdAt: flag.created_at.toISOString(),
-    updatedAt: flag.updated_at.toISOString(),
+    updatedAt: new Date(
+      Math.max(flag.updated_at.getTime(), ...configs.map((c) => c.updated_at.getTime())),
+    ).toISOString(),
     environments: Object.fromEntries(
-      configs.map((c) => [c.env, { ...configView(c), updatedAt: c.updated_at.toISOString() }]),
+      configs.map((c) => [
+        c.env,
+        { ...configView(c), version: c.version, updatedAt: c.updated_at.toISOString() },
+      ]),
     ),
   };
 }
@@ -313,7 +328,7 @@ export async function createFlag(scope: Scope, input: FlagInput): Promise<FlagVi
         })
         .returningAll()
         .executeTakeFirstOrThrow();
-      const asRuleset = toFlag(flag, configColumnsView(initial));
+      const asRuleset = toFlag(flag, { ...configColumnsView(initial), version: 1 });
       for (const env of envs) {
         await validateCandidate(trx, env.id, (rs) => {
           rs.flags[flag.key] = asRuleset;
@@ -414,8 +429,10 @@ export async function updateFlag(scope: Scope, key: string, patch: FlagPatch): P
 
 /**
  * Replaces a flag's configuration in one environment. `expectedVersion` is
- * the flag version the editor loaded; undefined skips the check (kill switch,
- * scheduled changes).
+ * the targeting version of that environment the editor loaded; undefined
+ * skips the check (kill switch, scheduled changes). Other environments and
+ * the flag's metadata have their own versions, so changes there never make
+ * this edit conflict.
  */
 export async function writeConfig(
   trx: Db,
@@ -426,13 +443,11 @@ export async function writeConfig(
   expectedVersion: number | undefined,
   action: string,
 ): Promise<void> {
+  // The environment lock serialises every writer of this flag_configs row.
   await lockEnvironments(trx, [env.id]);
-  const flag = await lockFlag(trx, scope.project.id, key);
+  const flag = await lockFlag(trx, scope.project.id, key, 'share');
   if (flag.archived_at !== null) {
     throw new AppError('invalid_argument', `flag "${key}" is archived; restore it first`);
-  }
-  if (expectedVersion !== undefined && flag.version !== expectedVersion) {
-    throw versionConflict(`flag "${key}"`, flag.version);
   }
   const row = await trx
     .selectFrom('flag_configs')
@@ -440,16 +455,19 @@ export async function writeConfig(
     .where('flag_id', '=', flag.id)
     .where('environment_id', '=', env.id)
     .executeTakeFirstOrThrow();
+  if (expectedVersion !== undefined && row.version !== expectedVersion) {
+    throw versionConflict(`targeting of flag "${key}" in ${env.key}`, row.version);
+  }
   const before = configView(row);
   const after = next(before);
-  const touched = await touchFlag(trx, flag);
-  const asRuleset = toFlag(touched, configColumnsView(after));
+  const version = row.version + 1;
+  const asRuleset = toFlag(flag, { ...configColumnsView(after), version });
   await validateCandidate(trx, env.id, (rs) => {
     rs.flags[key] = asRuleset;
   });
   await trx
     .updateTable('flag_configs')
-    .set({ ...configColumns(after), updated_at: new Date() })
+    .set({ ...configColumns(after), version, updated_at: new Date() })
     .where('flag_id', '=', flag.id)
     .where('environment_id', '=', env.id)
     .execute();
@@ -484,7 +502,9 @@ export async function updateConfig(
 /**
  * The emergency off switch. No version is required: flipping one boolean is
  * safe to apply on top of whatever else changed, and whoever is reaching for
- * it should not have to reload first.
+ * it should not have to reload first. It still bumps the environment's
+ * targeting version, so an older draft there gets a conflict instead of
+ * silently turning the flag back on.
  */
 export async function setKillSwitch(
   scope: Scope,

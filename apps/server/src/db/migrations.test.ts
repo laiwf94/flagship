@@ -1,7 +1,9 @@
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDatabase } from '../../test/db.js';
+import { Migrator } from 'kysely/migration';
 import { createDatabase, migrate, type Db } from './database.js';
+import { migrations } from './migrations.js';
 
 let drop: () => Promise<void>;
 let url: string;
@@ -22,7 +24,11 @@ describe('migrations', () => {
     const others = [createDatabase({ url }).db, createDatabase({ url }).db];
     const results = await Promise.all([db, ...others].map((d) => migrate(d)));
     const applied = results.flatMap((r) => r.results ?? []).filter((r) => r.status === 'Success');
-    expect(applied.map((r) => r.migrationName)).toEqual(['001_initial', '002_login_attempts']);
+    expect(applied.map((r) => r.migrationName)).toEqual([
+      '001_initial',
+      '002_login_attempts',
+      '003_flag_config_versions',
+    ]);
     await Promise.all(others.map((d) => d.destroy()));
 
     const again = await migrate(db);
@@ -92,6 +98,48 @@ describe('migrations', () => {
     expect(r.rows[0]?.n).toBe(1);
     await own.db.destroy();
     await sql`SELECT 1`.execute(db);
+  });
+
+  it("backfill each environment's targeting version from the flag version", async () => {
+    const fresh = await createTestDatabase();
+    const { db: old } = createDatabase({ url: fresh.url });
+    try {
+      const migrator = new Migrator({
+        db: old,
+        provider: { getMigrations: () => Promise.resolve(migrations) },
+      });
+      const upTo = await migrator.migrateTo('002_login_attempts');
+      expect(upTo.error).toBeUndefined();
+      await sql`INSERT INTO projects (key, name) VALUES ('p', 'P')`.execute(old);
+      await sql`INSERT INTO environments (project_id, key, name)
+        SELECT id, e, e FROM projects, unnest(ARRAY['dev', 'prod']) AS e`.execute(old);
+      await sql`INSERT INTO flags (project_id, key, name, type, variants, salt, version)
+        SELECT id, f.key, f.key, 'boolean', '[]', f.key, f.version FROM projects,
+          (VALUES ('fresh', 1), ('edited', 7)) AS f (key, version)`.execute(old);
+      await sql`INSERT INTO flag_configs (environment_id, flag_id, off_variant, fallthrough)
+        SELECT environments.id, flags.id, 'off', '{"variant":"off"}'
+        FROM environments CROSS JOIN flags`.execute(old);
+
+      await migrate(old);
+      const rows = await sql<{ flag: string; env: string; version: number }>`
+        SELECT flags.key AS flag, environments.key AS env, flag_configs.version
+        FROM flag_configs
+        JOIN flags ON flags.id = flag_configs.flag_id
+        JOIN environments ON environments.id = flag_configs.environment_id
+        ORDER BY 1, 2`.execute(old);
+      expect(rows.rows).toEqual([
+        { flag: 'edited', env: 'dev', version: 7 },
+        { flag: 'edited', env: 'prod', version: 7 },
+        { flag: 'fresh', env: 'dev', version: 1 },
+        { flag: 'fresh', env: 'prod', version: 1 },
+      ]);
+      await expect(sql`UPDATE flag_configs SET version = 0`.execute(old)).rejects.toThrow(
+        /check constraint/,
+      );
+    } finally {
+      await old.destroy();
+      await fresh.drop();
+    }
   });
 
   it('read bigint columns as numbers', async () => {

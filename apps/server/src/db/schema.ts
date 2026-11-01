@@ -82,6 +82,8 @@ export interface FlagConfigsTable {
   prerequisites: Json<Flag['prerequisites']>;
   rules: Json<Flag['rules']>;
   fallthrough: Json<Flag['fallthrough']>;
+  /** Targeting version in this environment; flags.version covers metadata. */
+  version: Generated<number>;
   updated_at: UpdatedAt;
 }
 

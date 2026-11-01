@@ -28,6 +28,7 @@ export interface ConfigRow {
   prerequisites: Flag['prerequisites'];
   rules: Flag['rules'];
   fallthrough: Flag['fallthrough'];
+  version: number;
   updated_at: Date;
 }
 
@@ -48,8 +49,18 @@ export interface SegmentRow {
 type FlagPart = Pick<FlagRow, 'key' | 'type' | 'variants' | 'salt' | 'client_side' | 'version'>;
 type ConfigPart = Pick<
   ConfigRow,
-  'enabled' | 'off_variant' | 'prerequisites' | 'rules' | 'fallthrough'
+  'enabled' | 'off_variant' | 'prerequisites' | 'rules' | 'fallthrough' | 'version'
 >;
+
+/**
+ * The version SDKs see for a flag in one environment. Every change bumps
+ * exactly one of the two by one (metadata for all environments, targeting for
+ * one), so their sum goes up by one with each change that environment sees.
+ * A new flag starts at 1.
+ */
+export function rulesetFlagVersion(metadata: number, targeting: number): number {
+  return metadata + targeting - 1;
+}
 
 /** The ruleset form of a flag in one environment: what SDKs evaluate. */
 export function toFlag(f: FlagPart, c: ConfigPart): Flag {
@@ -64,7 +75,7 @@ export function toFlag(f: FlagPart, c: ConfigPart): Flag {
     fallthrough: c.fallthrough,
     salt: f.salt,
     clientSide: f.client_side,
-    version: f.version,
+    version: rulesetFlagVersion(f.version, c.version),
   };
 }
 
@@ -96,7 +107,8 @@ export async function loadRuleset(db: Db, environmentId: string): Promise<Rulese
       'flags.variants',
       'flags.salt',
       'flags.client_side',
-      'flags.version',
+      'flags.version as flag_version',
+      'flag_configs.version',
       'flag_configs.enabled',
       'flag_configs.off_variant',
       'flag_configs.prerequisites',
@@ -114,7 +126,7 @@ export async function loadRuleset(db: Db, environmentId: string): Promise<Rulese
     .orderBy('key')
     .execute();
   const flags: Record<string, Flag> = {};
-  for (const r of rows) flags[r.key] = toFlag(r, r);
+  for (const r of rows) flags[r.key] = toFlag({ ...r, version: r.flag_version }, r);
   return {
     environment: env.key,
     version: env.ruleset_version,

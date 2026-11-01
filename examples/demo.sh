@@ -61,7 +61,7 @@ wait_for() {
 
 target() {
   local version
-  version=$(api GET "$P/flags/new-checkout" | json '.version')
+  version=$(api GET "$P/flags/new-checkout" | json '.environments.production.version')
   api PUT "$P/flags/new-checkout/environments/production" \
     "{\"version\":$version,\"enabled\":true,\"offVariant\":\"off\",\"prerequisites\":[],\"rules\":[],\"fallthrough\":$1}" >/dev/null
 }

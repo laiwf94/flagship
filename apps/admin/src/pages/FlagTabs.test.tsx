@@ -13,6 +13,7 @@ function flag(version = 2, archived = false): FlagDetail {
     prerequisites: [],
     rules: [],
     fallthrough: { variant: 'b' },
+    version: 1,
     updatedAt: '2030-01-01T00:00:00Z',
   };
   return {

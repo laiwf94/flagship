@@ -51,7 +51,9 @@ Server SDKs evaluate locally from a ruleset snapshot, kept current over SSE with
 ruleset or fall back to their own defaults. Browsers use client-side keys, which get evaluated
 values only, never rules or other users.
 
-Editing is versioned, and a stale edit gets `409`. The whole ruleset is validated before a
+Editing is versioned, and a stale edit gets `409`. A flag's metadata and its targeting in
+each environment have separate versions, so editing development never conflicts with an edit
+to production. The whole ruleset is validated before a
 change commits, and the UI shows a diff and a live preview of who would change variant before
 you save. An audit log records every change and who made it. Access uses three roles (viewer,
 editor, admin) and cookie sessions with CSRF protection, and each environment has its own
@@ -105,7 +107,7 @@ Admin routes use the session cookie and need `X-CSRF-Token` on writes. SDK route
 | `GET/POST/DELETE /api/projects/:p/environments/:e/api-keys[/:id]`           | SDK keys; the secret is returned once (admin)                 |
 | `GET/POST /api/projects/:p/flags`                                           | list with `q`, `status`, `type` filters; create               |
 | `GET/PUT /api/projects/:p/flags/:f`                                         | read; edit name, description, variants (with `version`)       |
-| `PUT /api/projects/:p/flags/:f/environments/:e`                             | replace targeting (with `version`)                            |
+| `PUT /api/projects/:p/flags/:f/environments/:e`                             | replace targeting (with that environment's `version`)         |
 | `POST /api/projects/:p/flags/:f/environments/:e/kill-switch`                | `{"enabled": false}`, no version needed                       |
 | `POST /api/projects/:p/flags/:f/archive`, `/restore`                        | archive and restore                                           |
 | `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                             |

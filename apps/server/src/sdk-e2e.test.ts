@@ -24,7 +24,7 @@ async function rollout(percent: number): Promise<void> {
   const flag = (await admin.request('GET', `${P}/flags/new-checkout`)).json();
   const on = percent * 1000;
   const res = await admin.request('PUT', T, {
-    version: flag.version,
+    version: flag.environments.production.version,
     enabled: true,
     offVariant: 'off',
     prerequisites: [],

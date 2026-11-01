@@ -162,4 +162,13 @@ export const migrations: Record<string, Migration> = {
     )`,
     `CREATE INDEX login_attempts_last_at_idx ON login_attempts (last_at)`,
   ]),
+  // Targeting gets its own version per environment, so edits to development
+  // and production of one flag no longer conflict. flags.version stays as the
+  // metadata version. The backfill copies the flag's version so an editor who
+  // loaded the flag before the upgrade can still save.
+  '003_flag_config_versions': statements([
+    `ALTER TABLE flag_configs ADD COLUMN version integer NOT NULL DEFAULT 1 CHECK (version >= 1)`,
+    `UPDATE flag_configs SET version = flags.version
+      FROM flags WHERE flags.id = flag_configs.flag_id AND flags.version <> 1`,
+  ]),
 };

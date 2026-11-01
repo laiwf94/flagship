@@ -87,6 +87,7 @@ async function flagAndConfig(db: Db, projectId: string, environmentId: string, k
       'flag_configs.prerequisites',
       'flag_configs.rules',
       'flag_configs.fallthrough',
+      'flag_configs.version as config_version',
     ])
     .where('flags.project_id', '=', projectId)
     .where('flags.key', '=', key)
@@ -157,6 +158,7 @@ export async function createSchedule(
         prerequisites: next.prerequisites,
         rules: next.rules,
         fallthrough: next.fallthrough,
+        version: flag.config_version,
       });
     });
     const row = await trx

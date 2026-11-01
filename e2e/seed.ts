@@ -156,9 +156,14 @@ export async function seed(base: string): Promise<void> {
   for (const f of flags) await call(base, s, 'POST', `${P}/flags`, f);
 
   const target = async (key: string, config: Record<string, unknown>) => {
-    const flag = await call<{ version: number }>(base, s, 'GET', `${P}/flags/${key}`);
+    const flag = await call<{ environments: { production: { version: number } } }>(
+      base,
+      s,
+      'GET',
+      `${P}/flags/${key}`,
+    );
     await call(base, s, 'PUT', `${P}/flags/${key}/environments/production`, {
-      version: flag.version,
+      version: flag.environments.production.version,
       enabled: true,
       prerequisites: [],
       rules: [],

@@ -10,6 +10,10 @@ const SAVE_API = 'PUT /api/projects/default/flags/new-checkout/environments/prod
 const KILL_API =
   'POST /api/projects/default/flags/new-checkout/environments/production/kill-switch';
 
+/**
+ * `version` is production's targeting version. The metadata version is kept
+ * different on purpose, so a save that sent the wrong one would be caught.
+ */
 function makeFlag(
   overrides: Partial<FlagDetail['environments'][string]> = {},
   version = 3,
@@ -22,6 +26,7 @@ function makeFlag(
     fallthrough: { variant: 'off' },
     updatedAt: '2030-01-01T00:00:00Z',
     ...overrides,
+    version,
   };
   return {
     key: 'new-checkout',
@@ -35,10 +40,13 @@ function makeFlag(
     clientSide: true,
     salt: 'new-checkout',
     archived: false,
-    version,
+    version: 7,
     createdAt: '2030-01-01T00:00:00Z',
     updatedAt: '2030-01-01T00:00:00Z',
-    environments: { production: config, development: { ...config, enabled: false } },
+    environments: {
+      production: config,
+      development: { ...config, enabled: false, version: 1 },
+    },
   };
 }
 
@@ -82,7 +90,7 @@ function setup(flag = makeFlag(), role = 'editor') {
     [KILL_API]: (body: unknown) => {
       current = makeFlag(
         { ...current.environments.production, ...(body as object) },
-        current.version + 1,
+        (current.environments.production?.version ?? 0) + 1,
       );
       return current;
     },

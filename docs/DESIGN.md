@@ -151,8 +151,8 @@ interesting ones:
 
 | Table                                                                               | Holds                                                                  |
 | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `flags`                                                                             | per-project definition, variants (JSONB), `version`                    |
-| `flag_configs`                                                                      | per-environment targeting (JSONB rules), keyed by environment and flag |
+| `flags`                                                                             | per-project definition, variants (JSONB), metadata `version`           |
+| `flag_configs`                                                                      | per-environment targeting (JSONB rules) with its own `version`         |
 | `segments`                                                                          | per-environment, with `version`                                        |
 | `environments`                                                                      | `ruleset_version`, bumped on every change                              |
 | `ruleset_changes`                                                                   | one row per version: kind, key, new value (or null for a delete)       |
@@ -165,7 +165,9 @@ Every write follows the same shape inside one transaction:
 1. Lock the affected `environments` rows, **in id order**, so two writers touching
    overlapping environments can't deadlock. This also serialises writes per
    environment, which keeps ruleset versions gapless.
-2. Lock the flag or segment row and compare its version (see below).
+2. Lock the flag or segment row and compare its version (see below). Targeting edits take
+   the flag row in share mode, so edits to two environments of one flag run side by side,
+   while a metadata edit waits for them and they wait for it.
 3. Load the environment's current ruleset, apply the change, and run the full
    `validateRuleset`. This is what catches a removed variant that a prerequisite still
    names, a deleted segment a rule still uses, or a new cycle.
@@ -181,20 +183,32 @@ the test starts three migrators at once on an empty database.
 
 ## Two people editing one flag
 
-Every flag and segment has a `version`. An edit names the version it was based on; if the
-row has moved on, the server answers `409 version_conflict` with the current version, and
-the UI explains that someone else saved and offers to reload. The test fires three edits
-from the same version at once: exactly one wins.
+Every segment has a `version`, and so does every flag, twice over: `flags.version` covers
+the metadata (name, description, variants, client side, archived) and
+`flag_configs.version` covers the targeting in one environment. An edit names the version it
+was based on; if that row has moved on, the server answers `409 version_conflict` with the
+current version, and the UI explains that someone else saved and offers to reload. The test
+fires three edits from the same version at once: exactly one wins.
 
-One version per flag covers its metadata and every environment's targeting. That gives a
-false conflict when two people edit different environments of the same flag at the same
-moment. We accepted that: it is rare, and the fix (reload) is cheap. The cost of a missed
-conflict is a silent overwrite.
+Because the versions are separate, editing development never conflicts with editing
+production, and renaming a flag never conflicts with editing its targeting. The tests start
+edits to two environments and the metadata from one load, at once, and all of them land.
+Splitting them does not lose safety. Whole-ruleset validation still runs on every write, so a
+targeting draft that uses a variant someone has just removed is refused with the reason.
+
+The targeting version a save sends is `environments.<env>.version` from `GET` on the flag;
+the flag list gives it as `targetingVersion` for the listed environment. Migration
+`003_flag_config_versions` set every environment's targeting version to the flag's version
+at the time, so an editor who loaded a flag before the upgrade can still save.
+
+SDKs see one `version` per flag in the ruleset: metadata version plus targeting version,
+minus one. Each change bumps exactly one of the two by one, so the number SDKs see goes up
+by one with each change that reaches that environment, and a new flag starts at 1.
 
 The kill switch is the exception. It takes no version, because someone reaching for it
 during an incident should not be asked to reload first, and flipping one boolean on top of
-whatever else changed is safe. It still bumps the version, so an editor with an older draft
-gets a 409 instead of silently turning the flag back on.
+whatever else changed is safe. It still bumps that environment's targeting version, so an
+editor with an older draft there gets a 409 instead of silently turning the flag back on.
 
 ## Streaming changes to SDKs
 
@@ -494,9 +508,6 @@ For large rulesets, patches are already per flag, and the snapshot is the expens
 Snapshots can be served from object storage, keyed by version, and carried by a CDN. Exposure
 volume grows by one row per flag, variant, hour and environment from the hourly upserts. For
 per-user analytics, send events to a log such as Kafka or Kinesis and aggregate them there.
-
-Splitting the flag version into one per environment would remove the false conflicts across
-environments described above, at the cost of a more complex API.
 
 ## Further reading
 

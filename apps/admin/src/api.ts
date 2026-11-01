@@ -22,7 +22,10 @@ export interface FlagSummary {
   description: string;
   type: Flag['type'];
   clientSide: boolean;
+  /** Metadata version. */
   version: number;
+  /** Targeting version in the listed environment. */
+  targetingVersion: number;
   updatedAt: string;
   status: FlagStatus;
   ruleCount: number;
@@ -45,10 +48,12 @@ export interface FlagDetail {
   clientSide: boolean;
   salt: string;
   archived: boolean;
+  /** Metadata version: name, description, variants, client side, archived. */
   version: number;
   createdAt: string;
   updatedAt: string;
-  environments: Record<string, EnvConfig & { updatedAt: string }>;
+  /** Each environment's targeting, with its own version. */
+  environments: Record<string, EnvConfig & { version: number; updatedAt: string }>;
 }
 
 export interface SegmentView {

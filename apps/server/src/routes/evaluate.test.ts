@@ -46,7 +46,7 @@ beforeAll(async () => {
   });
   const flag = (await admin.request('GET', `${P}/flags/web-banner`)).json();
   const res = await admin.request('PUT', `${P}/flags/web-banner/environments/production`, {
-    version: flag.version,
+    version: flag.environments.production.version,
     enabled: true,
     offVariant: 'off',
     prerequisites: [],

@@ -12,9 +12,14 @@ import { RuleEditor } from './RuleEditor';
 import { newRule } from './rules';
 import { ServeEditor } from './ServeEditor';
 
-function configOf(flag: FlagDetail, env: string): EnvConfig {
+function envOf(flag: FlagDetail, env: string) {
   const c = flag.environments[env];
   if (c === undefined) throw new Error(`flag has no config for ${env}`);
+  return c;
+}
+
+function configOf(flag: FlagDetail, env: string): EnvConfig {
+  const c = envOf(flag, env);
   return {
     enabled: c.enabled,
     offVariant: c.offVariant,
@@ -24,14 +29,15 @@ function configOf(flag: FlagDetail, env: string): EnvConfig {
   };
 }
 
-function asFlag(flag: FlagDetail, config: EnvConfig): Flag {
+function asFlag(flag: FlagDetail, env: string, config: EnvConfig): Flag {
   return {
     key: flag.key,
     type: flag.type,
     variants: flag.variants,
     salt: flag.salt,
     clientSide: flag.clientSide,
-    version: flag.version,
+    // The version the server puts in the ruleset: metadata plus targeting.
+    version: flag.version + envOf(flag, env).version - 1,
     ...config,
   };
 }
@@ -88,8 +94,11 @@ export function Targeting({
 }) {
   const toast = useToast();
   const saved = configOf(flag, env);
+  // Targeting has its own version per environment: saves here only conflict
+  // with other changes to this environment's targeting.
+  const savedVersion = envOf(flag, env).version;
   const [draft, setDraft] = useState<EnvConfig>(saved);
-  const [base, setBase] = useState(flag.version);
+  const [base, setBase] = useState(savedVersion);
   const [reviewing, setReviewing] = useState(false);
   const [confirmKill, setConfirmKill] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,14 +111,14 @@ export function Targeting({
 
   // A newer version from elsewhere (reload, kill switch) resets the draft if
   // there are no local edits.
-  const [seen, setSeen] = useState(`${flag.version}/${savedJson}`);
-  if (seen !== `${flag.version}/${savedJson}`) {
-    setSeen(`${flag.version}/${savedJson}`);
+  const [seen, setSeen] = useState(`${savedVersion}/${savedJson}`);
+  if (seen !== `${savedVersion}/${savedJson}`) {
+    setSeen(`${savedVersion}/${savedJson}`);
     if (!dirty || adopt) {
       setDraft(saved);
       setAdopt(false);
     }
-    setBase(flag.version);
+    setBase(savedVersion);
   }
 
   const blocker = useBlocker(
@@ -128,13 +137,13 @@ export function Targeting({
   }, [dirty]);
 
   const savedRuleset = useMemo<Ruleset>(
-    () => ({ ...ruleset, flags: { ...ruleset.flags, [flag.key]: asFlag(flag, saved) } }),
+    () => ({ ...ruleset, flags: { ...ruleset.flags, [flag.key]: asFlag(flag, env, saved) } }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ruleset, flag, savedJson],
+    [ruleset, flag, env, savedJson],
   );
   const draftRuleset = useMemo<Ruleset>(
-    () => ({ ...ruleset, flags: { ...ruleset.flags, [flag.key]: asFlag(flag, draft) } }),
-    [ruleset, flag, draft],
+    () => ({ ...ruleset, flags: { ...ruleset.flags, [flag.key]: asFlag(flag, env, draft) } }),
+    [ruleset, flag, env, draft],
   );
   const issues = useMemo(() => localIssues(draftRuleset, flag.key), [draftRuleset, flag.key]);
   const valid = Object.keys(issues).length === 0;
@@ -478,8 +487,8 @@ export function Targeting({
               <Icon name="alert" />
               <div>
                 <p>
-                  Someone else saved this flag while you were editing. Reload to see their version;
-                  your changes here will be discarded.
+                  Someone else saved this flag&rsquo;s targeting in {envName} while you were
+                  editing. Reload to see their version; your changes here will be discarded.
                 </p>
                 <div>
                   <Button

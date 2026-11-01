@@ -160,7 +160,9 @@ describe('flags', () => {
       },
     });
     expect(res.statusCode, res.body).toBe(200);
-    expect(res.json().version).toBe(flag.version + 1);
+    expect(res.json().environments.production.version).toBe(2);
+    expect(res.json().environments.development.version).toBe(1);
+    expect(res.json().version).toBe(flag.version);
     expect(await auditCount()).toBe(auditsBefore + 1);
 
     const history = await viewer.request('GET', `${P}/audit?flag=dark-mode`);
@@ -192,7 +194,7 @@ describe('flags', () => {
     const flag = await create('race');
     const edit = (enabled: boolean) =>
       editor.request('PUT', target('race'), {
-        version: flag.version,
+        version: flag.environments.production.version,
         enabled,
         offVariant: 'off',
         prerequisites: [],
@@ -205,7 +207,9 @@ describe('flags', () => {
     const conflict = results.find((r) => r.statusCode === 409);
     expect(conflict?.json().error).toMatchObject({
       code: 'version_conflict',
-      details: { currentVersion: flag.version + 1 },
+      message:
+        'targeting of flag "race" in production was changed by someone else; reload and try again',
+      details: { currentVersion: flag.environments.production.version + 1 },
     });
   });
 
@@ -215,11 +219,11 @@ describe('flags', () => {
       enabled: true,
     });
     expect(res.json()).toMatchObject({
-      version: flag.version + 1,
-      environments: { production: { enabled: true } },
+      version: flag.version,
+      environments: { production: { enabled: true, version: 2 }, development: { version: 1 } },
     });
     const stale = await editor.request('PUT', target('payments-v2'), {
-      version: flag.version,
+      version: flag.environments.production.version,
       enabled: false,
       offVariant: 'off',
       prerequisites: [],
@@ -403,6 +407,156 @@ describe('flags', () => {
   });
 });
 
+describe('per-environment versions', () => {
+  const targeting = (version: number, enabled: boolean, variant = 'on') => ({
+    version,
+    enabled,
+    offVariant: 'off',
+    prerequisites: [],
+    rules: [],
+    fallthrough: { variant },
+  });
+  const sdkVersion = async (key: string, env = 'production') =>
+    (await viewer.request('GET', `${P}/environments/${env}/ruleset`)).json().flags[key]?.version;
+
+  it('never conflicts across environments, even when both edits start from one load', async () => {
+    const flag = await create('split');
+    const [prod, dev] = await Promise.all([
+      editor.request('PUT', target('split'), targeting(flag.environments.production.version, true)),
+      editor.request(
+        'PUT',
+        target('split', 'development'),
+        targeting(flag.environments.development.version, true, 'off'),
+      ),
+    ]);
+    expect([prod.statusCode, dev.statusCode], `${prod.body} ${dev.body}`).toEqual([200, 200]);
+    const after = (await viewer.request('GET', `${P}/flags/split`)).json();
+    expect(after).toMatchObject({
+      version: 1,
+      environments: {
+        production: { version: 2, enabled: true, fallthrough: { variant: 'on' } },
+        development: { version: 2, enabled: true, fallthrough: { variant: 'off' } },
+      },
+    });
+
+    // A second edit to production from the first load still conflicts, and
+    // the conflict reports production's targeting version.
+    const stale = await editor.request(
+      'PUT',
+      target('split'),
+      targeting(flag.environments.production.version, false),
+    );
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.details).toEqual({ currentVersion: 2 });
+  });
+
+  it('keeps metadata and targeting preconditions apart', async () => {
+    const flag = await create('apart');
+    const renamed = await editor.request('PUT', `${P}/flags/apart`, {
+      version: flag.version,
+      name: 'Apart',
+    });
+    expect(renamed.json()).toMatchObject({
+      version: 2,
+      environments: { production: { version: 1 } },
+    });
+    // Targeting loaded before the rename saves cleanly...
+    const saved = await editor.request(
+      'PUT',
+      target('apart'),
+      targeting(flag.environments.production.version, true),
+    );
+    expect(saved.statusCode, saved.body).toBe(200);
+    // ...and settings loaded before the targeting edit do too.
+    const described = await editor.request('PUT', `${P}/flags/apart`, {
+      version: 2,
+      description: 'Kept apart',
+    });
+    expect(described.statusCode, described.body).toBe(200);
+    expect(described.json()).toMatchObject({
+      version: 3,
+      name: 'Apart',
+      description: 'Kept apart',
+      environments: { production: { version: 2, enabled: true } },
+    });
+    // A stale metadata version is still refused with the metadata version.
+    const stale = await editor.request('PUT', `${P}/flags/apart`, { version: 2, name: 'x' });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.details).toEqual({ currentVersion: 3 });
+    // Archive and restore are metadata changes.
+    expect(
+      (await editor.request('POST', `${P}/flags/apart/archive`, { version: 2 })).statusCode,
+    ).toBe(409);
+    const archived = await editor.request('POST', `${P}/flags/apart/archive`, { version: 3 });
+    expect(archived.json()).toMatchObject({
+      version: 4,
+      environments: { production: { version: 2 } },
+    });
+    await editor.request('POST', `${P}/flags/apart/restore`, { version: 4 });
+  });
+
+  it('runs a metadata edit and edits in two environments at once without losing any', async () => {
+    const flag = await create('trio');
+    const results = await Promise.all([
+      editor.request('PUT', `${P}/flags/trio`, { version: flag.version, name: 'Trio' }),
+      editor.request('PUT', target('trio'), targeting(1, true)),
+      editor.request('PUT', target('trio', 'development'), targeting(1, true)),
+    ]);
+    expect(results.map((r) => r.statusCode)).toEqual([200, 200, 200]);
+    const after = (await viewer.request('GET', `${P}/flags/trio`)).json();
+    expect(after).toMatchObject({
+      name: 'Trio',
+      version: 2,
+      environments: { production: { version: 2, enabled: true }, development: { version: 2 } },
+    });
+  });
+
+  it('gives SDKs a flag version that goes up by one with every change they see', async () => {
+    const flag = await create('counted');
+    expect(await sdkVersion('counted')).toBe(1);
+    expect(await sdkVersion('counted', 'development')).toBe(1);
+
+    await editor.request('PUT', target('counted'), targeting(1, true));
+    expect(await sdkVersion('counted')).toBe(2);
+    expect(await sdkVersion('counted', 'development')).toBe(1);
+
+    await editor.request('POST', `${target('counted')}/kill-switch`, { enabled: false });
+    expect(await sdkVersion('counted')).toBe(3);
+
+    await editor.request('PUT', `${P}/flags/counted`, { version: flag.version, name: 'Counted' });
+    expect(await sdkVersion('counted')).toBe(4);
+    expect(await sdkVersion('counted', 'development')).toBe(2);
+
+    // The streamed change carries the same version as the snapshot.
+    const change = await t.db
+      .selectFrom('ruleset_changes')
+      .innerJoin('environments', 'environments.id', 'ruleset_changes.environment_id')
+      .select('ruleset_changes.value')
+      .where('environments.key', '=', 'production')
+      .where('ruleset_changes.key', '=', 'counted')
+      .orderBy('ruleset_changes.version', 'desc')
+      .executeTakeFirstOrThrow();
+    expect(change.value).toMatchObject({ version: 4 });
+  });
+
+  it('lists the targeting version and the latest change for the environment', async () => {
+    const list = async (env: string) =>
+      (await viewer.request('GET', `${P}/flags?environment=${env}&q=counted`)).json().flags[0];
+    const prod = await list('production');
+    const dev = await list('development');
+    expect(prod).toMatchObject({ version: 2, targetingVersion: 3 });
+    expect(dev).toMatchObject({ version: 2, targetingVersion: 1 });
+    const flag = (await viewer.request('GET', `${P}/flags/counted`)).json();
+    expect(flag.updatedAt >= flag.environments.production.updatedAt).toBe(true);
+    expect(prod.updatedAt >= flag.environments.production.updatedAt).toBe(true);
+
+    await editor.request('PUT', target('counted', 'development'), targeting(1, true));
+    const later = (await viewer.request('GET', `${P}/flags/counted`)).json();
+    expect((await list('development')).updatedAt).toBe(later.environments.development.updatedAt);
+    expect(later.updatedAt).toBe(later.environments.development.updatedAt);
+  });
+});
+
 describe('segments', () => {
   const S = `${P}/environments/production/segments`;
   const body = {
@@ -470,7 +624,11 @@ describe('segments', () => {
     const blocked = await editor.request('DELETE', `${S}/beta?version=2`);
     expect(blocked.statusCode).toBe(400);
     expect(blocked.json().error.details[0].message).toBe('unknown segment "beta"');
-    await editor.request('POST', `${P}/flags/segmented/archive`, { version: flag.version + 1 });
+    // Targeting edits leave the metadata version alone, so archive takes the original one.
+    const archived = await editor.request('POST', `${P}/flags/segmented/archive`, {
+      version: flag.version,
+    });
+    expect(archived.statusCode, archived.body).toBe(200);
     expect((await editor.request('DELETE', `${S}/beta?version=1`)).statusCode).toBe(409);
     expect((await editor.request('DELETE', `${S}/beta?version=2`)).statusCode).toBe(204);
     expect((await editor.request('DELETE', `${S}/beta?version=2`)).statusCode).toBe(404);

@@ -54,7 +54,8 @@ describe('scheduled changes', () => {
       enabled: true,
       fallthrough: { variant: 'on' },
     });
-    expect(after.version).toBe(before.version + 1);
+    expect(after.environments.production.version).toBe(before.environments.production.version + 1);
+    expect(after.version).toBe(before.version);
     const list = (await viewer.request('GET', S('launch'))).json().schedules;
     expect(list[0]).toMatchObject({ status: 'applied', error: null });
     const audit = (await viewer.request('GET', `${P}/audit?flag=launch&limit=1`)).json().entries[0];
@@ -106,7 +107,7 @@ describe('scheduled changes', () => {
     clock = new Date(clock.getTime() + 6 * 60_000);
     expect(await t.app.scheduler.runOnce()).toBe(1);
     const after = await flag('doomed');
-    expect(after.version).toBe(before.version);
+    expect(after.environments.production.version).toBe(before.environments.production.version);
     expect(after.environments.production.enabled).toBe(false);
     const row = (await viewer.request('GET', S('doomed'))).json().schedules[0];
     expect(row.status).toBe('failed');
