@@ -337,7 +337,7 @@ export async function createFlag(scope: Scope, input: FlagInput): Promise<FlagVi
           .insertInto('flag_configs')
           .values({ flag_id: flag.id, environment_id: env.id, ...configColumns(initial) })
           .execute();
-        await recordChange(trx, env.id, 'flag', flag.key, asRuleset, scope.retention);
+        await recordChange(trx, env.id, 'flag', flag.key, scope.retention);
       }
       if (envs.length === 0) {
         // No environment to validate against: check the flag on its own.
@@ -411,7 +411,7 @@ export async function updateFlag(scope: Scope, key: string, patch: FlagPatch): P
         await validateCandidate(trx, config.environment_id, (rs) => {
           rs.flags[key] = asRuleset;
         });
-        await recordChange(trx, config.environment_id, 'flag', key, asRuleset, scope.retention);
+        await recordChange(trx, config.environment_id, 'flag', key, scope.retention);
       }
     }
     await recordAudit(trx, {
@@ -471,7 +471,7 @@ export async function writeConfig(
     .where('flag_id', '=', flag.id)
     .where('environment_id', '=', env.id)
     .execute();
-  await recordChange(trx, env.id, 'flag', key, asRuleset, scope.retention);
+  await recordChange(trx, env.id, 'flag', key, scope.retention);
   await recordAudit(trx, {
     projectId: scope.project.id,
     environmentId: env.id,
@@ -561,14 +561,7 @@ async function setArchived(
         if (archive) Reflect.deleteProperty(rs.flags, key);
         else rs.flags[key] = asRuleset;
       });
-      await recordChange(
-        trx,
-        config.environment_id,
-        'flag',
-        key,
-        archive ? null : asRuleset,
-        scope.retention,
-      );
+      await recordChange(trx, config.environment_id, 'flag', key, scope.retention);
     }
     if (archive) {
       await trx

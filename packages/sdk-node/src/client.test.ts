@@ -1,7 +1,7 @@
-import type { Flag, Ruleset } from '@flagship/core';
+import { rulesetChecksum, type Flag, type Ruleset } from '@flagship/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { StubServer, until } from '../test/stub.js';
-import { FlagshipClient, type ChangeEvent, type Status } from './client.js';
+import { ChecksumError, FlagshipClient, type ChangeEvent, type Status } from './client.js';
 
 function flag(key: string, extra: Partial<Flag> = {}): Flag {
   return {
@@ -179,30 +179,172 @@ describe('FlagshipClient', () => {
     await until(() => client.version === 11, 5000);
   });
 
-  it('ignores invalid rulesets, bad patches and malformed events', async () => {
+  it('ignores invalid rulesets, unknown patch kinds and malformed events', async () => {
     const { stub, client } = await setup(ruleset(flag('checkout')));
     await client.ready();
     const errors: Error[] = [];
     client.on('error', (e) => errors.push(e));
     stub.send('id: 11\nevent: put\ndata: {"environment":"x"}\n\n');
-    stub.send(
-      'id: 12\nevent: patch\ndata: {"kind":"flag","key":"checkout","value":{"key":"checkout"}}\n\n',
-    );
-    stub.send('id: 13\nevent: patch\ndata: {"kind":"segment","key":"s","value":{"bad":true}}\n\n');
     stub.send('id: 14\nevent: patch\ndata: {"kind":"other","key":"s","value":null}\n\n');
     stub.send('id: 15\nevent: put\ndata: not json\n\n');
-    stub.send(
-      `id: 16\nevent: patch\ndata: ${JSON.stringify({ kind: 'segment', key: 'beta', value: { key: 'beta', included: ['alice'], excluded: [], rules: [], version: 1 } })}\n\n`,
-    );
+    stub.ruleset = { ...stub.ruleset, version: 15 };
+    stub.patch('segment', 'beta', {
+      key: 'beta',
+      included: ['alice'],
+      excluded: [],
+      rules: [],
+      version: 1,
+    });
     await until(() => client.version === 16);
     expect(errors).toHaveLength(1);
+    expect(client.resyncs).toBe(0);
     expect(client.boolVariation('checkout', alice, false)).toBe(true);
-    stub.send(
-      `id: 17\nevent: patch\ndata: ${JSON.stringify({ kind: 'segment', key: 'beta', value: null })}\n\n`,
-    );
+    stub.patch('segment', 'beta', null);
     await until(() => client.version === 17);
+    expect(client.checksum).toBe(rulesetChecksum(stub.ruleset));
   });
 
+  it('resyncs instead of skipping a patch it cannot apply', async () => {
+    const { stub, client } = await setup(ruleset(flag('checkout')));
+    await client.ready();
+    const errors: Error[] = [];
+    client.on('error', (e) => errors.push(e));
+    // The server really changed, but what arrived is not a valid flag.
+    stub.patch('flag', 'checkout', flag('checkout', { enabled: false, version: 2 }), {
+      send: false,
+    });
+    stub.send(
+      'id: 11\nevent: patch\ndata: {"kind":"flag","key":"checkout","value":{"key":"checkout"}}\n\n',
+    );
+    await until(() => client.version === 11 && client.status === 'ready');
+    expect(client.resyncs).toBe(1);
+    expect(errors[0]).toBeInstanceOf(ChecksumError);
+    expect(errors[0]?.message).toMatch(/invalid flag patch/);
+    expect(stub.lastEventIds.at(-1)).toBeUndefined();
+    expect(client.boolVariation('checkout', alice, true)).toBe(false);
+  });
+});
+
+describe('checksums', () => {
+  it('verifies the snapshot and every patch against the checksums the server sends', async () => {
+    const { stub, client } = await setup(ruleset(flag('checkout'), flag('banner')));
+    await client.ready();
+    expect(client.checksum).toBe(rulesetChecksum(stub.ruleset));
+    stub.patchFlag('checkout', { enabled: false, version: 2 });
+    stub.patch('segment', 'beta', {
+      key: 'beta',
+      included: [],
+      excluded: [],
+      rules: [],
+      version: 1,
+    });
+    stub.patchFlag('banner', null);
+    await until(() => client.version === 13);
+    expect(client.resyncs).toBe(0);
+    expect(client.checksum).toBe(rulesetChecksum(stub.ruleset));
+    expect(client.flagKeys()).toEqual(['checkout']);
+    // A resumed connection carries on from the last verified patch.
+    stub.dropStreams();
+    await until(() => stub.lastEventIds.length === 2);
+    expect(stub.lastEventIds[1]).toBe('13');
+  });
+
+  it('notices a lost patch, keeps the last good ruleset and resyncs from a full snapshot', async () => {
+    const { stub, client } = await setup(ruleset(flag('checkout'), flag('banner')));
+    await client.ready();
+    const errors: Error[] = [];
+    client.on('error', (e) => errors.push(e));
+    stub.patchFlag('checkout', { version: 2 });
+    await until(() => client.version === 11);
+    // Version 12 never reaches the client; 13 does, but no longer adds up.
+    stub.patch('flag', 'banner', flag('banner', { enabled: false, version: 2 }), { send: false });
+    stub.patchFlag('checkout', { fallthrough: { variant: 'off' }, version: 3 });
+    await until(() => client.resyncs === 1);
+    expect(errors[0]).toBeInstanceOf(ChecksumError);
+    expect(errors[0]?.message).toMatch(/patch does not match its checksum/);
+    // Until the snapshot arrives, the last verified ruleset stays in use.
+    expect(client.version === 11 || client.version === 13).toBe(true);
+    await until(() => client.version === 13);
+    expect(stub.lastEventIds.at(-1)).toBeUndefined();
+    expect(client.checksum).toBe(rulesetChecksum(stub.ruleset));
+    expect(client.boolVariation('banner', alice, true)).toBe(false);
+    expect(client.boolVariation('checkout', alice, true)).toBe(false);
+    expect(client.resyncs).toBe(1);
+  });
+
+  it('refuses a snapshot that does not match its checksum and recovers once one does', async () => {
+    const stub = new StubServer(ruleset(flag('checkout')));
+    stub.snapshotChecksum = 'f'.repeat(64);
+    await stub.start();
+    const client = new FlagshipClient({
+      sdkKey: stub.key,
+      baseUrl: stub.url,
+      reconnectMs: { initial: 20, max: 50 },
+      pollIntervalMs: 50,
+      sendExposures: false,
+    });
+    open.push(client, stub);
+    await until(() => client.resyncs >= 2);
+    expect(client.status).toBe('initializing');
+    expect(client.boolDetail('checkout', alice, false).errorCode).toBe('PROVIDER_NOT_READY');
+    stub.snapshotChecksum = undefined;
+    expect(await client.ready()).toBe(true);
+    expect(client.checksum).toBe(rulesetChecksum(stub.ruleset));
+  });
+
+  it('backs off while every snapshot keeps failing its checksum', async () => {
+    const stub = new StubServer(ruleset(flag('checkout')));
+    stub.snapshotChecksum = 'f'.repeat(64);
+    await stub.start();
+    const client = new FlagshipClient({
+      sdkKey: stub.key,
+      baseUrl: stub.url,
+      reconnectMs: { initial: 20, max: 1000 },
+      pollIntervalMs: 60_000,
+      sendExposures: false,
+    });
+    open.push(client, stub);
+    await new Promise((r) => setTimeout(r, 700));
+    // Without backoff a 20 ms reconnect would connect about 35 times here;
+    // doubling from 20 ms (jittered down to half) allows at most 7.
+    expect(stub.lastEventIds.length).toBeGreaterThanOrEqual(3);
+    expect(stub.lastEventIds.length).toBeLessThanOrEqual(7);
+  });
+
+  it('polling drops its ETag after a bad snapshot, so the next poll fetches it whole', async () => {
+    const { stub, client } = await setup(ruleset(flag('checkout')), { streaming: false });
+    await client.ready();
+    stub.ruleset = { ...ruleset(flag('checkout', { enabled: false, version: 2 })), version: 11 };
+    stub.snapshotChecksum = '0'.repeat(64);
+    await until(() => client.resyncs >= 1);
+    expect(client.version).toBe(10);
+    expect(client.status).toBe('stale');
+    stub.snapshotChecksum = undefined;
+    await until(() => client.version === 11);
+    expect(client.status).toBe('ready');
+    expect(client.checksum).toBe(rulesetChecksum(stub.ruleset));
+  });
+
+  it('still applies snapshots and patches from a server that sends no checksums', async () => {
+    const stub = new StubServer(ruleset(flag('checkout')));
+    stub.checksums = false;
+    await stub.start();
+    const client = new FlagshipClient({
+      sdkKey: stub.key,
+      baseUrl: stub.url,
+      sendExposures: false,
+    });
+    open.push(client, stub);
+    await client.ready();
+    stub.patchFlag('checkout', { enabled: false, version: 2 });
+    await until(() => client.version === 11);
+    expect(client.resyncs).toBe(0);
+    expect(client.checksum).toBe(rulesetChecksum(stub.ruleset));
+    expect(client.boolVariation('checkout', alice, true)).toBe(false);
+  });
+});
+
+describe('FlagshipClient connections', () => {
   it('stops trying when the key is refused', async () => {
     const stub = new StubServer(ruleset(flag('checkout')));
     await stub.start();

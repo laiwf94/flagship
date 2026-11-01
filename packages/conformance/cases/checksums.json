@@ -1,0 +1,424 @@
+{
+  "name": "checksums",
+  "description": "Canonical JSON and ruleset checksums. `checksum` is the checksum of `ruleset`; each entry of `patches` is applied in order and `checksum` there is the checksum after it. Every entry of `canonical` gives a value, its canonical JSON and the SHA-256 hex of that JSON, which is how /sdk/v1/evaluate answers are checked. The rules exercise key order, Unicode keys that sort differently by code point and by UTF-16 unit, numbers and string escapes.",
+  "ruleset": {
+    "environment": "conformance",
+    "version": 40,
+    "flags": {
+      "pricing": {
+        "key": "pricing",
+        "type": "json",
+        "variants": [
+          {
+            "key": "standard",
+            "value": {
+              "tiers": [
+                {
+                  "name": "Basic",
+                  "price": 9.5,
+                  "seats": 1
+                },
+                {
+                  "price": 0.1,
+                  "name": "Free"
+                }
+              ],
+              "currency": "EUR",
+              "～": "fullwidth tilde",
+              "😀": "emoji",
+              "é": "accent",
+              "Z": null
+            },
+            "name": "Standard pricing"
+          },
+          {
+            "key": "experiment",
+            "value": {
+              "limits": {
+                "big": 1e21,
+                "small": 5e-7,
+                "negativeZero": 0,
+                "id": 123456789012
+              },
+              "note": "quote \" backslash \\ newline \n line separator   control \u0001 emoji 👋"
+            }
+          }
+        ],
+        "enabled": true,
+        "offVariant": "standard",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "eu",
+            "description": "Europe sees the experiment",
+            "clauses": [
+              {
+                "attribute": "country",
+                "operator": "in",
+                "values": ["DE", "FR", "NL"]
+              }
+            ],
+            "serve": {
+              "rollout": {
+                "bucketBy": "key",
+                "variants": [
+                  {
+                    "variant": "standard",
+                    "weight": 50000
+                  },
+                  {
+                    "variant": "experiment",
+                    "weight": 50000
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "standard"
+        },
+        "salt": "pricing",
+        "clientSide": true,
+        "version": 7
+      },
+      "beta-access": {
+        "key": "beta-access",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "testers",
+            "clauses": [
+              {
+                "operator": "inSegment",
+                "segments": ["testers"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          },
+          {
+            "id": "not-staff",
+            "clauses": [
+              {
+                "attribute": "email",
+                "operator": "endsWith",
+                "values": ["@example.com"],
+                "negate": true
+              }
+            ],
+            "serve": {
+              "variant": "off"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "beta-access",
+        "clientSide": false,
+        "version": 3
+      }
+    },
+    "segments": {
+      "testers": {
+        "key": "testers",
+        "included": ["alice", "bob"],
+        "excluded": ["mallory"],
+        "rules": [
+          {
+            "id": "qa",
+            "clauses": [
+              {
+                "attribute": "groups",
+                "operator": "contains",
+                "values": ["qa"]
+              }
+            ]
+          }
+        ],
+        "version": 2
+      }
+    }
+  },
+  "checksum": "d82f75b42e12d14aec9135f5fef24939fe6014286a391453222cbff7f778e116",
+  "patches": [
+    {
+      "version": 41,
+      "kind": "flag",
+      "key": "beta-access",
+      "value": {
+        "key": "beta-access",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": false,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [
+          {
+            "id": "testers",
+            "clauses": [
+              {
+                "operator": "inSegment",
+                "segments": ["testers"]
+              }
+            ],
+            "serve": {
+              "variant": "on"
+            }
+          },
+          {
+            "id": "not-staff",
+            "clauses": [
+              {
+                "attribute": "email",
+                "operator": "endsWith",
+                "values": ["@example.com"],
+                "negate": true
+              }
+            ],
+            "serve": {
+              "variant": "off"
+            }
+          }
+        ],
+        "fallthrough": {
+          "variant": "on"
+        },
+        "salt": "beta-access",
+        "clientSide": false,
+        "version": 4
+      },
+      "checksum": "df3175d84743e882650cc8b87cb58d6b54855518b0d3bbbaee07a296125d3edb"
+    },
+    {
+      "version": 42,
+      "kind": "segment",
+      "key": "testers",
+      "value": {
+        "key": "testers",
+        "included": ["alice", "bob", "carol"],
+        "excluded": ["mallory"],
+        "rules": [
+          {
+            "id": "qa",
+            "clauses": [
+              {
+                "attribute": "groups",
+                "operator": "contains",
+                "values": ["qa"]
+              }
+            ]
+          }
+        ],
+        "version": 3
+      },
+      "checksum": "d2b71ff7608965b79dbe6b7fcd69ce76dd2a6a89c56076b06c34a0ca99d10482"
+    },
+    {
+      "version": 43,
+      "kind": "flag",
+      "key": "new-flag",
+      "value": {
+        "key": "new-flag",
+        "type": "boolean",
+        "variants": [
+          {
+            "key": "on",
+            "value": true
+          },
+          {
+            "key": "off",
+            "value": false
+          }
+        ],
+        "enabled": true,
+        "offVariant": "off",
+        "prerequisites": [],
+        "rules": [],
+        "fallthrough": {
+          "variant": "off"
+        },
+        "salt": "new-flag",
+        "clientSide": true,
+        "version": 1
+      },
+      "checksum": "8e5c54f84c26c2bc847a4ca1313289f807839d10751fa28835e93a635529dbd9"
+    },
+    {
+      "version": 44,
+      "kind": "flag",
+      "key": "pricing",
+      "value": null,
+      "checksum": "b4830170519372ac85c0c5659086b42e2b4c8bd45a08e3834031549a0dd51925"
+    }
+  ],
+  "canonical": [
+    {
+      "value": {},
+      "json": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "value": [],
+      "json": "[]",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "value": {
+        "b": [3, 1, 2],
+        "a": {
+          "d": true,
+          "c": null
+        }
+      },
+      "json": "{\"a\":{\"c\":null,\"d\":true},\"b\":[3,1,2]}",
+      "sha256": "57b91a7893cc7aadb75cd66468a73b876c07e3f36488a1f0fc86e0da0b493e8f"
+    },
+    {
+      "value": {
+        "～": 1,
+        "😀": 2,
+        "é": 3,
+        "Z": 4,
+        "a": 5
+      },
+      "json": "{\"Z\":4,\"a\":5,\"é\":3,\"😀\":2,\"～\":1}",
+      "sha256": "fd73ce234c9fbbd28dd972255e3ae9882bd452c1bfac0ccc37798d4afbed0edc"
+    },
+    {
+      "value": [1e21, 0.1, 0, 1.5, 5e-7, 123456789012, -42],
+      "json": "[1e+21,0.1,0,1.5,5e-7,123456789012,-42]",
+      "sha256": "fffcfb7b665b82355542ae2c926290625083f874b3481e89eac456453f5abf7c"
+    },
+    {
+      "value": "quote \" backslash \\ newline \n tab \t line separator   control \u0001 emoji 👋",
+      "json": "\"quote \\\" backslash \\\\ newline \\n tab \\t line separator   control \\u0001 emoji 👋\"",
+      "sha256": "76a0aebb1b03a2fcfb6a66e79097fff9a19b29bcec6a5a541bf7fa49ca2ced6d"
+    },
+    {
+      "value": {
+        "0": {
+          "2": true,
+          "10": false
+        },
+        "9": 3,
+        "10": 2,
+        "a": 1,
+        "-x": 4
+      },
+      "json": "{\"-x\":4,\"0\":{\"10\":false,\"2\":true},\"10\":2,\"9\":3,\"a\":1}",
+      "sha256": "cd80e8ee4e5a4c126776dd9a0646bb77bf7a8a158229249bb04182066fcf7fe9"
+    },
+    {
+      "value": {
+        "beta-access": {
+          "value": true,
+          "variant": "on",
+          "reason": "TARGETING_MATCH"
+        },
+        "pricing": {
+          "reason": "ERROR",
+          "errorCode": "FLAG_NOT_FOUND"
+        }
+      },
+      "json": "{\"beta-access\":{\"reason\":\"TARGETING_MATCH\",\"value\":true,\"variant\":\"on\"},\"pricing\":{\"errorCode\":\"FLAG_NOT_FOUND\",\"reason\":\"ERROR\"}}",
+      "sha256": "3821d6aac59dc153ae3f9e18cecc310306ee2c294f43d05c8ecc5f1c826ed021"
+    }
+  ],
+  "tests": [
+    {
+      "name": "a listed tester gets beta access through the segment",
+      "flag": "beta-access",
+      "context": {
+        "key": "alice",
+        "email": "alice@example.com"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "a qa group member is a tester too",
+      "flag": "beta-access",
+      "context": {
+        "key": "quinn",
+        "groups": ["qa"],
+        "email": "quinn@example.com"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "on",
+        "value": true
+      }
+    },
+    {
+      "name": "an excluded user outside the company is refused",
+      "flag": "beta-access",
+      "context": {
+        "key": "mallory",
+        "email": "mallory@elsewhere.test"
+      },
+      "expect": {
+        "reason": "TARGETING_MATCH",
+        "variant": "off",
+        "value": false
+      }
+    },
+    {
+      "name": "outside Europe pricing is standard",
+      "flag": "pricing",
+      "context": {
+        "key": "u1",
+        "country": "US"
+      },
+      "expect": {
+        "reason": "DEFAULT",
+        "variant": "standard",
+        "value": {
+          "tiers": [
+            {
+              "name": "Basic",
+              "price": 9.5,
+              "seats": 1
+            },
+            {
+              "price": 0.1,
+              "name": "Free"
+            }
+          ],
+          "currency": "EUR",
+          "～": "fullwidth tilde",
+          "😀": "emoji",
+          "é": "accent",
+          "Z": null
+        }
+      }
+    }
+  ]
+}

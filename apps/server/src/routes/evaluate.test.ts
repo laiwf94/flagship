@@ -1,4 +1,5 @@
 import { loadCases, mismatch, type Observed } from '@flagship/conformance';
+import { evaluationChecksum } from '@flagship/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { testApp, type TestApp } from '../../test/app.js';
 import { PASSWORD, signIn, type Client } from '../../test/session.js';
@@ -77,9 +78,11 @@ describe('POST /sdk/v1/evaluate', () => {
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['access-control-allow-origin']).toBe('*');
     const body = res.json();
+    const flags = { 'web-banner': { value: false, variant: 'off', reason: 'DEFAULT' } };
     expect(body).toEqual({
       version: expect.any(Number),
-      flags: { 'web-banner': { value: false, variant: 'off', reason: 'DEFAULT' } },
+      flags,
+      checksum: evaluationChecksum(flags),
     });
     for (const secret of [
       'alice-the-vip',

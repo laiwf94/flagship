@@ -1,11 +1,13 @@
 import type { Ruleset } from '@flagship/core';
 import type { Db } from '../db/database.js';
 import type { Metrics } from '../metrics.js';
-import { loadRuleset } from './rulesets.js';
+import { checksumOf, loadRuleset } from './rulesets.js';
 
 export interface Snapshot {
-  ruleset: Ruleset;
+  /** The ruleset with its checksum, as SDKs receive it. */
+  ruleset: Ruleset & { checksum: string };
   version: number;
+  checksum: string;
   json: string;
   etag: string;
 }
@@ -41,15 +43,19 @@ export class RulesetCache {
   private async load(environmentId: string): Promise<Snapshot> {
     const generation = this.generation;
     // One snapshot: flags, segments and the version must agree with each other.
-    const ruleset = await this.db
+    const loaded = await this.db
       .transaction()
       .setIsolationLevel('repeatable read')
       .setAccessMode('read only')
       .execute((trx) => loadRuleset(trx, environmentId));
     this.metrics.rulesetBuilds.inc();
+    // Computed from what was read, never stored, so it can't drift from the contents.
+    const checksum = checksumOf(loaded);
+    const ruleset = { ...loaded, checksum };
     const snapshot: Snapshot = {
       ruleset,
       version: ruleset.version,
+      checksum,
       json: JSON.stringify(ruleset),
       etag: `"${environmentId.slice(0, 8)}-${ruleset.version}"`,
     };

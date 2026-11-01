@@ -1,6 +1,6 @@
 import { loadCases, mismatch, type Observed } from '@flagship/conformance';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { StubServer } from '../test/stub.js';
+import { StubServer, until } from '../test/stub.js';
 import { FlagshipClient } from './client.js';
 
 describe.each(loadCases())('conformance through the Node SDK: $name', ({ ruleset, tests }) => {
@@ -25,3 +25,31 @@ describe.each(loadCases())('conformance through the Node SDK: $name', ({ ruleset
     expect(mismatch(expected, observed)).toBeUndefined();
   });
 });
+
+describe.each(loadCases().filter((c) => c.checksum !== undefined))(
+  'checksums through the Node SDK: $name',
+  ({ ruleset, checksum, patches }) => {
+    it('verifies the snapshot and every patch without a resync', async () => {
+      const stub = new StubServer(ruleset);
+      await stub.start();
+      const client = new FlagshipClient({
+        sdkKey: stub.key,
+        baseUrl: stub.url,
+        sendExposures: false,
+      });
+      try {
+        expect(await client.ready()).toBe(true);
+        expect(client.checksum).toBe(checksum);
+        for (const p of patches ?? []) {
+          stub.patch(p.kind, p.key, p.value, { checksum: p.checksum });
+          await until(() => client.version === p.version);
+          expect(client.checksum).toBe(p.checksum);
+        }
+        expect(client.resyncs).toBe(0);
+      } finally {
+        await client.close();
+        await stub.stop();
+      }
+    });
+  },
+);

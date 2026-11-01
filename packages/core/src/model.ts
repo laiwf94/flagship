@@ -176,6 +176,11 @@ export const rulesetSchema = z.strictObject({
   version: z.int().min(0),
   flags: z.record(keySchema, flagSchema),
   segments: z.record(keySchema, segmentSchema),
+  /** RulesetDigest checksum of flags and segments, sent by the server for SDKs to verify. */
+  checksum: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, 'must be 64 lowercase hex digits')
+    .optional(),
 });
 export type Ruleset = z.infer<typeof rulesetSchema>;
 

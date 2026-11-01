@@ -1,3 +1,5 @@
+import { canonicalJson, sha256Hex } from './checksum.js';
+
 /** Attributes of the current user. `key` identifies them. */
 export type Context = { key: string } & Record<
   string,
@@ -35,9 +37,13 @@ export interface BrowserClientOptions {
   exposureFlushMs?: number;
   /** Distinct flag/variant pairs held between flushes (1,000). */
   maxExposureKeys?: number;
+  /** First and largest delay before refetching an answer that failed its checksum (1 s, 30 s). */
+  retryMs?: { initial: number; max: number };
   fetch?: typeof fetch;
   EventSource?: typeof EventSource;
   sendBeacon?: (url: string, data: Blob) => boolean;
+  /** WebCrypto, used to verify answers; defaults to globalThis.crypto.subtle when there is one. */
+  subtle?: SubtleCrypto;
 }
 
 export type Listener = (changedKeys: string[]) => void;
@@ -56,16 +62,24 @@ export class BrowserClient {
   private seq = 0;
   private source: EventSource | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private checksumFailures = 0;
   private readonly listeners = new Set<Listener>();
   private readonly readyWaiters: (() => void)[] = [];
   private exposures = new Map<string, number>();
   private closed = false;
   private readonly o: Required<
-    Omit<BrowserClientOptions, 'EventSource' | 'sendBeacon' | 'context'>
+    Omit<BrowserClientOptions, 'EventSource' | 'sendBeacon' | 'context' | 'subtle'>
   > & {
     EventSource: typeof EventSource | undefined;
     sendBeacon: ((url: string, data: Blob) => boolean) | undefined;
+    subtle: SubtleCrypto | undefined;
   };
+  /**
+   * Answers refetched because they did not match the checksum the server
+   * sent. The values from before stay in use until a verified answer arrives.
+   */
+  resyncs = 0;
   private readonly onHide = () => {
     if (document.visibilityState === 'hidden') this.beacon();
   };
@@ -82,6 +96,7 @@ export class BrowserClient {
       sendExposures: true,
       exposureFlushMs: 10_000,
       maxExposureKeys: 1000,
+      retryMs: { initial: 1000, max: 30_000 },
       fetch: globalThis.fetch.bind(globalThis),
       ...options,
       baseUrl: options.baseUrl.replace(/\/+$/, ''),
@@ -91,6 +106,7 @@ export class BrowserClient {
         (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function'
           ? navigator.sendBeacon.bind(navigator)
           : undefined),
+      subtle: options.subtle ?? (globalThis.crypto as Crypto | undefined)?.subtle,
     };
     void this.refresh();
     if (this.o.streaming && this.o.EventSource !== undefined) this.listen(this.o.EventSource);
@@ -183,6 +199,8 @@ export class BrowserClient {
   private async refresh(): Promise<void> {
     const seq = ++this.seq;
     const context = this.context;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     try {
       const res = await this.o.fetch(`${this.o.baseUrl}/sdk/v1/evaluate`, {
         method: 'POST',
@@ -193,9 +211,22 @@ export class BrowserClient {
         body: JSON.stringify({ context }),
       });
       if (!res.ok) return;
-      const body = (await res.json()) as { version: number; flags: Record<string, Evaluated> };
+      const body = (await res.json()) as {
+        version: number;
+        flags: Record<string, Evaluated>;
+        checksum?: unknown;
+      };
+      const actual =
+        typeof body.checksum === 'string'
+          ? await sha256Hex(canonicalJson(body.flags), this.o.subtle)
+          : undefined;
       // A newer request (another identify, or a later version) has been sent since.
       if (seq !== this.seq || this.closed) return;
+      if (actual !== undefined && actual !== body.checksum) {
+        this.retry();
+        return;
+      }
+      this.checksumFailures = 0;
       const before = this.flags;
       this.flags = body.flags;
       this.version = body.version;
@@ -209,6 +240,18 @@ export class BrowserClient {
     } catch {
       // Offline or server down: keep the values we have (or the caller defaults).
     }
+  }
+
+  /** Fetches again after a garbled answer, backing off while they keep coming. */
+  private retry(): void {
+    this.resyncs++;
+    const { initial, max } = this.o.retryMs;
+    const delay = Math.min(max, initial * 2 ** Math.min(this.checksumFailures, 20));
+    this.checksumFailures++;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refresh();
+    }, delay);
   }
 
   private record(flag: string, variant: string): void {
@@ -280,6 +323,7 @@ export class BrowserClient {
     this.closed = true;
     this.source?.close();
     if (this.timer !== null) clearInterval(this.timer);
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     if (typeof document !== 'undefined')
       document.removeEventListener('visibilitychange', this.onHide);
   }

@@ -155,7 +155,7 @@ interesting ones:
 | `flag_configs`                                                                      | per-environment targeting (JSONB rules) with its own `version`         |
 | `segments`                                                                          | per-environment, with `version`                                        |
 | `environments`                                                                      | `ruleset_version`, bumped on every change                              |
-| `ruleset_changes`                                                                   | one row per version: kind, key, new value (or null for a delete)       |
+| `ruleset_changes`                                                                   | one row per version: kind, key, new value (or null), ruleset checksum  |
 | `audit_log`                                                                         | actor, action, before and after JSON                                   |
 | `login_attempts`                                                                    | recent sign-in attempts per email and per address, shared by instances |
 | `scheduled_changes`, `exposure_counts`, `sessions`, `api_keys`, `users`, `projects` |                                                                        |
@@ -171,8 +171,10 @@ Every write follows the same shape inside one transaction:
 3. Load the environment's current ruleset, apply the change, and run the full
    `validateRuleset`. This is what catches a removed variant that a prerequisite still
    names, a deleted segment a rule still uses, or a new cycle.
-4. Write, bump `ruleset_version`, insert the `ruleset_changes` row, write the audit entry,
-   and `pg_notify`.
+4. Write, bump `ruleset_version`, read the environment's ruleset back, insert the
+   `ruleset_changes` row with the entry's value and the ruleset's checksum taken from that
+   read, write the audit entry, and `pg_notify`. The patch value comes from the read, not
+   from the code that made the change, so a patch can never disagree with a snapshot.
 
 Because NOTIFY is delivered at commit, listeners never hear about a change that rolled
 back. `ruleset_changes` keeps the last 1,000 versions per environment
@@ -219,11 +221,11 @@ retry: 2000
 
 id: 41
 event: put
-data: {"environment":"production","version":41,"flags":{...},"segments":{...}}
+data: {"environment":"production","version":41,"flags":{...},"segments":{...},"checksum":"d82f..."}
 
 id: 42
 event: patch
-data: {"kind":"flag","key":"new-checkout","value":{...}}
+data: {"kind":"flag","key":"new-checkout","value":{...},"checksum":"df31..."}
 
 : ping
 ```
@@ -232,6 +234,62 @@ The `id` is the ruleset version. On reconnect, the SDK (or the browser's EventSo
 `Last-Event-ID`; the server replays exactly the patches after it from `ruleset_changes`, or
 sends a fresh `put` when some of them have been pruned or the id is from the future (a
 restored database, say).
+
+### Checksums
+
+Versions say that an SDK has seen every change, not that it applied them right. A patch lost
+in a proxy, one the SDK couldn't parse, or a bug on either side would leave it evaluating a
+ruleset the server never had, with nothing to show for it. So every snapshot and every patch
+carries the checksum of the whole ruleset at that version, and the SDK checks it.
+
+The checksum is defined in `packages/core/src/checksum.ts`, with vectors in
+`packages/conformance/cases/checksums.json` for SDKs in other languages:
+
+- Each flag and segment has an entry digest: SHA-256 of `kind`, a newline, the key, a
+  newline and the value's canonical JSON. Canonical JSON follows RFC 8785: no whitespace,
+  object keys sorted by UTF-16 code units, numbers and strings as ECMAScript writes them.
+- The ruleset's checksum is the sum of its entry digests modulo 2^256, as 64 hex digits
+  (an empty ruleset is all zeros). The version and environment are left out; versions are
+  checked on their own.
+
+A sum doesn't depend on order, and replacing one entry is one subtraction and one addition,
+so an SDK checks a patch in the time it takes to hash that one entry, never the whole
+ruleset. It keeps each entry's digest to make that work.
+
+The server computes a snapshot's checksum from what it read each time it builds one, so
+it can't drift from the contents. A patch's checksum is computed in the write transaction
+from the ruleset read back after the write. Writers to one environment are serialised by
+the environment row lock, so that read always sees every earlier change. Changes recorded
+before checksums existed have none, and their patches go out without one.
+
+When a checksum doesn't match, the Node SDK keeps its last verified ruleset and doesn't
+apply the patch. It drops its `Last-Event-ID` and ETag and reconnects, so the next stream
+starts with a full `put`. A patch that fails validation is handled the same way, because
+skipping it would leave the SDK out of step for good. `client.resyncs` counts these
+recoveries and an `error` event reports each one. Reconnects after a failed check keep
+backing off rather than starting again at 1 s, so a server that keeps sending something
+the SDK can't verify isn't hammered. A snapshot with no checksum, from an older server, is
+accepted as before.
+
+`POST /sdk/v1/evaluate` adds `checksum`, SHA-256 of the canonical JSON of `flags`. The
+browser SDK checks it with WebCrypto, so it ships no hashing code and stays
+dependency-free. On a mismatch it keeps the values it had and asks again, backing off
+from 1 s to 30 s. Without WebCrypto (pages served over plain http) the check is skipped.
+
+Cost, on a 4-vCPU 2.1 GHz Xeon under Node 22 with flags of five three-clause rules each:
+
+| Flags | Snapshot JSON | `JSON.stringify` | Checksum (node:crypto) | Checksum (core's own SHA-256) | One patch |
+| ----- | ------------- | ---------------- | ---------------------- | ----------------------------- | --------- |
+| 200   | 300 KiB       | 1.0 ms           | 4.6 ms                 | 9.8 ms                        | 24 µs     |
+| 1,000 | 1.5 MiB       | 4.7 ms           | 22 ms                  | 47 ms                         | 22–35 µs  |
+| 5,000 | 7.3 MiB       | 27 ms            | 117–124 ms             | 228–265 ms                    | 22–24 µs  |
+
+The server pays for a full checksum when it builds a snapshot and once per write, where it
+already loads the whole ruleset to validate it. SDKs pay it once per snapshot, then only
+the per-patch cost. Canonical JSON uses `JSON.stringify` with a replacer that hands back
+key-sorted objects, about 1.5 times faster than serialising by hand. Objects with
+array-index keys such as `"10"` take the hand-written path, because JavaScript always
+enumerates those keys first in numeric order.
 
 ### Fan-out across instances
 
@@ -262,7 +320,7 @@ key's streams at once. Shutdown ends every stream so clients reconnect to anothe
 ### Polling
 
 `GET /sdk/v1/ruleset` serves the same snapshot with a strong ETag
-(`"<env prefix>-<version>"`) and answers `304` when unchanged; SDKs poll it when streaming
+(`"<env prefix>-<version>"`) and its `checksum`, and answers `304` when unchanged; SDKs poll it when streaming
 is off or down. Snapshots are cached per environment, invalidated by the notification, with
 a 30 s TTL only as a backstop for a lost notification, and loaded in a read-only
 `REPEATABLE READ` transaction so flags, segments and version agree.
@@ -403,13 +461,14 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
 
 ### In the SDKs, when the service is down
 
-| Situation                                | Node SDK                                                                                                                                             | Browser SDK                   |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Before the first ruleset                 | every call returns the caller's default, reason `ERROR`, code `PROVIDER_NOT_READY`; `ready()` resolves `false` after its timeout                     | same                          |
-| Service unreachable after start          | keeps evaluating the last ruleset; status `stale`; polls with ETags every 30 s while it reconnects the stream with jittered backoff (1 s up to 30 s) | keeps the last values         |
-| Stream silent past 60 s (no ping)        | reconnects, resuming from its last id                                                                                                                | EventSource reconnects itself |
-| Server sends an invalid ruleset or patch | ignored; the last good ruleset stays; `error` event                                                                                                  | n/a                           |
-| Key revoked or wrong                     | stops retrying, emits `error`                                                                                                                        | values stay at defaults       |
+| Situation                          | Node SDK                                                                                                                                             | Browser SDK                   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Before the first ruleset           | every call returns the caller's default, reason `ERROR`, code `PROVIDER_NOT_READY`; `ready()` resolves `false` after its timeout                     | same                          |
+| Service unreachable after start    | keeps evaluating the last ruleset; status `stale`; polls with ETags every 30 s while it reconnects the stream with jittered backoff (1 s up to 30 s) | keeps the last values         |
+| Stream silent past 60 s (no ping)  | reconnects, resuming from its last id                                                                                                                | EventSource reconnects itself |
+| Server sends an invalid ruleset    | ignored; the last good ruleset stays; `error` event                                                                                                  | n/a                           |
+| Patch invalid or checksum mismatch | not applied; the last verified ruleset stays; `error` event; reconnects without `Last-Event-ID` for a full snapshot, with backoff                    | keeps its values, asks again  |
+| Key revoked or wrong               | stops retrying, emits `error`                                                                                                                        | values stay at defaults       |
 
 The OpenFeature provider maps these to `PROVIDER_NOT_READY`, `Stale` and `Ready` events.
 

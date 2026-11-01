@@ -1,8 +1,18 @@
-import type { Flag, Ruleset, Segment } from '@flagship/core';
+import { createHash } from 'node:crypto';
+import { own, rulesetChecksum, type Flag, type Ruleset, type Segment } from '@flagship/core';
 import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
 
 export const CHANGES_CHANNEL = 'flagship_changes';
+
+/** SHA-256 through node:crypto: the same digests as the core's, several times faster. */
+export const nativeSha256 = (text: string): Uint8Array =>
+  createHash('sha256').update(text, 'utf8').digest();
+
+/** The checksum SDKs verify a ruleset against; see RulesetDigest in @flagship/core. */
+export function checksumOf(ruleset: Pick<Ruleset, 'flags' | 'segments'>): string {
+  return rulesetChecksum(ruleset, nativeSha256);
+}
 
 export interface FlagRow {
   id: string;
@@ -151,13 +161,19 @@ export async function lockEnvironments(trx: Db, ids: readonly string[]): Promise
  * Bumps the environment's ruleset version, records the patch for stream
  * resume and notifies every server instance. NOTIFY is delivered on commit,
  * so listeners never see a change that was rolled back.
+ *
+ * Call it after the change is written. The patch value and the checksum are
+ * read back from the database in this transaction rather than taken from the
+ * caller, so applying the patch to the previous ruleset gives exactly the
+ * ruleset a snapshot of this version holds, checksum and all. Bumping the
+ * version locks the environment row first, so concurrent writers to one
+ * environment record their changes one at a time, each seeing the last.
  */
 export async function recordChange(
   trx: Db,
   environmentId: string,
   kind: 'flag' | 'segment',
   key: string,
-  value: Flag | Segment | null,
   retention: number,
 ): Promise<number> {
   const { ruleset_version: version } = await trx
@@ -166,6 +182,9 @@ export async function recordChange(
     .where('id', '=', environmentId)
     .returning('ruleset_version')
     .executeTakeFirstOrThrow();
+  const ruleset = await loadRuleset(trx, environmentId);
+  const value =
+    own<Flag | Segment>(kind === 'flag' ? ruleset.flags : ruleset.segments, key) ?? null;
   await trx
     .insertInto('ruleset_changes')
     .values({
@@ -174,6 +193,7 @@ export async function recordChange(
       kind,
       key,
       value: value === null ? null : JSON.stringify(value),
+      checksum: checksumOf(ruleset),
     })
     .execute();
   await trx

@@ -1,6 +1,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { validateRuleset, type Evaluation, type Ruleset } from '@flagship/core';
+import {
+  canonicalJson,
+  validateRuleset,
+  type Evaluation,
+  type Flag,
+  type Ruleset,
+  type Segment,
+} from '@flagship/core';
 
 export interface ConformanceTest {
   name: string;
@@ -10,11 +17,32 @@ export interface ConformanceTest {
     { reason: string; variant: string; value: unknown } | { reason: 'ERROR'; errorCode: string };
 }
 
+/** One stream patch and the checksum of the ruleset after it is applied. */
+export interface ConformancePatch {
+  version: number;
+  kind: 'flag' | 'segment';
+  key: string;
+  value: Flag | Segment | null;
+  checksum: string;
+}
+
+/** A JSON value, its canonical JSON (RFC 8785) and the SHA-256 hex of that text. */
+export interface CanonicalVector {
+  value: unknown;
+  json: string;
+  sha256: string;
+}
+
 export interface ConformanceCase {
   name: string;
   description: string;
   ruleset: Ruleset;
   tests: ConformanceTest[];
+  /** Checksum every SDK must compute for `ruleset`. */
+  checksum?: string;
+  /** Patches applied in order, each with the checksum after it. */
+  patches?: ConformancePatch[];
+  canonical?: CanonicalVector[];
 }
 
 /** What an evaluator under test reports. Extra fields such as ruleId are ignored. */
@@ -61,7 +89,9 @@ export function mismatch(
           variant: (o as { variant: string }).variant,
           value: (o as { value: unknown }).value,
         };
-  const a = JSON.stringify(pick(expected));
-  const b = JSON.stringify(pick(observed));
+  // Canonical JSON, so a value whose object keys came back in another order
+  // (Postgres jsonb sorts them, for one) still counts as the same value.
+  const a = canonicalJson(pick(expected));
+  const b = canonicalJson(pick(observed));
   return a === b ? undefined : `expected ${a}, got ${b}`;
 }

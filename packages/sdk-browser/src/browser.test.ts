@@ -1,4 +1,8 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { canonicalJson, sha256Hex } from './checksum.js';
 import { BrowserClient, createClient, type Context } from './client.js';
 
 type Flags = Record<
@@ -26,7 +30,9 @@ class FakeEventSource {
 }
 
 /** A fake server: answers /evaluate from `answer(context)` and records /events posts. */
-function fakeServer(answer: (ctx: Context) => { version: number; flags: Flags } | 'fail' | number) {
+function fakeServer(
+  answer: (ctx: Context) => { version: number; flags: Flags; checksum?: string } | 'fail' | number,
+) {
   const events: unknown[] = [];
   const pending: (() => void)[] = [];
   let hold = false;
@@ -243,5 +249,108 @@ describe('BrowserClient', () => {
     c.close();
     expect(beacon).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
+  });
+});
+
+/** What the real server sends: SHA-256 of the canonical JSON of the flags. */
+const checksumOf = (f: Flags) => createHash('sha256').update(canonicalJson(f)).digest('hex');
+
+describe('answer checksums', () => {
+  it('match the conformance vectors for canonical JSON and SHA-256', async () => {
+    const file = join(import.meta.dirname, '..', '..', 'conformance', 'cases', 'checksums.json');
+    const vectors = (
+      JSON.parse(readFileSync(file, 'utf8')) as {
+        canonical: { value: unknown; json: string; sha256: string }[];
+      }
+    ).canonical;
+    expect(vectors.length).toBeGreaterThan(0);
+    for (const v of vectors) {
+      expect(canonicalJson(v.value)).toBe(v.json);
+      expect(await sha256Hex(v.json, globalThis.crypto.subtle)).toBe(v.sha256);
+    }
+    expect(canonicalJson([undefined, { a: undefined, b: 1 }])).toBe('[null,{"b":1}]');
+    expect(() => canonicalJson(Number.NaN)).toThrow(/no JSON form/);
+    expect(() => canonicalJson({ f: () => 1 })).toThrow(/function has no JSON form/);
+    expect(await sha256Hex('abc', undefined)).toBeUndefined();
+  });
+
+  it('applies verified answers and refetches, backing off, while they do not match', async () => {
+    let corrupt = false;
+    let on = false;
+    const server = fakeServer(() => {
+      const f = flags(on);
+      return { version: on ? 2 : 1, flags: f, checksum: corrupt ? '0'.repeat(64) : checksumOf(f) };
+    });
+    const c = make(server, { retryMs: { initial: 40, max: 80 } });
+    expect(await c.ready()).toBe(true);
+    expect(c.resyncs).toBe(0);
+    corrupt = true;
+    on = true;
+    const started = Date.now();
+    FakeEventSource.last?.emit('version', { version: 2 });
+    await vi.waitFor(() => {
+      expect(c.resyncs).toBeGreaterThanOrEqual(3);
+    });
+    // The refetches wait 40, 80, 80 ms, and the old values stay meanwhile.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(110);
+    expect(c.boolVariation('checkout', true)).toBe(false);
+    corrupt = false;
+    await vi.waitFor(() => {
+      expect(c.boolVariation('checkout', false)).toBe(true);
+    });
+    const after = c.resyncs;
+    await new Promise((r) => setTimeout(r, 120));
+    expect(c.resyncs).toBe(after);
+  });
+
+  it('never applies an unverified first answer, so callers keep their defaults', async () => {
+    let corrupt = true;
+    const server = fakeServer(() => {
+      const f = flags(true);
+      return { version: 1, flags: f, checksum: corrupt ? checksumOf(flags(false)) : checksumOf(f) };
+    });
+    const c = make(server, { retryMs: { initial: 10, max: 10 }, streaming: false });
+    expect(await c.ready(50)).toBe(false);
+    expect(c.detail('checkout', false).errorCode).toBe('PROVIDER_NOT_READY');
+    corrupt = false;
+    expect(await c.ready()).toBe(true);
+    expect(c.boolVariation('checkout', false)).toBe(true);
+  });
+
+  it('stops retrying once closed, and an identify replaces a pending retry', async () => {
+    const server = fakeServer(() => ({ version: 1, flags: flags(true), checksum: 'f'.repeat(64) }));
+    const calls = (server.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls;
+    const c = make(server, { retryMs: { initial: 200, max: 200 }, streaming: false });
+    await vi.waitFor(
+      () => {
+        expect(c.resyncs).toBe(1);
+      },
+      { interval: 5 },
+    );
+    await c.identify({ key: 'bob' });
+    expect(c.resyncs).toBe(2);
+    expect(calls).toHaveLength(2);
+    c.close();
+    // Both the retry identify replaced and the one it scheduled are gone.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(calls).toHaveLength(2);
+  });
+
+  it('accepts answers without a checksum, and skips the check where WebCrypto is missing', async () => {
+    const plain = make(fakeServer(() => ({ version: 1, flags: flags(true) })));
+    expect(await plain.ready()).toBe(true);
+    vi.stubGlobal('crypto', {});
+    try {
+      const server = fakeServer(() => ({
+        version: 1,
+        flags: flags(true),
+        checksum: 'f'.repeat(64),
+      }));
+      const c = make(server);
+      expect(await c.ready()).toBe(true);
+      expect(c.resyncs).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

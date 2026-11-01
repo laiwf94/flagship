@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
+  RulesetDigest,
   evaluate,
   own,
   validateFlag,
@@ -9,6 +11,7 @@ import {
   type ContextValue,
   type Flag,
   type Ruleset,
+  type Segment,
 } from '@flagship/core';
 import { SseParser, type SseMessage } from './sse.js';
 
@@ -75,6 +78,11 @@ export interface ChangeEvent {
 
 export class AuthError extends Error {}
 
+/** The ruleset or a patch did not match the checksum the server sent with it. */
+export class ChecksumError extends Error {}
+
+const sha256 = (text: string): Uint8Array => createHash('sha256').update(text, 'utf8').digest();
+
 const silent: Logger = { warn: () => undefined, error: () => undefined };
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -106,6 +114,10 @@ interface Events {
  */
 export class FlagshipClient extends EventEmitter<Events> {
   private ruleset: Ruleset | undefined;
+  /** Entry digests of `ruleset`, so each patch is checked without rehashing everything. */
+  private digest: RulesetDigest | undefined;
+  /** Checksum failures since the last verified snapshot; drives reconnect backoff. */
+  private checksumFailures = 0;
   private etag: string | undefined;
   private lastEventId: string | undefined;
   private state: Status = 'initializing';
@@ -126,6 +138,12 @@ export class FlagshipClient extends EventEmitter<Events> {
   };
   /** Exposure counts discarded because the buffer was full. */
   droppedExposures = 0;
+  /**
+   * Full resyncs forced because a snapshot or patch did not match its
+   * checksum, or a patch could not be applied. Non-zero means the stream lost
+   * or garbled something and the client recovered by fetching it all again.
+   */
+  resyncs = 0;
 
   constructor(options: ClientOptions) {
     super();
@@ -165,6 +183,11 @@ export class FlagshipClient extends EventEmitter<Events> {
   /** The ruleset version in use, or undefined before the first one arrives. */
   get version(): number | undefined {
     return this.ruleset?.version;
+  }
+
+  /** Checksum of the ruleset in use (see RulesetDigest in @flagship/core). */
+  get checksum(): string | undefined {
+    return this.digest?.checksum;
   }
 
   /** Resolves true once a ruleset is loaded, false if `timeoutMs` passes first. */
@@ -316,50 +339,84 @@ export class FlagshipClient extends EventEmitter<Events> {
       this.emit('error', new Error(`invalid ruleset from ${source}`));
       return false;
     }
+    const digest = RulesetDigest.of(result.value, sha256);
+    const expected = result.value.checksum;
+    if (expected !== undefined && digest.checksum !== expected) {
+      this.resync(`the ruleset from ${source} does not match its checksum`, {
+        expected,
+        actual: digest.checksum,
+      });
+      return false;
+    }
+    this.digest = digest;
+    this.checksumFailures = 0;
     this.replace(result.value);
     return true;
   }
 
-  private patch(data: unknown, version: number): void {
+  /**
+   * Throws away what the stream and the ETag say we have, so the next
+   * connection or poll fetches the whole ruleset. The last good ruleset stays
+   * in use until a verified one replaces it.
+   */
+  private resync(reason: string, meta: Record<string, unknown> = {}): void {
+    this.resyncs++;
+    this.checksumFailures++;
+    this.lastEventId = undefined;
+    this.etag = undefined;
+    this.o.logger.error(`${reason}; fetching the whole ruleset again`, meta);
+    this.emit('error', new ChecksumError(reason));
+    this.streamAbort?.abort();
+  }
+
+  /** Applies a patch; false when it forced a resync, so its id must not be resumed from. */
+  private patch(data: unknown, version: number): boolean {
     const current = this.ruleset;
-    const msg = data as { kind?: unknown; key?: unknown; value?: unknown };
-    if (current === undefined || typeof msg.key !== 'string') return;
+    const digest = this.digest;
+    const msg = data as { kind?: unknown; key?: unknown; value?: unknown; checksum?: unknown };
+    if (current === undefined || digest === undefined || typeof msg.key !== 'string') return true;
+    if (msg.kind !== 'flag' && msg.kind !== 'segment') return true;
+    const key = msg.key;
+    let value: Flag | Segment | null = null;
+    if (msg.value !== null) {
+      const v = msg.kind === 'flag' ? validateFlag(msg.value) : validateSegment(msg.value);
+      if (!v.ok) {
+        // Skipping it would leave us out of step with the server for good.
+        this.resync(`ignored an invalid ${msg.kind} patch`, { key, version });
+        return false;
+      }
+      value = v.value;
+    }
+    const pending = digest.prepare(msg.kind, key, value);
+    if (typeof msg.checksum === 'string' && msg.checksum !== pending.checksum) {
+      this.resync('a patch does not match its checksum', {
+        key,
+        version,
+        expected: msg.checksum,
+        actual: pending.checksum,
+      });
+      return false;
+    }
     const next: Ruleset = {
       ...current,
       version,
       flags: { ...current.flags },
       segments: { ...current.segments },
     };
-    const key = msg.key;
-    if (msg.kind === 'flag') {
-      if (msg.value === null) Reflect.deleteProperty(next.flags, key);
-      else {
-        const v = validateFlag(msg.value);
-        if (!v.ok) {
-          this.o.logger.error('ignored an invalid flag patch', { key });
-          return;
-        }
-        next.flags[key] = v.value;
-      }
-    } else if (msg.kind === 'segment') {
-      if (msg.value === null) Reflect.deleteProperty(next.segments, key);
-      else {
-        const v = validateSegment(msg.value);
-        if (!v.ok) {
-          this.o.logger.error('ignored an invalid segment patch', { key });
-          return;
-        }
-        next.segments[key] = v.value;
-      }
-    } else {
-      return;
-    }
+    const entries: Record<string, Flag | Segment> =
+      msg.kind === 'flag' ? next.flags : next.segments;
+    if (value === null) Reflect.deleteProperty(entries, key);
+    else entries[key] = value;
+    if (typeof msg.checksum === 'string') next.checksum = msg.checksum;
+    else delete next.checksum;
+    pending.apply();
     this.ruleset = next;
     this.emit('change', {
       version,
       flags: msg.kind === 'flag' ? [key] : [],
       segments: msg.kind === 'segment' ? [key] : [],
     });
+    return true;
   }
 
   private onMessage(m: SseMessage): void {
@@ -375,8 +432,7 @@ export class FlagshipClient extends EventEmitter<Events> {
     } else if (m.event === 'patch') {
       const version = Number(m.id);
       if (Number.isSafeInteger(version)) {
-        this.patch(data, version);
-        if (m.id !== undefined) this.lastEventId = m.id;
+        if (this.patch(data, version) && m.id !== undefined) this.lastEventId = m.id;
       }
     }
   }
@@ -416,6 +472,8 @@ export class FlagshipClient extends EventEmitter<Events> {
               controller.abort();
             }, this.o.streamIdleTimeoutMs);
             for (const m of parser.feed(decoder.decode(value, { stream: true }))) {
+              // A resync aborts this connection; nothing after it may be applied.
+              if (controller.signal.aborted) break;
               received = true;
               this.onMessage(m);
             }
@@ -441,7 +499,9 @@ export class FlagshipClient extends EventEmitter<Events> {
       this.refreshStatus();
       // While the stream is down, fall back to polling so changes still arrive.
       this.schedulePoll(this.ruleset === undefined ? 0 : this.o.pollIntervalMs);
-      if (received) attempt = 0;
+      // A connection that ended in a checksum failure doesn't reset the backoff,
+      // so a server that keeps sending bad data isn't hammered.
+      if (received && this.checksumFailures === 0) attempt = 0;
       const base = Math.min(this.o.reconnectMs.max, this.o.reconnectMs.initial * 2 ** attempt);
       attempt = Math.min(attempt + 1, 20);
       await sleep(base * (0.5 + Math.random() / 2), this.lifetime.signal);

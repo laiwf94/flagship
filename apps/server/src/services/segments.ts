@@ -3,7 +3,7 @@ import type { Db } from '../db/database.js';
 import { AppError, notFound } from '../errors.js';
 import { recordAudit } from './audit.js';
 import { validateCandidate, versionConflict, type Scope } from './flags.js';
-import { lockEnvironments, recordChange, toSegment, type SegmentRow } from './rulesets.js';
+import { lockEnvironments, recordChange, type SegmentRow } from './rulesets.js';
 
 export interface SegmentView {
   key: string;
@@ -106,9 +106,8 @@ export async function createSegment(
         })
         .returningAll()
         .executeTakeFirstOrThrow();
-      const segment = toSegment(row);
       await validateCandidate(trx, env.id, () => undefined);
-      await recordChange(trx, env.id, 'segment', row.key, segment, scope.retention);
+      await recordChange(trx, env.id, 'segment', row.key, scope.retention);
       await recordAudit(trx, {
         projectId: scope.project.id,
         environmentId: env.id,
@@ -152,7 +151,7 @@ export async function updateSegment(
       .returningAll()
       .executeTakeFirstOrThrow();
     await validateCandidate(trx, env.id, () => undefined);
-    await recordChange(trx, env.id, 'segment', key, toSegment(after), scope.retention);
+    await recordChange(trx, env.id, 'segment', key, scope.retention);
     await recordAudit(trx, {
       projectId: scope.project.id,
       environmentId: env.id,
@@ -181,7 +180,7 @@ export async function deleteSegment(
       Reflect.deleteProperty(rs.segments, key);
     });
     await trx.deleteFrom('segments').where('id', '=', before.id).execute();
-    await recordChange(trx, env.id, 'segment', key, null, scope.retention);
+    await recordChange(trx, env.id, 'segment', key, scope.retention);
     await recordAudit(trx, {
       projectId: scope.project.id,
       environmentId: env.id,

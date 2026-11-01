@@ -47,9 +47,12 @@ flags (cycles are rejected), and scheduled changes that apply on time and exactl
 many server instances are running.
 
 Server SDKs evaluate locally from a ruleset snapshot, kept current over SSE with resume
-(`Last-Event-ID`) and ETag polling as a fallback. When the service is down, apps keep the last
-ruleset or fall back to their own defaults. Browsers use client-side keys, which get evaluated
-values only, never rules or other users.
+(`Last-Event-ID`) and ETag polling as a fallback. Every snapshot and every patch carries a
+checksum of the whole ruleset; an SDK that ends up with something else, after a lost or
+garbled patch, keeps its last good ruleset and fetches a fresh one. When the service is down,
+apps keep the last ruleset or fall back to their own defaults. Browsers use client-side keys,
+which get evaluated values only, never rules or other users, and those answers are
+checksummed too.
 
 Editing is versioned, and a stale edit gets `409`. A flag's metadata and its targeting in
 each environment have separate versions, so editing development never conflicts with an edit
@@ -115,8 +118,8 @@ Admin routes use the session cookie and need `X-CSRF-Token` on writes. SDK route
 | `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                     |
 | `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI             |
 | `GET /api/projects/:p/audit?flag=&segment=&before=`                         | change history with diffs                                     |
-| `GET /sdk/v1/ruleset`                                                       | snapshot with ETag (server keys)                              |
-| `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change (server keys)             |
+| `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)               |
+| `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`     |
 | `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only) |
 | `GET /sdk/v1/client-stream?key=`                                            | SSE of version numbers for browsers                           |
 | `POST /sdk/v1/events`                                                       | exposure counts; `429` + `Retry-After` when the queue is full |
@@ -135,13 +138,13 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 | Evaluator    | A second, plainly written implementation agrees with it on 1,000 random valid rulesets and contexts. Deliberately broken evaluators (exclusion after inclusion, ignoring a disabled prerequisite, rollout ranges walked backwards, negation matching missing attributes) fail it.                                                                                                       |
 | Bucketing    | MurmurHash3 checked against published vectors and a BigInt reference on random Unicode; property tests for stickiness as percentages grow and for distribution over 100k users.                                                                                                                                                                                                         |
 | Regex engine | 5,000 random patterns compared with JavaScript's `RegExp`; catastrophic patterns on 1 KB inputs finish in microseconds.                                                                                                                                                                                                                                                                 |
-| Conformance  | 5 JSON case files (every operator and reason, segments, prerequisites, pinned rollout buckets) run against the core evaluator, the Node SDK over HTTP, the server's evaluate endpoint, and the browser SDK against the real server.                                                                                                                                                     |
+| Conformance  | 6 JSON case files (every operator and reason, segments, prerequisites, pinned rollout buckets, checksums of a ruleset and four patches, canonical JSON vectors) run against the core evaluator, the Node SDK over HTTP, the server's evaluate endpoint, and the browser SDK against the real server.                                                                                    |
 | Server       | Every route against a real Postgres 17 (Testcontainers): concurrent edits get one winner, two scheduler instances apply a change once, a stream resumes with exactly the missed patches, a change made on one instance reaches a stream on another, the listener recovers when its connection is killed, revoked keys lose their streams, and tokens and contexts never reach the logs. |
-| SDKs         | The Node SDK against a stub server that dies mid-stream and comes back; against the real server for a 10% → 50% rollout and the kill switch; the OpenFeature provider through the OpenFeature SDK; the browser SDK in jsdom.                                                                                                                                                            |
+| SDKs         | The Node SDK against a stub server that dies mid-stream and comes back, loses a patch or sends a bad checksum; against the real server for a 10% → 50% rollout, the kill switch and a corrupted stored patch it resyncs past; the OpenFeature provider through the OpenFeature SDK; the browser SDK in jsdom.                                                                           |
 | Admin UI     | Component tests with Testing Library; Playwright against the built server for the main journeys, a two-editor conflict, a keyboard-only run, and axe (no serious or critical WCAG 2.1 AA findings) on every page at 1440 and 390 px and in dark mode.                                                                                                                                   |
 | Whole stack  | `examples/demo.sh` against the Docker image.                                                                                                                                                                                                                                                                                                                                            |
 
-819 Vitest tests at 96.7% line coverage (the gate requires 90%), plus 7 Playwright tests.
+888 Vitest tests at 96.9% line coverage (the gate requires 90%), plus 7 Playwright tests.
 
 ## Benchmarks
 

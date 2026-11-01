@@ -28,6 +28,7 @@ describe('migrations', () => {
       '001_initial',
       '002_login_attempts',
       '003_flag_config_versions',
+      '004_ruleset_change_checksums',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -140,6 +141,22 @@ describe('migrations', () => {
       await old.destroy();
       await fresh.drop();
     }
+  });
+
+  it('accept only hex SHA-256 checksums on recorded changes, and none on older rows', async () => {
+    await sql`INSERT INTO projects (key, name) VALUES ('sums', 'Sums')`.execute(db);
+    await sql`INSERT INTO environments (project_id, key, name)
+      SELECT id, 'prod', 'Prod' FROM projects WHERE key = 'sums'`.execute(db);
+    const env = sql`(SELECT environments.id FROM environments
+      JOIN projects ON projects.id = environments.project_id WHERE projects.key = 'sums')`;
+    await sql`INSERT INTO ruleset_changes (environment_id, version, kind, key, value)
+      VALUES (${env}, 1, 'flag', 'old', NULL)`.execute(db);
+    await sql`INSERT INTO ruleset_changes (environment_id, version, kind, key, value, checksum)
+      VALUES (${env}, 2, 'flag', 'new', NULL, ${'a'.repeat(64)})`.execute(db);
+    await expect(
+      sql`INSERT INTO ruleset_changes (environment_id, version, kind, key, value, checksum)
+        VALUES (${env}, 3, 'flag', 'bad', NULL, ${'A'.repeat(64)})`.execute(db),
+    ).rejects.toThrow(/check constraint/);
   });
 
   it('read bigint columns as numbers', async () => {

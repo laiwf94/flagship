@@ -121,6 +121,7 @@ export interface RulesetChangesTable {
   kind: 'flag' | 'segment';
   key: string;
   value: Json<unknown> | null;
+  checksum: string | null;
   created_at: CreatedAt;
 }
 

@@ -171,4 +171,10 @@ export const migrations: Record<string, Migration> = {
     `UPDATE flag_configs SET version = flags.version
       FROM flags WHERE flags.id = flag_configs.flag_id AND flags.version <> 1`,
   ]),
+  // Each recorded change carries the checksum of the ruleset as of that
+  // version, so SDKs can verify every patch. Older rows have none and are
+  // sent without one; SDKs skip the check for those.
+  '004_ruleset_change_checksums': statements([
+    `ALTER TABLE ruleset_changes ADD COLUMN checksum text CHECK (checksum ~ '^[0-9a-f]{64}$')`,
+  ]),
 };

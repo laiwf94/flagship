@@ -1,4 +1,4 @@
-export { AuthError, FlagshipClient } from './client.js';
+export { AuthError, ChecksumError, FlagshipClient } from './client.js';
 export type {
   ChangeEvent,
   ClientOptions,

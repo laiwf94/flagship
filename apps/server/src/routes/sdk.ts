@@ -1,4 +1,4 @@
-import { contextSchema, evaluateAll, keySchema } from '@flagship/core';
+import { contextSchema, evaluateAll, evaluationChecksum, keySchema } from '@flagship/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { authenticateSdk } from '../auth/sdk.js';
@@ -6,6 +6,7 @@ import type { Context } from '../context.js';
 import type { KeyKind } from '../db/schema.js';
 import { AppError, parse } from '../errors.js';
 import type { RulesetCache } from '../services/cache.js';
+import { nativeSha256 } from '../services/rulesets.js';
 import type { ExposureQueue } from '../services/exposures.js';
 import type { Hub } from '../streaming/hub.js';
 
@@ -125,7 +126,8 @@ export function sdkRoutes(ctx: Context, deps: SdkDeps) {
      * Evaluates every client-visible flag for the posted context. The answer
      * holds values, variant keys and reasons only: no rules, no segment
      * members, no rule ids. The context goes in the body, never a URL, so it
-     * stays out of access logs and caches.
+     * stays out of access logs and caches. `checksum` is SHA-256 of the
+     * canonical JSON of `flags`, which the browser SDK verifies.
      */
     sdk.post('/evaluate', { bodyLimit: 64 * 1024 }, async (request, reply) => {
       const id = await authenticateSdk(ctx.keys, request, ['client', 'server']);
@@ -144,7 +146,11 @@ export function sdkRoutes(ctx: Context, deps: SdkDeps) {
             : { value: e.value, variant: e.variant, reason: e.reason };
       }
       void reply.header('cache-control', 'no-store');
-      return { version: snapshot.version, flags };
+      return {
+        version: snapshot.version,
+        flags,
+        checksum: evaluationChecksum(flags, nativeSha256),
+      };
     });
 
     // navigator.sendBeacon posts text/plain so the browser skips the CORS preflight.

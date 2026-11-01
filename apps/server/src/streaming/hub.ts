@@ -20,6 +20,8 @@ export interface Change {
   kind: 'flag' | 'segment';
   key: string;
   value: Flag | Segment | null;
+  /** Checksum of the whole ruleset as of this version; null for changes recorded before checksums. */
+  checksum: string | null;
 }
 
 interface Subscriber {
@@ -189,7 +191,7 @@ export class Hub {
   async changesSince(environmentId: string, version: number): Promise<Change[] | undefined> {
     const rows = await this.o.db
       .selectFrom('ruleset_changes')
-      .select(['version', 'kind', 'key', 'value'])
+      .select(['version', 'kind', 'key', 'value', 'checksum'])
       .where('environment_id', '=', environmentId)
       .where('version', '>', version)
       .orderBy('version')
@@ -200,6 +202,7 @@ export class Hub {
       kind: r.kind,
       key: r.key,
       value: (r.value ?? null) as Flag | Segment | null,
+      checksum: r.checksum,
     }));
   }
 
@@ -217,6 +220,7 @@ export class Hub {
           kind: change.kind,
           key: change.key,
           value: change.value,
+          ...(change.checksum === null ? {} : { checksum: change.checksum }),
         }),
       );
       this.o.metrics.streamEvents.inc({ event: 'patch' });

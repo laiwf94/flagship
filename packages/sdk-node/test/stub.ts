@@ -1,6 +1,6 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { Ruleset } from '@flagship/core';
+import { rulesetChecksum, type Flag, type Ruleset, type Segment } from '@flagship/core';
 
 /**
  * A stand-in flagship server over real HTTP: ruleset with ETags, an SSE
@@ -15,6 +15,10 @@ export class StubServer {
   eventsStatus = 202;
   streamStatus = 200;
   rulesetRequests = 0;
+  /** Send checksums with snapshots and patches, as the real server does. */
+  checksums = true;
+  /** Replaces the checksum sent with snapshots, to simulate a corrupted one. */
+  snapshotChecksum: string | undefined;
   private server: http.Server | null = null;
   port = 0;
 
@@ -23,6 +27,12 @@ export class StubServer {
     readonly key = `fss_${'k'.repeat(43)}`,
   ) {
     this.ruleset = ruleset;
+  }
+
+  /** What the server sends as a snapshot: the ruleset and, unless turned off, its checksum. */
+  snapshot(): Ruleset {
+    if (!this.checksums) return this.ruleset;
+    return { ...this.ruleset, checksum: this.snapshotChecksum ?? rulesetChecksum(this.ruleset) };
   }
 
   get url(): string {
@@ -53,7 +63,7 @@ export class StubServer {
       }
       res
         .writeHead(200, { 'content-type': 'application/json', etag })
-        .end(JSON.stringify(this.ruleset));
+        .end(JSON.stringify(this.snapshot()));
       return;
     }
     if (req.url === '/sdk/v1/stream') {
@@ -64,7 +74,7 @@ export class StubServer {
       }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write(
-        `id: ${this.ruleset.version}\nevent: put\ndata: ${JSON.stringify(this.ruleset)}\n\n`,
+        `id: ${this.ruleset.version}\nevent: put\ndata: ${JSON.stringify(this.snapshot())}\n\n`,
       );
       this.streams.add(res);
       req.on('close', () => this.streams.delete(res));
@@ -84,19 +94,37 @@ export class StubServer {
   }
 
   /** Changes the ruleset and pushes a patch for one flag to every open stream. */
-  patchFlag(key: string, change: Partial<Ruleset['flags'][string]> | null): void {
+  patchFlag(key: string, change: Partial<Flag> | null): void {
+    const current = this.ruleset.flags[key];
+    this.patch(
+      'flag',
+      key,
+      change === null || current === undefined ? null : { ...current, ...change },
+    );
+  }
+
+  /**
+   * Replaces (or with null removes) one entry, bumps the version and pushes
+   * the patch. `send: false` changes the ruleset without telling anyone, as if
+   * the patch were lost; `checksum` overrides the one sent.
+   */
+  patch(
+    kind: 'flag' | 'segment',
+    key: string,
+    value: Flag | Segment | null,
+    options: { send?: boolean; checksum?: string } = {},
+  ): void {
     const version = this.ruleset.version + 1;
     const flags = { ...this.ruleset.flags };
-    const current = flags[key];
-    if (change === null) Reflect.deleteProperty(flags, key);
-    else if (current !== undefined) flags[key] = { ...current, ...change };
-    this.ruleset = { ...this.ruleset, version, flags };
-    const value = change === null ? null : flags[key];
-    for (const s of this.streams) {
-      s.write(
-        `id: ${version}\nevent: patch\ndata: ${JSON.stringify({ kind: 'flag', key, value })}\n\n`,
-      );
-    }
+    const segments = { ...this.ruleset.segments };
+    const entries: Record<string, Flag | Segment> = kind === 'flag' ? flags : segments;
+    if (value === null) Reflect.deleteProperty(entries, key);
+    else entries[key] = value;
+    this.ruleset = { ...this.ruleset, version, flags, segments };
+    if (options.send === false) return;
+    const data: Record<string, unknown> = { kind, key, value };
+    if (this.checksums) data.checksum = options.checksum ?? rulesetChecksum(this.ruleset);
+    this.send(`id: ${version}\nevent: patch\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
   send(raw: string): void {
