@@ -425,6 +425,85 @@ hidden, posting `text/plain` (no CORS preflight) with the client key in the quer
 Counts are per instance until flushed, so a crash loses at most one flush interval. For a
 feature count that is the right trade against a write per request.
 
+## Export and import
+
+`GET /api/projects/:p/export` writes a whole project as one JSON document, and
+`POST /api/projects/import` creates a project from one. Both are for admins. Together they back
+up a project's configuration, move it between installations, and copy a project
+(`?key=shop-copy&name=...`).
+
+```text
+{
+  "format": "flagship.project",
+  "formatVersion": 1,
+  "exportedAt": "2026-11-02T09:30:00.000Z",
+  "project": { "key": "shop", "name": "Shop" },
+  "environments": [ { "key": "production", "name": "Production" }, ... ],
+  "flags": [
+    {"key":"checkout","name":...,"type":"boolean","variants":[...],"salt":"checkout",
+     "clientSide":true,"archived":false,"version":2,"environments":{"production":{...,"version":5}}},
+    ...
+  ],
+  "segments": [
+    {"environment":"production","key":"beta","name":...,"included":[...],"version":3},
+    ...
+  ],
+  "checksums": { "production": "6b55...", "staging": "8744..." }
+}
+```
+
+The document holds what decides an evaluation: environments, every flag (archived ones too)
+with its targeting in each environment, and segments. API keys are left out, because only
+their hashes are stored and a copied key would be a second door into the same environment.
+Scheduled changes, the audit log and exposure counts are history, so they are left out too.
+Each flag and segment is one compact line, so a diff of two exports shows which ones changed,
+and the file is a third the size of a fully indented one.
+
+**Writing.** The export runs in one read-only `REPEATABLE READ` transaction, so the document
+is one consistent snapshot even while people keep editing; the test makes a change between
+the first chunk and the rest and checks it isn't in the file. Flags are read 200 at a time
+with their targeting, segments 20 at a time, and each page is written before the next is
+read, so a large project costs a page of memory, not a document. The project is looked up
+before the first byte, so an unknown key is still a clean `404`. A client that disconnects
+ends the stream, which rolls the transaction back and returns the connection.
+
+**Checksums.** The last field is each environment's ruleset checksum, the one SDKs verify
+(see [Checksums](#checksums)), built up entry by entry as the flags and segments go out. It
+does two jobs. A download cut short isn't valid JSON, so it can't be imported by mistake. And
+a file changed after export no longer matches. An edit made on purpose imports once
+`checksums` is removed.
+
+**Reading.** The importer checks the whole document before writing anything, and reports up
+to 100 problems with paths into the document:
+
+1. the header: `format`, and `formatVersion`, which names the versions this server reads;
+2. shape and limits with the same schemas as the API, strict, so a misspelt field is an error;
+3. unique environment, flag and segment keys; every flag has targeting for exactly the listed
+   environments; segments belong to a listed environment;
+4. each environment as a ruleset through `validateRuleset`, the check every edit passes, so
+   dangling segment references, unknown variants and prerequisite cycles are refused;
+   archived flags are checked on their own, so restoring one later can't fail;
+5. the checksums, when present.
+
+Then one transaction inserts the project, environments, flags, targeting and segments in
+batches, with a single `project.import` audit entry. A failure part way rolls all of it back;
+the test makes the last insert fail. Salts and versions are kept, so every context gets the
+same variant as before, the copy's rulesets have the same checksums as the original, and an
+editor holding a version from the exported file can save in the copy. Hand-written files can
+leave out salts, versions, descriptions, `clientSide` and `archived`.
+
+The import body limit is `FLAGSHIP_IMPORT_MAX_MB` (32 by default), separate from the 1 MB
+limit on other admin routes. The importer holds the parsed document in memory, so that limit
+is also its memory bound. A full-size project (5,000 flags of five three-clause rules in two
+environments, and 100 segments of 1,000 members in each) is a 19 MB file. On a 4-vCPU
+2.8 GHz Xeon under Node 22:
+
+| Step                                        | Time      | Memory                            |
+| ------------------------------------------- | --------- | --------------------------------- |
+| Export (streamed, 18.8 MiB out)             | 2.0–2.2 s | 6 MiB live heap at peak, after GC |
+| Validate the document (`planImport`)        | 2.4–3.4 s | the parsed document               |
+| Import, validation and the inserts included | 5.3–5.7 s | the parsed document               |
+
 ## Admin UI
 
 React and Vite, served by the same server with a strict CSP (`default-src 'self'`, no inline
@@ -474,20 +553,20 @@ The OpenFeature provider maps these to `PROVIDER_NOT_READY`, `Stale` and `Ready`
 
 ## Limits
 
-| Thing                               | Limit                                                    |
-| ----------------------------------- | -------------------------------------------------------- |
-| Flags / segments per environment    | 5,000 / 1,000                                            |
-| Variants per flag                   | 20                                                       |
-| Rules per flag, clauses per rule    | 100, 20                                                  |
-| Values per clause                   | 1,000 (each ≤ 1,024 chars)                               |
-| Segment include / exclude lists     | 10,000 each                                              |
-| Prerequisites per flag, chain depth | 10, 10                                                   |
-| String / JSON variant value         | 4,096 chars / 32 KB                                      |
-| Regex pattern, regex input          | 256 chars, 1,024 chars                                   |
-| Context attributes                  | 100 (strings ≤ 1,024, lists ≤ 100)                       |
-| Request body                        | 1 MB admin, 64 KB evaluate, 256 KB events                |
-| Events per batch                    | 1,000                                                    |
-| Streams                             | 20,000 per instance, 1,000 per server key (configurable) |
+| Thing                               | Limit                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| Flags / segments per environment    | 5,000 / 1,000                                                                  |
+| Variants per flag                   | 20                                                                             |
+| Rules per flag, clauses per rule    | 100, 20                                                                        |
+| Values per clause                   | 1,000 (each ≤ 1,024 chars)                                                     |
+| Segment include / exclude lists     | 10,000 each                                                                    |
+| Prerequisites per flag, chain depth | 10, 10                                                                         |
+| String / JSON variant value         | 4,096 chars / 32 KB                                                            |
+| Regex pattern, regex input          | 256 chars, 1,024 chars                                                         |
+| Context attributes                  | 100 (strings ≤ 1,024, lists ≤ 100)                                             |
+| Request body                        | 1 MB admin, 32 MB project import (configurable), 64 KB evaluate, 256 KB events |
+| Events per batch                    | 1,000                                                                          |
+| Streams                             | 20,000 per instance, 1,000 per server key (configurable)                       |
 
 ## Security
 

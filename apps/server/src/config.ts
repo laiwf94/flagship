@@ -34,6 +34,7 @@ const schema = z
     FLAGSHIP_EVENTS_FLUSH_MS: int(50, 60_000, 2000),
     FLAGSHIP_EVENTS_QUEUE_LIMIT: int(1, 10_000_000, 50_000),
     FLAGSHIP_CHANGE_RETENTION: int(10, 1_000_000, 1000),
+    FLAGSHIP_IMPORT_MAX_MB: int(1, 1024, 32),
     FLAGSHIP_ADMIN_UI_DIR: z.string().min(1).optional(),
   })
   .refine(
@@ -64,6 +65,8 @@ export interface Config {
   eventsFlushMs: number;
   eventsQueueLimit: number;
   changeRetention: number;
+  /** Largest project import accepted, in bytes. */
+  importMaxBytes: number;
   adminUiDir: string | undefined;
 }
 
@@ -103,6 +106,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     eventsFlushMs: c.FLAGSHIP_EVENTS_FLUSH_MS,
     eventsQueueLimit: c.FLAGSHIP_EVENTS_QUEUE_LIMIT,
     changeRetention: c.FLAGSHIP_CHANGE_RETENTION,
+    importMaxBytes: c.FLAGSHIP_IMPORT_MAX_MB * 1024 * 1024,
     adminUiDir:
       c.FLAGSHIP_ADMIN_UI_DIR === undefined ? undefined : resolve(c.FLAGSHIP_ADMIN_UI_DIR),
   };

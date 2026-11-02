@@ -17,6 +17,7 @@ describe('loadConfig', () => {
       bootstrapAdmin: undefined,
       metricsToken: undefined,
       maxStreams: 20_000,
+      importMaxBytes: 32 * 1024 * 1024,
     });
   });
 
@@ -31,6 +32,7 @@ describe('loadConfig', () => {
       FLAGSHIP_ADMIN_PASSWORD: 'correct horse battery',
       FLAGSHIP_METRICS_TOKEN: 'a-long-metrics-token',
       FLAGSHIP_ADMIN_UI_DIR: 'admin/dist',
+      FLAGSHIP_IMPORT_MAX_MB: '100',
     });
     expect(c).toMatchObject({
       port: 9000,
@@ -40,6 +42,7 @@ describe('loadConfig', () => {
       bootstrapAdmin: { email: 'admin@acme.com', password: 'correct horse battery' },
       metricsToken: 'a-long-metrics-token',
       adminUiDir: `${process.cwd()}/admin/dist`,
+      importMaxBytes: 100 * 1024 * 1024,
     });
   });
 

@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { keySchema } from '@flagship/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -12,6 +13,7 @@ import {
   getProject,
   listProjects,
 } from '../services/projects.js';
+import { exportProject, importProject } from '../services/transfer.js';
 
 const name = z.string().trim().min(1).max(100);
 const envInput = z.strictObject({ key: keySchema, name });
@@ -20,6 +22,7 @@ const projectInput = z.strictObject({
   name,
   environments: z.array(envInput).min(1).max(20).optional(),
 });
+const importQuery = z.strictObject({ key: keySchema.optional(), name: name.optional() });
 const keyInput = z.strictObject({ kind: z.enum(['server', 'client']), name });
 
 export const projectParams = z.object({ project: keySchema });
@@ -41,6 +44,39 @@ export function projectRoutes(ctx: Context) {
       const body = parse(projectInput, request.body, 'project');
       return reply.status(201).send(await createProject(ctx.db, body, user));
     });
+
+    api.get('/projects/:project/export', { config: { role: 'admin' } }, async (request, reply) => {
+      const { project } = parse(projectParams, request.params, 'path');
+      const chunks = exportProject(ctx.db, project, ctx.now);
+      // The first chunk is read before any header is sent, so an unknown
+      // project is still a clean 404 rather than a broken download.
+      const first = await chunks.next();
+      async function* rest(): AsyncGenerator<string> {
+        try {
+          if (first.done !== true) yield first.value;
+          yield* chunks;
+        } finally {
+          await chunks.return(undefined);
+        }
+      }
+      const date = ctx.now().toISOString().slice(0, 10);
+      return reply
+        .type('application/json; charset=utf-8')
+        .header('cache-control', 'no-store')
+        .header('content-disposition', `attachment; filename="${project}-${date}.flagship.json"`)
+        .send(Readable.from(rest(), { objectMode: false }));
+    });
+
+    api.post(
+      '/projects/import',
+      { config: { role: 'admin' }, bodyLimit: ctx.config.importMaxBytes },
+      async (request, reply) => {
+        const user = currentUser(request);
+        const as = parse(importQuery, request.query, 'query');
+        const summary = await importProject(ctx.db, request.body, user, as);
+        return reply.status(201).send(summary);
+      },
+    );
 
     api.post(
       '/projects/:project/environments',
