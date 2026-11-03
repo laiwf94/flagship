@@ -528,7 +528,8 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
 
 | Failure                          | Effect                                                                                                     | Recovery                                                                            |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Postgres down                    | admin API and new snapshots fail with 500/503; `/readyz` 503; open streams stay open; SDKs keep evaluating | automatic when Postgres returns; idle pool connections that died are replaced       |
+| Postgres down                    | admin API and new snapshots fail with 500/503; `/readyz` 503; open streams stay open; SDKs keep evaluating | automatic when Postgres returns; pool connections that died are replaced            |
+| Pooled connection terminated     | the request using it fails with 500                                                                        | the pool drops it and opens a new one; the process never exits over it              |
 | Listener connection lost         | changes stop reaching this instance's streams                                                              | reconnect after 1 s, drop caches, catch up from `ruleset_changes`                   |
 | Notification missed              | same, for one change                                                                                       | the next change's catch-up includes it; cache TTL bounds snapshot staleness to 30 s |
 | Slow SSE client                  | its socket buffer grows                                                                                    | closed at 1 MB; it resumes from its last id                                         |

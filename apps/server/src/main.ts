@@ -46,8 +46,8 @@ async function main(): Promise<void> {
   const { db } = createDatabase({
     url: config.databaseUrl,
     maxConnections: config.dbPoolSize,
-    onIdleError: (err) => {
-      logger.warn({ err }, 'idle database connection lost');
+    onConnectionError: (err) => {
+      logger.warn({ err }, 'database connection lost');
     },
   });
   await migrate(db);

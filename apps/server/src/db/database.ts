@@ -12,8 +12,12 @@ export type Db = Kysely<Database>;
 export interface DatabaseOptions {
   url: string;
   maxConnections?: number;
-  /** Called when an idle pooled connection dies (database restart, failover). */
-  onIdleError?: (err: Error) => void;
+  /**
+   * Called when a pooled connection dies between queries (database restart,
+   * failover, a terminated backend), whether it was idle in the pool or
+   * checked out, for example in the middle of a transaction.
+   */
+  onConnectionError?: (err: Error) => void;
 }
 
 export function createDatabase(options: DatabaseOptions): { db: Db; pool: pg.Pool } {
@@ -25,11 +29,21 @@ export function createDatabase(options: DatabaseOptions): { db: Db; pool: pg.Poo
     // Keeps a stuck query from holding a pooled connection forever.
     statement_timeout: 15_000,
   });
-  // pg emits 'error' when an idle connection is cut. Unhandled, that event
-  // would crash the process; the pool already drops the dead client and
-  // opens a new one on the next query.
-  pool.on('error', (err) => {
-    options.onIdleError?.(err);
+  const report = (err: Error) => {
+    options.onConnectionError?.(err);
+  };
+  // pg emits 'error' on a client whose connection is cut while no query is
+  // running on it. Unhandled, that event crashes the process. The pool
+  // listens only while a client is idle and forwards that as 'error' here;
+  // a checked-out client, say between the statements of a transaction, has
+  // no listener, so add one for as long as it is out. Its next query fails,
+  // and on release the pool sees it is no longer queryable and drops it.
+  pool.on('error', report);
+  pool.on('acquire', (client) => {
+    client.on('error', report);
+  });
+  pool.on('release', (_err, client) => {
+    client.removeListener('error', report);
   });
   return { db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), pool };
 }

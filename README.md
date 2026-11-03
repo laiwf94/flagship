@@ -151,7 +151,7 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 | Admin UI     | Component tests with Testing Library; Playwright against the built server for the main journeys, a two-editor conflict, a keyboard-only run, and axe (no serious or critical WCAG 2.1 AA findings) on every page at 1440 and 390 px and in dark mode.                                                                                                                                                                                                                  |
 | Whole stack  | `examples/demo.sh` against the Docker image.                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
-909 Vitest tests at 97.0% line coverage (the gate requires 90%), plus 7 Playwright tests.
+910 Vitest tests at 97.0% line coverage (the gate requires 90%), plus 7 Playwright tests.
 
 ## Benchmarks
 

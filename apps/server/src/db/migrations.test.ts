@@ -88,7 +88,7 @@ describe('migrations', () => {
 
   it('survives idle connections being cut', async () => {
     const errors: Error[] = [];
-    const own = createDatabase({ url, onIdleError: (e) => errors.push(e) });
+    const own = createDatabase({ url, onConnectionError: (e) => errors.push(e) });
     await sql`SELECT 1`.execute(own.db);
     await sql`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
               WHERE datname = current_database() AND pid <> pg_backend_pid()
@@ -99,6 +99,30 @@ describe('migrations', () => {
     expect(r.rows[0]?.n).toBe(1);
     await own.db.destroy();
     await sql`SELECT 1`.execute(db);
+  });
+
+  it('survives a checked-out connection being cut between statements of a transaction', async () => {
+    const errors: Error[] = [];
+    const own = createDatabase({
+      url,
+      maxConnections: 1,
+      onConnectionError: (e) => errors.push(e),
+    });
+    const outcome = own.db.transaction().execute(async (trx) => {
+      const { rows } = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx);
+      await sql`SELECT pg_terminate_backend(${rows[0]!.pid})`.execute(db);
+      // The FATAL arrives while no query is running on this client.
+      for (let i = 0; i < 50 && errors.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await sql`SELECT 1`.execute(trx);
+    });
+    await expect(outcome).rejects.toThrow();
+    expect(errors.length).toBeGreaterThan(0);
+    // The dead client was dropped, so the pool's only slot works again.
+    const r = await sql<{ n: number }>`SELECT 1 AS n`.execute(own.db);
+    expect(r.rows[0]?.n).toBe(1);
+    await own.db.destroy();
   });
 
   it("backfill each environment's targeting version from the flag version", async () => {
