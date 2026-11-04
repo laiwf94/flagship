@@ -17,7 +17,8 @@
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "e2e": "pnpm build && playwright test",
     "bench": "pnpm --filter @flagship/core build && node bench/evaluate.mjs",
-    "bench:fanout": "pnpm build && node bench/fanout.mjs"
+    "bench:fanout": "pnpm build && node bench/fanout.mjs",
+    "bench:faults": "node bench/faults.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

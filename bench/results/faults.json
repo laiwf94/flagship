@@ -1,0 +1,605 @@
+{
+  "schema": 1,
+  "suite": "faults",
+  "generatedAt": "2026-11-04T05:09:13.416Z",
+  "commit": "92a6a78a8d3843a5915fb9742a994e461d9d9564",
+  "environment": {
+    "node": "v22.23.4",
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 4,
+    "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "memoryMiB": 16091,
+    "ci": false
+  },
+  "config": {
+    "instances": 2,
+    "sdks": 40,
+    "roundsPerFault": 10,
+    "postgres": "PostgreSQL 17.11"
+  },
+  "faults": {
+    "none": {
+      "rounds": 10,
+      "cut": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "writeMs": {
+        "min": 34.2,
+        "median": 42.2,
+        "p95": 153.9,
+        "max": 153.9
+      },
+      "failedWrites": 0,
+      "propagatedMs": {
+        "min": 33.8,
+        "median": 41.9,
+        "p95": 157.3,
+        "max": 157.3
+      },
+      "staleClients": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "readyMs": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "evaluationErrors": 0
+    },
+    "postgres-connections": {
+      "rounds": 10,
+      "cut": {
+        "min": 3,
+        "median": 8,
+        "p95": 20,
+        "max": 20
+      },
+      "writeMs": {
+        "min": 38.8,
+        "median": 52,
+        "p95": 150.9,
+        "max": 150.9
+      },
+      "failedWrites": 1,
+      "propagatedMs": {
+        "min": 55,
+        "median": 102.7,
+        "p95": 165.4,
+        "max": 165.4
+      },
+      "staleClients": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "readyMs": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "evaluationErrors": 0
+    },
+    "listen-sessions": {
+      "rounds": 10,
+      "cut": {
+        "min": 2,
+        "median": 2,
+        "p95": 2,
+        "max": 2
+      },
+      "writeMs": {
+        "min": 20.9,
+        "median": 27.5,
+        "p95": 44.7,
+        "max": 44.7
+      },
+      "failedWrites": 0,
+      "propagatedMs": {
+        "min": 1012.2,
+        "median": 1014.7,
+        "p95": 1042.9,
+        "max": 1042.9
+      },
+      "staleClients": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "readyMs": {
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "evaluationErrors": 0
+    },
+    "instance": {
+      "rounds": 10,
+      "cut": {
+        "min": 41,
+        "median": 52,
+        "p95": 67,
+        "max": 67
+      },
+      "writeMs": {
+        "min": 56.3,
+        "median": 84.2,
+        "p95": 204.2,
+        "max": 204.2
+      },
+      "failedWrites": 4,
+      "propagatedMs": {
+        "min": 1007.1,
+        "median": 1038.2,
+        "p95": 1067,
+        "max": 1067
+      },
+      "staleClients": {
+        "min": 20,
+        "median": 40,
+        "p95": 40,
+        "max": 40
+      },
+      "readyMs": {
+        "min": 968.9,
+        "median": 1002.9,
+        "p95": 1038.2,
+        "max": 1038.2
+      },
+      "evaluationErrors": 0
+    }
+  },
+  "rounds": [
+    {
+      "fault": "none",
+      "round": 1,
+      "cut": 0,
+      "writeMs": 153.9,
+      "failedWrites": 0,
+      "propagatedMs": 157.3,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 2,
+      "cut": 0,
+      "writeMs": 98.3,
+      "failedWrites": 0,
+      "propagatedMs": 95.9,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 3,
+      "cut": 0,
+      "writeMs": 45.7,
+      "failedWrites": 0,
+      "propagatedMs": 45.3,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 4,
+      "cut": 0,
+      "writeMs": 55.5,
+      "failedWrites": 0,
+      "propagatedMs": 53.8,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 5,
+      "cut": 0,
+      "writeMs": 40.1,
+      "failedWrites": 0,
+      "propagatedMs": 42.4,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 6,
+      "cut": 0,
+      "writeMs": 41,
+      "failedWrites": 0,
+      "propagatedMs": 40.1,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 7,
+      "cut": 0,
+      "writeMs": 36.6,
+      "failedWrites": 0,
+      "propagatedMs": 36,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 8,
+      "cut": 0,
+      "writeMs": 34.2,
+      "failedWrites": 0,
+      "propagatedMs": 33.8,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 9,
+      "cut": 0,
+      "writeMs": 42.2,
+      "failedWrites": 0,
+      "propagatedMs": 41.7,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "none",
+      "round": 10,
+      "cut": 0,
+      "writeMs": 42.3,
+      "failedWrites": 0,
+      "propagatedMs": 41.9,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 1,
+      "cut": 20,
+      "writeMs": 48.4,
+      "failedWrites": 0,
+      "propagatedMs": 55,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 2,
+      "cut": 3,
+      "writeMs": 149.2,
+      "failedWrites": 0,
+      "propagatedMs": 165.4,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 3,
+      "cut": 20,
+      "writeMs": 52,
+      "failedWrites": 0,
+      "propagatedMs": 109.4,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 4,
+      "cut": 17,
+      "writeMs": 43.3,
+      "failedWrites": 0,
+      "propagatedMs": 60.6,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 5,
+      "cut": 3,
+      "writeMs": 140.2,
+      "failedWrites": 0,
+      "propagatedMs": 144.4,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 6,
+      "cut": 19,
+      "writeMs": 38.8,
+      "failedWrites": 0,
+      "propagatedMs": 59.7,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 7,
+      "cut": 4,
+      "writeMs": 100.3,
+      "failedWrites": 1,
+      "propagatedMs": 102.7,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 8,
+      "cut": 8,
+      "writeMs": 50.7,
+      "failedWrites": 0,
+      "propagatedMs": 65.3,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 9,
+      "cut": 4,
+      "writeMs": 150.9,
+      "failedWrites": 0,
+      "propagatedMs": 152.9,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "postgres-connections",
+      "round": 10,
+      "cut": 20,
+      "writeMs": 54.7,
+      "failedWrites": 0,
+      "propagatedMs": 114.3,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 1,
+      "cut": 2,
+      "writeMs": 33.5,
+      "failedWrites": 0,
+      "propagatedMs": 1014.7,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 2,
+      "cut": 2,
+      "writeMs": 28.2,
+      "failedWrites": 0,
+      "propagatedMs": 1014,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 3,
+      "cut": 2,
+      "writeMs": 30.1,
+      "failedWrites": 0,
+      "propagatedMs": 1013.1,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 4,
+      "cut": 2,
+      "writeMs": 21.8,
+      "failedWrites": 0,
+      "propagatedMs": 1042.9,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 5,
+      "cut": 2,
+      "writeMs": 44.7,
+      "failedWrites": 0,
+      "propagatedMs": 1016,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 6,
+      "cut": 2,
+      "writeMs": 28.8,
+      "failedWrites": 0,
+      "propagatedMs": 1017.9,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 7,
+      "cut": 2,
+      "writeMs": 20.9,
+      "failedWrites": 0,
+      "propagatedMs": 1025.5,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 8,
+      "cut": 2,
+      "writeMs": 27.3,
+      "failedWrites": 0,
+      "propagatedMs": 1014.1,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 9,
+      "cut": 2,
+      "writeMs": 23.3,
+      "failedWrites": 0,
+      "propagatedMs": 1012.2,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "listen-sessions",
+      "round": 10,
+      "cut": 2,
+      "writeMs": 27.5,
+      "failedWrites": 0,
+      "propagatedMs": 1034.9,
+      "staleClients": 0,
+      "readyMs": 0,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 1,
+      "cut": 41,
+      "writeMs": 56.3,
+      "failedWrites": 0,
+      "propagatedMs": 1010.7,
+      "staleClients": 20,
+      "readyMs": 968.9,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 2,
+      "cut": 67,
+      "writeMs": 84.2,
+      "failedWrites": 0,
+      "propagatedMs": 1029,
+      "staleClients": 40,
+      "readyMs": 994.4,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 3,
+      "cut": 51,
+      "writeMs": 102.1,
+      "failedWrites": 0,
+      "propagatedMs": 1050.5,
+      "staleClients": 40,
+      "readyMs": 1023,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 4,
+      "cut": 52,
+      "writeMs": 77.8,
+      "failedWrites": 0,
+      "propagatedMs": 1030.5,
+      "staleClients": 40,
+      "readyMs": 1002.8,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 5,
+      "cut": 52,
+      "writeMs": 166.3,
+      "failedWrites": 1,
+      "propagatedMs": 1067,
+      "staleClients": 40,
+      "readyMs": 1024.9,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 6,
+      "cut": 61,
+      "writeMs": 204.2,
+      "failedWrites": 1,
+      "propagatedMs": 1038.2,
+      "staleClients": 40,
+      "readyMs": 1038.2,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 7,
+      "cut": 56,
+      "writeMs": 158,
+      "failedWrites": 1,
+      "propagatedMs": 1059,
+      "staleClients": 40,
+      "readyMs": 1016.1,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 8,
+      "cut": 60,
+      "writeMs": 128.8,
+      "failedWrites": 1,
+      "propagatedMs": 1042.5,
+      "staleClients": 40,
+      "readyMs": 1002.2,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 9,
+      "cut": 52,
+      "writeMs": 78.3,
+      "failedWrites": 0,
+      "propagatedMs": 1007.1,
+      "staleClients": 40,
+      "readyMs": 1005.7,
+      "evaluationErrors": 0
+    },
+    {
+      "fault": "instance",
+      "round": 10,
+      "cut": 60,
+      "writeMs": 84.1,
+      "failedWrites": 0,
+      "propagatedMs": 1043.2,
+      "staleClients": 40,
+      "readyMs": 1002.9,
+      "evaluationErrors": 0
+    }
+  ]
+}

@@ -174,7 +174,10 @@ it, 20 changes per run, client threads on the same machine:
 | 1,000   | 15.3 ms | 23.2 ms | 24.5 ms |
 | 10,000  | 53.8 ms | 78.0 ms | 81.3 ms |
 
-`pnpm bench` and `pnpm bench:fanout` reproduce these.
+`pnpm bench` and `pnpm bench:fanout` reproduce these. `pnpm bench:faults` runs the fault
+suite with 10 rounds per fault and writes recovery times to
+[`bench/results/faults.json`](bench/results/faults.json); a nightly CI job runs it too and
+keeps the JSON as an artifact.
 
 ## Admin screens
 

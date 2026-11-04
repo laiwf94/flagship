@@ -1,4 +1,6 @@
-import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import { appendFileSync } from 'node:fs';
+import { sql } from 'kysely';
+import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { createDatabase, migrate } from '../../src/db/database.js';
 import { createTestDatabase } from '../db.js';
 import { PASSWORD } from '../session.js';
@@ -12,6 +14,7 @@ import {
   until,
   type Write,
 } from './harness.js';
+import { buildReport, markdown, writeReport, type Recovery } from './report.js';
 
 /**
  * Fault injection under SDK traffic. Two real server processes share one
@@ -20,7 +23,10 @@ import {
  * kill-switch change until the API accepts it, and measures how long until
  * every SDK serves the new value.
  *
- * FLAGSHIP_FAULT_ROUNDS sets the rounds per fault (3).
+ * FLAGSHIP_FAULT_ROUNDS sets the rounds per fault (3). FLAGSHIP_FAULT_RESULTS
+ * names a JSON file to write the report to when every test passed, as
+ * `pnpm bench:faults` does; under GitHub Actions the summary table also goes
+ * to the job summary.
  */
 
 const ROUNDS = Number(process.env.FLAGSHIP_FAULT_ROUNDS ?? '3');
@@ -29,23 +35,6 @@ const FLAG = 'faults';
 const EMAIL = 'root@example.com';
 const P = '/api/projects/default';
 const KILL = `${P}/flags/${FLAG}/environments/production/kill-switch`;
-
-export interface Recovery {
-  fault: 'none' | 'postgres-connections' | 'listen-sessions' | 'instance';
-  round: number;
-  /** Postgres sessions terminated, or client connections (streams and keep-alive) the killed instance held. */
-  cut: number;
-  /** From the fault to the first accepted write, and the attempts refused before it. */
-  writeMs: number;
-  failedWrites: number;
-  /** From the fault until every SDK serves the value that write set. */
-  propagatedMs: number;
-  /** SDK clients that went `stale`, and from the fault until the last was `ready` again. */
-  staleClients: number;
-  readyMs: number;
-  /** Evaluations that returned the caller's default during the round. */
-  evaluationErrors: number;
-}
 
 let database: string;
 let a: Instance;
@@ -58,6 +47,14 @@ const cleanup: (() => Promise<void>)[] = [];
 let sdkKey: string;
 let serving = true;
 const results: Recovery[] = [];
+let postgres = 'unknown';
+let failed = false;
+
+beforeEach(({ onTestFailed }) => {
+  onTestFailed(() => {
+    failed = true;
+  });
+});
 
 beforeAll(async () => {
   const created = await createTestDatabase();
@@ -66,6 +63,8 @@ beforeAll(async () => {
   // Migrate up front so the instances start in seconds, not one after another.
   const { db } = createDatabase({ url: created.url, maxConnections: 2 });
   await migrate(db);
+  const version = await sql<{ server_version: string }>`show server_version`.execute(db);
+  postgres = `PostgreSQL ${version.rows[0]!.server_version}`;
   await db.destroy();
 
   const env = {
@@ -129,7 +128,28 @@ afterAll(async () => {
   }
   for (const undo of cleanup.reverse()) await undo();
   if (results.length > 0) process.stdout.write(summary(results));
+  publish();
 });
+
+function publish(): void {
+  const file = process.env.FLAGSHIP_FAULT_RESULTS;
+  if (!file) return;
+  if (failed) {
+    process.stdout.write(`Not writing ${file}: a test failed.\n`);
+    return;
+  }
+  const report = buildReport({
+    rounds: results,
+    roundsPerFault: ROUNDS,
+    sdks: SDKS,
+    instances: 2,
+    postgres,
+  });
+  writeReport(file, report);
+  process.stdout.write(`Wrote ${file}\n`);
+  const jobSummary = process.env.GITHUB_STEP_SUMMARY;
+  if (jobSummary) appendFileSync(jobSummary, markdown(report));
+}
 
 /**
  * Injects a fault, then flips the kill switch (retrying until accepted) and

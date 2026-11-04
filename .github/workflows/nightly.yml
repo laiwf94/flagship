@@ -1,0 +1,38 @@
+name: nightly
+
+on:
+  schedule:
+    # 03:17 UTC, off the top of the hour when scheduled runs queue up.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds per fault
+        default: '10'
+
+permissions:
+  contents: read
+
+jobs:
+  faults:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Fault recovery (two instances, 40 SDKs, Testcontainers Postgres)
+        run: pnpm bench:faults --rounds "$ROUNDS" --out bench/results/faults-nightly.json
+        env:
+          ROUNDS: ${{ inputs.rounds || '10' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fault-recovery
+          path: bench/results/faults-nightly.json
+          if-no-files-found: warn
+          retention-days: 90

@@ -609,6 +609,15 @@ transaction is included) to each stream receiving the patch:
 
 Client and server share one machine, so these numbers include the client threads' own parsing.
 
+`pnpm bench:faults [--rounds N] [--out FILE]` runs `apps/server/test/faults` with N rounds
+per fault (10) and writes a JSON report (`bench/results/faults.json` by default) when every
+test passed. Schema 1 holds the commit, the machine, the configuration, every round, and per
+fault the min, median, nearest-rank p95 and max of the time to the first accepted write, to
+every SDK serving the change and to every SDK being ready, with totals of refused writes and
+default evaluations. The report is refused unless every fault ran all its rounds. The
+`nightly` workflow runs it at 03:17 UTC (or on demand with a round count), adds the summary
+table to the job summary and keeps the JSON as an artifact for 90 days.
+
 ## Dependencies
 
 Each is mainstream, maintained, and pinned exactly. pnpm refuses any version (direct or
