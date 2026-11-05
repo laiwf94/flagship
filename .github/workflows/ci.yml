@@ -65,4 +65,4 @@ jobs:
       - name: Build the image and run the demo against it
         run: bash examples/demo.sh
       - if: always()
-        run: docker compose down -v
+        run: docker compose --profile multi down -v

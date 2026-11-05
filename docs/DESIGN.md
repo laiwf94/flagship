@@ -618,6 +618,37 @@ default evaluations. The report is refused unless every fault ran all its rounds
 `nightly` workflow runs it at 03:17 UTC (or on demand with a round count), adds the summary
 table to the job summary and keeps the JSON as an artifact for 90 days.
 
+The published report, 10 rounds per fault on a 4-vCPU Xeon with Node 22 and PostgreSQL 17,
+in ms from the fault (median / p95 / max):
+
+| Fault                                   | First accepted write | Every SDK serves the change | Every SDK ready again | Refused writes |
+| --------------------------------------- | -------------------- | --------------------------- | --------------------- | -------------- |
+| none                                    | 42 / 154 / 154       | 42 / 157 / 157              | never stale           | 0              |
+| `postgres-connections` (3–20 sessions)  | 52 / 151 / 151       | 103 / 165 / 165             | never stale           | 1              |
+| `listen-sessions` (2 sessions)          | 28 / 45 / 45         | 1,015 / 1,043 / 1,043       | never stale           | 0              |
+| `instance` (41–67 connections, SIGKILL) | 84 / 204 / 204       | 1,038 / 1,067 / 1,067       | 1,003 / 1,038 / 1,038 | 4              |
+
+What the numbers come from:
+
+- **Pooled connections.** A write that lands on a terminated connection fails with 500
+  (once over ten rounds); the pool drops the connection and the retry 50 ms later gets a
+  fresh one. Open streams don't hold a pooled connection, so no SDK goes stale.
+- **LISTEN sessions.** Writes are unaffected, but the notification for the change is lost.
+  The listener reconnects after its fixed 1 s delay and catches up from `ruleset_changes`,
+  which accounts for nearly all of the 1,015 ms.
+- **Instance.** A write in flight to the killed instance is lost with its connection, and
+  the retry goes to the other one, since the balancer skips a backend that refuses the
+  connection (four lost writes over ten rounds). Its SDKs go stale, wait the first jittered
+  reconnect delay (0.5–1 s), reconnect through the balancer to the other instance and resume
+  from `Last-Event-ID`, so they get exactly the missed patches rather than a snapshot.
+- Across all 40 rounds no evaluation fell back to the caller's default, and every SDK ended
+  on the server's checksum without a resync.
+
+`examples/demo.sh` repeats the instance case by hand against Docker: it SIGKILLs the
+container serving the app, saves the kill switch on the other and starts the container again.
+The app has the change about 2–3 s after the start, most of which is the container booting
+and running its migration check; it then serves the same checksum as the other instance.
+
 ## Dependencies
 
 Each is mainstream, maintained, and pinned exactly. pnpm refuses any version (direct or
@@ -649,7 +680,9 @@ SDKs free of transitive code.
 
 More instances already work: streams, the scheduler, migrations and the sign-in limiter
 coordinate through Postgres, so the only requirement is a load balancer that allows long-lived
-responses.
+responses. `docker compose --profile multi` runs a second instance on port 8081 against the
+same database, which is what the demo uses to show both sharing one sign-in budget and serving
+identical checksums.
 
 One LISTEN connection per instance is fine for hundreds of instances. For millions of streams,
 put a relay tier in front that holds the client streams and subscribes once per environment,

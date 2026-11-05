@@ -1,5 +1,6 @@
 // A tiny service that asks flagship whether 1,000 users get the new checkout,
-// using the Node SDK. It evaluates locally and reprints on every change.
+// using the Node SDK. It evaluates locally and reprints on every change, with
+// the checksum of the ruleset it verified.
 import { FlagshipClient } from '@flagship/node';
 
 const users = Array.from({ length: 1000 }, (_, i) => ({ key: `user-${i}` }));
@@ -21,11 +22,12 @@ function report(reason) {
     }
   }
   console.log(
-    `[app] ${reason}: new-checkout is on for ${on.length}/1000 users${note} (ruleset v${client.version})`,
+    `[app] ${reason}: new-checkout is on for ${on.length}/1000 users${note} (ruleset v${client.version}, checksum ${client.checksum})`,
   );
 }
 
 client.on('status', (s) => console.log(`[app] status ${s}`));
+client.on('error', (e) => console.log(`[app] error ${e.message}`));
 await client.ready();
 report('ready');
 client.on('change', (c) => {

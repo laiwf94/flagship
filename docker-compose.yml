@@ -1,5 +1,32 @@
 # Local stack: Postgres and the flagship server with the admin UI on :8080.
 # The admin password below is for this demo only.
+#
+# The `multi` profile adds a second instance on :8081 against the same
+# database, as examples/demo.sh uses it:
+#   docker compose --profile multi up -d --build --wait
+x-flagship: &flagship
+  image: flagship:local
+  build: .
+  depends_on:
+    postgres:
+      condition: service_healthy
+  environment:
+    FLAGSHIP_DATABASE_URL: postgres://flagship:flagship@postgres:5432/flagship
+    FLAGSHIP_ADMIN_EMAIL: admin@example.com
+    FLAGSHIP_ADMIN_PASSWORD: demo-password-change-me
+  healthcheck:
+    test:
+      - CMD
+      - /nodejs/bin/node
+      - -e
+      - "fetch('http://127.0.0.1:8080/readyz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+    interval: 2s
+    timeout: 3s
+    retries: 30
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ['no-new-privileges:true']
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -16,28 +43,15 @@ services:
       retries: 30
 
   flagship:
-    build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      FLAGSHIP_DATABASE_URL: postgres://flagship:flagship@postgres:5432/flagship
-      FLAGSHIP_ADMIN_EMAIL: admin@example.com
-      FLAGSHIP_ADMIN_PASSWORD: demo-password-change-me
+    <<: *flagship
     ports:
       - '8080:8080'
-    healthcheck:
-      test:
-        - CMD
-        - /nodejs/bin/node
-        - -e
-        - "fetch('http://127.0.0.1:8080/readyz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
-      interval: 2s
-      timeout: 3s
-      retries: 30
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ['no-new-privileges:true']
+
+  flagship-b:
+    <<: *flagship
+    profiles: [multi]
+    ports:
+      - '8081:8080'
 
 volumes:
   pgdata:

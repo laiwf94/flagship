@@ -60,8 +60,11 @@ to production. The whole ruleset is validated before a
 change commits, and the UI shows a diff and a live preview of who would change variant before
 you save. An audit log records every change and who made it. Access uses three roles (viewer,
 editor, admin) and cookie sessions with CSRF protection, and each environment has its own
-server and client keys, stored hashed. SDKs also report which variants they served, batched
-and with backpressure, and the UI shows the counts per variant.
+server and client keys, stored hashed. Failed sign-ins are limited per email and per address
+from one budget in Postgres, so adding instances doesn't add guesses, and if that budget
+can't be checked, sign-in answers `503` rather than letting the attempt through. SDKs also
+report which variants they served, batched and with backpressure, and the UI shows the counts
+per variant.
 
 A whole project exports to one JSON document (flags, targeting in every environment and
 segments, with each environment's checksum) and imports back into a new project, or a copy
@@ -72,16 +75,30 @@ rulesets with the same checksums as the original.
 
 ```console
 $ docker compose up -d --build --wait     # Postgres + flagship on http://localhost:8080
-$ ./examples/demo.sh                      # flag via the API, a Node app following it live
+$ ./examples/demo.sh                      # two instances, a Node app following a flag live
 ```
 
 Sign in at <http://localhost:8080> as `admin@example.com` with the demo password from
 `docker-compose.yml`. A fresh install has a `default` project with development and production
 environments. Create a server key under Settings, then point an SDK at it.
 
-The demo prints each step's evidence as the app receives it over SSE: 0/1000 users on, then
-about 100 after a 10% rollout, then about 500 at 50% with every user from the 10% step still
-on, then 0 after the kill switch. It fails if any step doesn't arrive within 15 seconds.
+The demo starts a second instance on <http://localhost:8081> (the compose profile `multi`),
+makes every change through the first and runs a small Node app on the second, then prints
+each step's evidence as it checks it:
+
+- ten wrong passwords for one email, alternating between the instances, get `401`; the next
+  attempt gets `429` from both;
+- the app sees 0/1000 users on, then about 100 after a 10% rollout;
+- development and production are saved from one load of the flag without a conflict, and a
+  second save with the same production version gets `409`;
+- at 50% about 500 users are on, and every user from the 10% step is still on;
+- the app, the first instance and the second report the same ruleset checksum;
+- the second instance is SIGKILLed, the kill switch is saved on the first, and when the
+  second starts again the app reconnects, resumes and serves 0/1000, on the same checksum;
+- the project is exported, imported under a new key, and the copy's checksums match.
+
+It fails if any check doesn't hold or the app doesn't print a step in time (15 seconds, 60
+for the restart). Stop the stack with `docker compose --profile multi down -v`.
 
 Working on flagship itself needs Node 22, pnpm and Docker.
 
@@ -150,9 +167,9 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 | Faults       | Two real server processes behind a TCP load balancer with 40 SDK clients evaluating through it: pooled Postgres connections killed, LISTEN sessions killed and an instance SIGKILLed, each followed at once by a kill-switch change. Every SDK serves the change within about a second, no evaluation falls back to a default, and every SDK ends on the server's checksum.                                                                                            |
 | SDKs         | The Node SDK against a stub server that dies mid-stream and comes back, loses a patch or sends a bad checksum; against the real server for a 10% → 50% rollout, the kill switch and a corrupted stored patch it resyncs past; the OpenFeature provider through the OpenFeature SDK; the browser SDK in jsdom.                                                                                                                                                          |
 | Admin UI     | Component tests with Testing Library; Playwright against the built server for the main journeys, a two-editor conflict, a keyboard-only run, and axe (no serious or critical WCAG 2.1 AA findings) on every page at 1440 and 390 px and in dark mode.                                                                                                                                                                                                                  |
-| Whole stack  | `examples/demo.sh` against the Docker image.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Whole stack  | `examples/demo.sh` against two containers of the Docker image: the shared sign-in budget, per-environment versions, checksums on both instances, an instance killed and restarted, and an export imported as a copy.                                                                                                                                                                                                                                                   |
 
-915 Vitest tests at 97.0% line coverage (the gate requires 90%), plus 7 Playwright tests.
+925 Vitest tests at 97.1% line coverage (the gate requires 90%), plus 7 Playwright tests.
 
 ## Benchmarks
 
@@ -174,8 +191,23 @@ it, 20 changes per run, client threads on the same machine:
 | 1,000   | 15.3 ms | 23.2 ms | 24.5 ms |
 | 10,000  | 53.8 ms | 78.0 ms | 81.3 ms |
 
-`pnpm bench` and `pnpm bench:fanout` reproduce these. `pnpm bench:faults` runs the fault
-suite with 10 rounds per fault and writes recovery times to
+Recovery, from injecting a fault to each step, with two instances behind a load balancer and
+40 SDKs evaluating through it; 10 rounds per fault on a 4-vCPU Xeon with Node 22 and
+PostgreSQL 17, median / p95 in ms:
+
+| Fault                                          | First accepted write | Every SDK serves the change | Every SDK ready again |
+| ---------------------------------------------- | -------------------- | --------------------------- | --------------------- |
+| None (baseline)                                | 42 / 154             | 42 / 157                    | never stale           |
+| Every pooled Postgres connection cut           | 52 / 151             | 103 / 165                   | never stale           |
+| Both LISTEN sessions cut                       | 28 / 45              | 1,015 / 1,043               | never stale           |
+| One instance SIGKILLed (41–67 connections cut) | 84 / 204             | 1,038 / 1,067               | 1,003 / 1,038         |
+
+No evaluation fell back to a default in any round. A lost LISTEN session costs the
+listener's 1 s reconnect delay, and a killed instance the SDK's 0.5–1 s jittered first
+reconnect.
+
+`pnpm bench` and `pnpm bench:fanout` reproduce the first two tables. `pnpm bench:faults` runs
+the fault suite with 10 rounds per fault and writes recovery times to
 [`bench/results/faults.json`](bench/results/faults.json); a nightly CI job runs it too and
 keeps the JSON as an artifact.
 
