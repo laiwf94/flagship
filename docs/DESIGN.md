@@ -636,7 +636,10 @@ security fixes taken on purpose and named in `pnpm-workspace.yaml`:
 
 Security exceptions to the 14-day rule: zod 4.6.6 (memory exhaustion validating oversized
 collections), fastify 5.12.7 (header validation bypass), fast-uri 3.1.9 / 4.2.3 (URI parsing,
-under fastify's ajv, which we don't use for validation), undici 8.12.2 (dev only, via jsdom).
+under fastify's ajv, which we don't use for validation), undici 8.12.2 (dev only, via jsdom),
+glob 14.0.3 (cancelled searches kept walking the filesystem; used by @fastify/static) and minimatch
+11.0.4 (denial of service on crafted patterns; used by ESLint and Testcontainers), with the two
+new packages they need, @isaacs/nonrecursive-glob-match and path-scurry.
 
 Not dependencies, on purpose: the MurmurHash, semver parser, regex engine, SSE parser and
 Prometheus exposition are each under 300 lines here, tested against references, and keep the
