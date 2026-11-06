@@ -146,7 +146,7 @@ cannot loop.
 
 ## Storage and the write path
 
-PostgreSQL through Kysely, with typed tables and migrations in code. Thirteen tables; the
+PostgreSQL through Kysely, with typed tables and migrations in code. Fifteen tables; the
 interesting ones:
 
 | Table                                                                               | Holds                                                                  |
@@ -154,10 +154,11 @@ interesting ones:
 | `flags`                                                                             | per-project definition, variants (JSONB), metadata `version`           |
 | `flag_configs`                                                                      | per-environment targeting (JSONB rules) with its own `version`         |
 | `segments`                                                                          | per-environment, with `version`                                        |
-| `environments`                                                                      | `ruleset_version`, bumped on every change                              |
+| `environments`                                                                      | `ruleset_version`, bumped on every change; `required_approvals`        |
 | `ruleset_changes`                                                                   | one row per version: kind, key, new value (or null), ruleset checksum  |
 | `audit_log`                                                                         | actor, action, before and after JSON                                   |
 | `login_attempts`                                                                    | recent sign-in attempts per email and per address, shared by instances |
+| `change_requests`, `change_request_reviews`                                         | proposed targeting with its base, and each review of a revision        |
 | `scheduled_changes`, `exposure_counts`, `sessions`, `api_keys`, `users`, `projects` |                                                                        |
 
 Every write follows the same shape inside one transaction:
@@ -387,6 +388,39 @@ issued without a counted attempt. Signed-in users are unaffected, since only sig
 
 Roles are `viewer` < `editor` < `admin`, set per route and enforced in one hook. Admins can't
 demote or disable themselves, so a project can't lose its last admin by accident.
+
+## Change requests
+
+An environment can require approvals (`PUT .../environments/:env/approvals`, admins, zero to
+five). Above zero it is **protected**: targeting edits and new scheduled changes there are
+refused with `403`, and targeting changes only through change requests. The kill switch still
+works directly, because nobody should wait for a review in an incident, and it is audited
+like any other change.
+
+A change request proposes the whole targeting of one flag in one environment. It records the
+targeting it started from (`base`) and that version (`baseVersion`, which must be live when it
+is proposed), so reviewers see exactly what would change. It is validated against the whole
+ruleset when proposed, rebased and applied.
+
+- **Reviews** are comments, approvals or requests for changes, each for the revision the
+  reviewer saw. A reviewer's standing decision is their latest approval or request on the
+  current revision. Authors can comment but cannot approve or reject their own request.
+- **Apply** needs `max(1, required_approvals)` distinct approvers and no standing request for
+  changes. It goes through the normal write path with `baseVersion` as the precondition, so a
+  request whose target moved on is refused, and of two requests from one base only the first
+  lands. The request row is locked first, so two applies of one request give one winner.
+- **Stale detection** compares `baseVersion` with the live version. A stale request shows
+  what changed live since its base and runs a three-way merge (base, proposal, live).
+  Objects merge field by field; rules merge by `id` and prerequisites by `flag`, so edits to
+  different rules don't conflict, and an order change on one side is kept. A part both sides
+  changed differently is a conflict, reported with all three values.
+- **Rebase** writes the merge as a new revision on the live base when there are no conflicts.
+  Approvals of the old revision no longer count, so the merged result is reviewed again.
+- **Close**: the author or an admin can close an open request without applying it.
+
+Every step is in the flag's audit history (`flag.change_request.open`, `.approve`,
+`.request_changes`, `.apply`, `.rebase`, `.close`), and the apply entry holds the targeting
+before and after like any edit.
 
 ## Scheduled changes
 

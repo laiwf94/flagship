@@ -29,6 +29,7 @@ describe('migrations', () => {
       '002_login_attempts',
       '003_flag_config_versions',
       '004_ruleset_change_checksums',
+      '005_change_requests',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -45,6 +46,8 @@ describe('migrations', () => {
     expect(tables.rows.map((r) => r.table_name)).toEqual([
       'api_keys',
       'audit_log',
+      'change_request_reviews',
+      'change_requests',
       'environments',
       'exposure_counts',
       'flag_configs',
@@ -63,6 +66,9 @@ describe('migrations', () => {
       expect.arrayContaining([
         'audit_log_project_idx',
         'audit_log_target_idx',
+        'change_request_reviews_request_idx',
+        'change_requests_project_idx',
+        'change_requests_target_idx',
         'login_attempts_last_at_idx',
         'scheduled_changes_due_idx',
         'sessions_expires_idx',
@@ -82,6 +88,17 @@ describe('migrations', () => {
       db
         .insertInto('users')
         .values({ email: 'a@example.com', name: 'A', password_hash: 'x', role: 'root' as never })
+        .execute(),
+    ).rejects.toThrow(/check constraint/);
+    const project = await db
+      .insertInto('projects')
+      .values({ key: 'constraints', name: 'C' })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await expect(
+      db
+        .insertInto('environments')
+        .values({ project_id: project.id, key: 'prod', name: 'P', required_approvals: 6 })
         .execute(),
     ).rejects.toThrow(/check constraint/);
   });

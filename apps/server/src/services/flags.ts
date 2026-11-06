@@ -114,7 +114,7 @@ export function configColumns(c: EnvConfig) {
   };
 }
 
-function configView(
+export function configView(
   c: Pick<ConfigRow, 'enabled' | 'off_variant' | 'prerequisites' | 'rules' | 'fallthrough'>,
 ): EnvConfig {
   return {
@@ -484,6 +484,31 @@ export async function writeConfig(
   });
 }
 
+/**
+ * Refuses a direct targeting change in an environment that takes them only
+ * through approved change requests. Reads the setting inside the writer's
+ * transaction, after the environment lock, so turning protection on can't
+ * race an edit already in flight.
+ */
+export async function requireUnprotected(
+  trx: Db,
+  env: { id: string; key: string },
+  what: string,
+): Promise<void> {
+  const row = await trx
+    .selectFrom('environments')
+    .select('required_approvals')
+    .where('id', '=', env.id)
+    .executeTakeFirstOrThrow();
+  if (row.required_approvals > 0) {
+    throw new AppError(
+      'permission_denied',
+      `${env.key} is protected: ${what} go through an approved change request`,
+      { requiredApprovals: row.required_approvals },
+    );
+  }
+}
+
 export async function updateConfig(
   scope: Scope,
   env: { id: string; key: string },
@@ -491,11 +516,11 @@ export async function updateConfig(
   config: EnvConfig,
   expectedVersion: number,
 ): Promise<FlagView> {
-  await scope.db
-    .transaction()
-    .execute((trx) =>
-      writeConfig(trx, scope, env, key, () => config, expectedVersion, 'flag.config.update'),
-    );
+  await scope.db.transaction().execute(async (trx) => {
+    await lockEnvironments(trx, [env.id]);
+    await requireUnprotected(trx, env, 'targeting changes');
+    await writeConfig(trx, scope, env, key, () => config, expectedVersion, 'flag.config.update');
+  });
   return getFlag(scope.db, scope.project.id, key);
 }
 

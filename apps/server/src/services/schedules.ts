@@ -6,8 +6,14 @@ import type { ScheduleStatus } from '../db/schema.js';
 import { AppError, notFound } from '../errors.js';
 import type { Metrics } from '../metrics.js';
 import { recordAudit, type Actor } from './audit.js';
-import { validateCandidate, writeConfig, type EnvConfig, type Scope } from './flags.js';
-import { toFlag } from './rulesets.js';
+import {
+  requireUnprotected,
+  validateCandidate,
+  writeConfig,
+  type EnvConfig,
+  type Scope,
+} from './flags.js';
+import { lockEnvironments, toFlag } from './rulesets.js';
 
 export const changeSchema = z
   .strictObject({
@@ -122,7 +128,7 @@ export async function listSchedules(
  */
 export async function createSchedule(
   scope: Scope,
-  env: { id: string },
+  env: { id: string; key: string },
   key: string,
   input: { runAt: Date; change: ScheduledChange },
   now: Date,
@@ -138,6 +144,8 @@ export async function createSchedule(
     ]);
   }
   return scope.db.transaction().execute(async (trx) => {
+    await lockEnvironments(trx, [env.id]);
+    await requireUnprotected(trx, env, 'scheduled changes');
     const flag = await flagAndConfig(trx, scope.project.id, env.id, key);
     if (flag.archived_at !== null)
       throw new AppError('invalid_argument', `flag "${key}" is archived`);

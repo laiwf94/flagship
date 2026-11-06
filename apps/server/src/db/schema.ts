@@ -42,6 +42,8 @@ export interface EnvironmentsTable {
   key: string;
   name: string;
   ruleset_version: Generated<number>;
+  /** Approvals a change request needs here; above zero, direct targeting edits are refused. */
+  required_approvals: Generated<number>;
   created_at: CreatedAt;
 }
 
@@ -157,6 +159,41 @@ export interface LoginAttemptsTable {
   allowed: Generated<boolean>;
 }
 
+export type ChangeRequestStatus = 'open' | 'applied' | 'closed';
+export type ReviewDecision = 'comment' | 'approve' | 'request_changes';
+
+export interface ChangeRequestsTable {
+  id: Generated<string>;
+  project_id: string;
+  environment_id: string;
+  flag_id: string;
+  title: string;
+  description: string;
+  /** Targeting version in the environment that `base` was read at. */
+  base_version: number;
+  base: Json<unknown>;
+  proposed: Json<unknown>;
+  revision: Generated<number>;
+  status: Generated<ChangeRequestStatus>;
+  author_id: string | null;
+  author_name: string;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+  finished_at: Date | null;
+  finished_by_name: string | null;
+}
+
+export interface ChangeRequestReviewsTable {
+  id: Generated<number>;
+  change_request_id: string;
+  revision: number;
+  reviewer_id: string | null;
+  reviewer_name: string;
+  decision: ReviewDecision;
+  body: string;
+  created_at: CreatedAt;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -171,4 +208,6 @@ export interface Database {
   scheduled_changes: ScheduledChangesTable;
   exposure_counts: ExposureCountsTable;
   login_attempts: LoginAttemptsTable;
+  change_requests: ChangeRequestsTable;
+  change_request_reviews: ChangeRequestReviewsTable;
 }

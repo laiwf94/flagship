@@ -8,6 +8,7 @@ export const ERROR_STATUS = {
   not_found: 404,
   already_exists: 409,
   version_conflict: 409,
+  failed_precondition: 409,
   payload_too_large: 413,
   unsupported_media_type: 415,
   resource_exhausted: 429,

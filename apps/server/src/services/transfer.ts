@@ -50,6 +50,8 @@ export const EXPORT_FORMAT = 'flagship.project';
 export const EXPORT_FORMAT_VERSION = 1;
 /** Projects can have at most this many environments (the create route's limit too). */
 export const MAX_ENVIRONMENTS = 20;
+/** The most approvals an environment can require of a change request. */
+export const MAX_REQUIRED_APPROVALS = 5;
 
 const FLAG_PAGE = 200;
 const SEGMENT_PAGE = 20;
@@ -96,13 +98,17 @@ const segmentDoc = z.strictObject({
 });
 
 const projectDoc = z.strictObject({ key: keySchema, name });
+const environmentDoc = projectDoc.extend({
+  /** Approvals a change request needs; left out when the environment is unprotected. */
+  requiredApprovals: z.int().min(0).max(MAX_REQUIRED_APPROVALS).optional(),
+});
 
 export const exportDocumentSchema = z.strictObject({
   format: z.literal(EXPORT_FORMAT),
   formatVersion: z.literal(EXPORT_FORMAT_VERSION),
   exportedAt: z.iso.datetime({ offset: true }).optional(),
   project: projectDoc,
-  environments: z.array(projectDoc).min(1).max(MAX_ENVIRONMENTS),
+  environments: z.array(environmentDoc).min(1).max(MAX_ENVIRONMENTS),
   flags: z.array(flagDoc).max(LIMITS.flagsPerRuleset),
   segments: z.array(segmentDoc).max(LIMITS.segmentsPerRuleset * MAX_ENVIRONMENTS),
   /** Each environment's ruleset checksum at export. Leave it out to import an edited file. */
@@ -234,6 +240,7 @@ interface EnvRef {
   id: string;
   key: string;
   name: string;
+  required_approvals: number;
 }
 
 /**
@@ -261,7 +268,7 @@ export async function* exportProject(
     if (project === undefined) throw notFound(`project "${projectKey}"`);
     const envs: EnvRef[] = await trx
       .selectFrom('environments')
-      .select(['id', 'key', 'name'])
+      .select(['id', 'key', 'name', 'required_approvals'])
       .where('project_id', '=', project.id)
       .orderBy('created_at')
       .orderBy('key')
@@ -276,7 +283,11 @@ export async function* exportProject(
       `  "exportedAt": ${JSON.stringify(now().toISOString())},\n` +
       `  "project": ${nested({ key: project.key, name: project.name }, 1)},\n` +
       `  "environments": ${nested(
-        envs.map((e) => ({ key: e.key, name: e.name })),
+        envs.map((e) => ({
+          key: e.key,
+          name: e.name,
+          ...(e.required_approvals > 0 ? { requiredApprovals: e.required_approvals } : {}),
+        })),
         1,
       )},\n` +
       '  "flags": [';
@@ -549,7 +560,12 @@ export async function importProject(
       for (const env of doc.environments) {
         const row = await trx
           .insertInto('environments')
-          .values({ project_id: projectId, key: env.key, name: env.name })
+          .values({
+            project_id: projectId,
+            key: env.key,
+            name: env.name,
+            required_approvals: env.requiredApprovals ?? 0,
+          })
           .returning('id')
           .executeTakeFirstOrThrow();
         envIds.set(env.key, row.id);

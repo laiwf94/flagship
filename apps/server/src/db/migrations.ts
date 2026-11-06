@@ -177,4 +177,46 @@ export const migrations: Record<string, Migration> = {
   '004_ruleset_change_checksums': statements([
     `ALTER TABLE ruleset_changes ADD COLUMN checksum text CHECK (checksum ~ '^[0-9a-f]{64}$')`,
   ]),
+  // Change requests: a proposed targeting change to one flag in one
+  // environment, its reviews, and how many approvals an environment needs.
+  // An environment that needs one or more takes targeting changes only
+  // through approved requests. `revision` goes up whenever the proposal
+  // changes (a rebase), and a review counts only for the revision it saw.
+  '005_change_requests': statements([
+    `ALTER TABLE environments ADD COLUMN required_approvals smallint NOT NULL DEFAULT 0
+      CHECK (required_approvals BETWEEN 0 AND 5)`,
+    `CREATE TABLE change_requests (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      project_id uuid NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      flag_id uuid NOT NULL REFERENCES flags (id) ON DELETE CASCADE,
+      title text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+      description text NOT NULL DEFAULT '' CHECK (length(description) <= 4000),
+      base_version integer NOT NULL CHECK (base_version >= 1),
+      base jsonb NOT NULL,
+      proposed jsonb NOT NULL,
+      revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1),
+      status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'applied', 'closed')),
+      author_id uuid REFERENCES users (id) ON DELETE SET NULL,
+      author_name text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      finished_at timestamptz,
+      finished_by_name text
+    )`,
+    `CREATE INDEX change_requests_project_idx ON change_requests (project_id, created_at DESC, id DESC)`,
+    `CREATE INDEX change_requests_target_idx ON change_requests (flag_id, environment_id)
+      WHERE status = 'open'`,
+    `CREATE TABLE change_request_reviews (
+      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      change_request_id uuid NOT NULL REFERENCES change_requests (id) ON DELETE CASCADE,
+      revision integer NOT NULL,
+      reviewer_id uuid REFERENCES users (id) ON DELETE SET NULL,
+      reviewer_name text NOT NULL,
+      decision text NOT NULL CHECK (decision IN ('comment', 'approve', 'request_changes')),
+      body text NOT NULL DEFAULT '' CHECK (length(body) <= 4000),
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX change_request_reviews_request_idx ON change_request_reviews (change_request_id, id)`,
+  ]),
 };

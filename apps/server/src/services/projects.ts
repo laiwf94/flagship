@@ -8,10 +8,15 @@ export interface EnvironmentView {
   name: string;
 }
 
+export interface EnvironmentSettings extends EnvironmentView {
+  /** Approvals a change request needs; above zero, targeting changes only go through one. */
+  requiredApprovals: number;
+}
+
 export interface ProjectView {
   key: string;
   name: string;
-  environments: EnvironmentView[];
+  environments: EnvironmentSettings[];
 }
 
 export interface ProjectRow {
@@ -69,7 +74,7 @@ export async function listProjects(db: Db): Promise<ProjectView[]> {
     .execute();
   const envs = await db
     .selectFrom('environments')
-    .select(['project_id', 'key', 'name'])
+    .select(['project_id', 'key', 'name', 'required_approvals'])
     .orderBy('created_at')
     .orderBy('key')
     .execute();
@@ -78,7 +83,7 @@ export async function listProjects(db: Db): Promise<ProjectView[]> {
     name: p.name,
     environments: envs
       .filter((e) => e.project_id === p.id)
-      .map((e) => ({ key: e.key, name: e.name })),
+      .map((e) => ({ key: e.key, name: e.name, requiredApprovals: e.required_approvals })),
   }));
 }
 
@@ -126,7 +131,11 @@ export async function createProject(
         .returning('id')
         .executeTakeFirstOrThrow();
       for (const env of environments) await insertEnvironment(trx, project.id, env);
-      const view = { key: input.key, name: input.name, environments };
+      const view = {
+        key: input.key,
+        name: input.name,
+        environments: environments.map((e) => ({ ...e, requiredApprovals: 0 })),
+      };
       await recordAudit(trx, {
         projectId: project.id,
         actor,
@@ -149,7 +158,7 @@ export async function createEnvironment(
   projectKey: string,
   env: EnvironmentView,
   actor: Actor,
-): Promise<EnvironmentView> {
+): Promise<EnvironmentSettings> {
   const project = await getProject(db, projectKey);
   try {
     return await db.transaction().execute(async (trx) => {
@@ -163,13 +172,51 @@ export async function createEnvironment(
         targetKey: env.key,
         after: env,
       });
-      return env;
+      return { ...env, requiredApprovals: 0 };
     });
   } catch (err) {
     if (isUniqueViolation(err))
       throw new AppError('already_exists', `environment "${env.key}" exists`);
     throw err;
   }
+}
+
+/**
+ * Sets how many approvals a change request needs in an environment. Zero
+ * turns protection off; one or more makes change requests the only way to
+ * change targeting there. Takes the environment lock, so it waits for edits
+ * in flight and every later edit sees the new setting.
+ */
+export async function setRequiredApprovals(
+  db: Db,
+  env: { id: string; projectId: string; key: string },
+  requiredApprovals: number,
+  actor: Actor,
+): Promise<EnvironmentSettings> {
+  return db.transaction().execute(async (trx) => {
+    const before = await trx
+      .selectFrom('environments')
+      .select(['key', 'name', 'required_approvals'])
+      .where('id', '=', env.id)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    await trx
+      .updateTable('environments')
+      .set({ required_approvals: requiredApprovals })
+      .where('id', '=', env.id)
+      .execute();
+    await recordAudit(trx, {
+      projectId: env.projectId,
+      environmentId: env.id,
+      actor,
+      action: 'environment.approvals',
+      targetType: 'environment',
+      targetKey: env.key,
+      before: { requiredApprovals: before.required_approvals },
+      after: { requiredApprovals },
+    });
+    return { key: before.key, name: before.name, requiredApprovals };
+  });
 }
 
 /** Gives a fresh install something to click on: one project, two environments. */

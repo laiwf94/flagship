@@ -29,8 +29,8 @@ describe('projects and environments', () => {
           key: 'default',
           name: 'Default project',
           environments: [
-            { key: 'development', name: 'Development' },
-            { key: 'production', name: 'Production' },
+            { key: 'development', name: 'Development', requiredApprovals: 0 },
+            { key: 'production', name: 'Production', requiredApprovals: 0 },
           ],
         },
       ],

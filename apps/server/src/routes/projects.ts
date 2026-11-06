@@ -12,8 +12,9 @@ import {
   getEnvironment,
   getProject,
   listProjects,
+  setRequiredApprovals,
 } from '../services/projects.js';
-import { exportProject, importProject } from '../services/transfer.js';
+import { exportProject, importProject, MAX_REQUIRED_APPROVALS } from '../services/transfer.js';
 
 const name = z.string().trim().min(1).max(100);
 const envInput = z.strictObject({ key: keySchema, name });
@@ -23,6 +24,9 @@ const projectInput = z.strictObject({
   environments: z.array(envInput).min(1).max(20).optional(),
 });
 const importQuery = z.strictObject({ key: keySchema.optional(), name: name.optional() });
+const approvalsInput = z.strictObject({
+  requiredApprovals: z.int().min(0).max(MAX_REQUIRED_APPROVALS),
+});
 const keyInput = z.strictObject({ kind: z.enum(['server', 'client']), name });
 
 export const projectParams = z.object({ project: keySchema });
@@ -86,6 +90,17 @@ export function projectRoutes(ctx: Context) {
         const { project } = parse(projectParams, request.params, 'path');
         const body = parse(envInput, request.body, 'environment');
         return reply.status(201).send(await createEnvironment(ctx.db, project, body, user));
+      },
+    );
+
+    api.put(
+      '/projects/:project/environments/:environment/approvals',
+      { config: { role: 'admin' } },
+      async (request) => {
+        const user = currentUser(request);
+        const env = await environment(request.params);
+        const body = parse(approvalsInput, request.body, 'approval settings');
+        return setRequiredApprovals(ctx.db, env, body.requiredApprovals, user);
       },
     );
 
