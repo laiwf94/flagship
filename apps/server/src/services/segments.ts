@@ -2,8 +2,8 @@ import type { Segment } from '@flagship/core';
 import type { Db } from '../db/database.js';
 import { AppError, notFound } from '../errors.js';
 import { recordAudit } from './audit.js';
-import { validateCandidate, versionConflict, type Scope } from './flags.js';
-import { lockEnvironments, recordChange, type SegmentRow } from './rulesets.js';
+import { requireUnprotected, validateCandidate, versionConflict, type Scope } from './flags.js';
+import { lockEnvironments, recordChange, toSegment, type SegmentRow } from './rulesets.js';
 
 export interface SegmentView {
   key: string;
@@ -38,7 +38,16 @@ function view(r: SegmentRow): SegmentView {
   };
 }
 
-function content(r: SegmentRow | SegmentView) {
+/** What a segment is, without its key and bookkeeping: what a change request proposes. */
+export interface SegmentContent {
+  name: string;
+  description: string;
+  included: string[];
+  excluded: string[];
+  rules: Segment['rules'];
+}
+
+export function content(r: SegmentContent): SegmentContent {
   return {
     name: r.name,
     description: r.description,
@@ -46,10 +55,6 @@ function content(r: SegmentRow | SegmentView) {
     excluded: r.excluded,
     rules: r.rules,
   };
-}
-
-function uniqueViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505';
 }
 
 export async function listSegments(db: Db, environmentId: string): Promise<SegmentView[]> {
@@ -62,16 +67,25 @@ export async function listSegments(db: Db, environmentId: string): Promise<Segme
   return rows.map(view);
 }
 
-async function lockSegment(trx: Db, environmentId: string, key: string): Promise<SegmentRow> {
-  const row = await trx
+/**
+ * A segment as it is now: its version, or 0 when there is none, and its
+ * content, or null. Writers hold the environment lock, so inside one of
+ * their transactions this is the live state until it commits.
+ */
+export async function liveSegment(
+  db: Db,
+  environmentId: string,
+  key: string,
+): Promise<{ version: number; content: SegmentContent | null }> {
+  const row = await db
     .selectFrom('segments')
     .selectAll()
     .where('environment_id', '=', environmentId)
     .where('key', '=', key)
-    .forUpdate()
     .executeTakeFirst();
-  if (row === undefined) throw notFound(`segment "${key}"`);
-  return row;
+  return row === undefined
+    ? { version: 0, content: null }
+    : { version: row.version, content: content(row) };
 }
 
 export async function getSegment(db: Db, environmentId: string, key: string): Promise<SegmentView> {
@@ -85,110 +99,150 @@ export async function getSegment(db: Db, environmentId: string, key: string): Pr
   return view(row);
 }
 
-export async function createSegment(
+/**
+ * The one write path for segments: creates, replaces or (with `next` null)
+ * deletes the segment `key`, checks the result against the whole ruleset,
+ * records the change for SDKs and writes the audit entry. `expectedVersion`
+ * is the version the caller saw, 0 meaning the segment didn't exist. The
+ * caller holds the environment lock.
+ */
+export async function writeSegment(
+  trx: Db,
   scope: Scope,
   env: { id: string },
+  key: string,
+  next: SegmentContent | null,
+  expectedVersion: number,
+  action?: string,
+): Promise<SegmentRow | null> {
+  const before = await trx
+    .selectFrom('segments')
+    .selectAll()
+    .where('environment_id', '=', env.id)
+    .where('key', '=', key)
+    .forUpdate()
+    .executeTakeFirst();
+  if (before === undefined) {
+    if (expectedVersion !== 0 || next === null) throw notFound(`segment "${key}"`);
+  } else if (expectedVersion === 0) {
+    throw new AppError('already_exists', `segment "${key}" exists`);
+  } else if (before.version !== expectedVersion) {
+    throw versionConflict(`segment "${key}"`, before.version);
+  }
+  let after: SegmentRow | null = null;
+  if (next === null) {
+    await validateCandidate(trx, env.id, (rs) => {
+      Reflect.deleteProperty(rs.segments, key);
+    });
+    await trx
+      .deleteFrom('segments')
+      .where('id', '=', (before as SegmentRow).id)
+      .execute();
+  } else {
+    const values = {
+      name: next.name,
+      description: next.description,
+      included: JSON.stringify(next.included),
+      excluded: JSON.stringify(next.excluded),
+      rules: JSON.stringify(next.rules),
+    };
+    after =
+      before === undefined
+        ? await trx
+            .insertInto('segments')
+            .values({ environment_id: env.id, key, ...values })
+            .returningAll()
+            .executeTakeFirstOrThrow()
+        : await trx
+            .updateTable('segments')
+            .set({ ...values, version: before.version + 1, updated_at: new Date() })
+            .where('id', '=', before.id)
+            .returningAll()
+            .executeTakeFirstOrThrow();
+    const asRuleset = toSegment(after);
+    await validateCandidate(trx, env.id, (rs) => {
+      rs.segments[key] = asRuleset;
+    });
+  }
+  await recordChange(trx, env.id, 'segment', key, scope.retention);
+  await recordAudit(trx, {
+    projectId: scope.project.id,
+    environmentId: env.id,
+    actor: scope.actor,
+    action:
+      action ??
+      (before === undefined
+        ? 'segment.create'
+        : after === null
+          ? 'segment.delete'
+          : 'segment.update'),
+    targetType: 'segment',
+    targetKey: key,
+    ...(before === undefined ? {} : { before: content(before) }),
+    ...(after === null ? {} : { after: content(after) }),
+  });
+  return after;
+}
+
+/** A direct segment edit: refused in protected environments, which take them only through change requests. */
+async function directWrite(
+  scope: Scope,
+  env: { id: string; key: string },
+  key: string,
+  next: SegmentContent | null,
+  expectedVersion: number,
+): Promise<SegmentRow | null> {
+  return scope.db.transaction().execute(async (trx) => {
+    await lockEnvironments(trx, [env.id]);
+    await requireUnprotected(trx, env, 'segment changes');
+    return writeSegment(trx, scope, env, key, next, expectedVersion);
+  });
+}
+
+function inputContent(input: Omit<SegmentInput, 'key'>): SegmentContent {
+  return {
+    name: input.name,
+    description: input.description ?? '',
+    included: input.included,
+    excluded: input.excluded,
+    rules: input.rules,
+  };
+}
+
+/** Version 0 means "absent" to writeSegment; to an edit or delete it is just stale. */
+async function refuseVersionZero(db: Db, env: { id: string }, key: string): Promise<never> {
+  const live = await liveSegment(db, env.id, key);
+  if (live.content === null) throw notFound(`segment "${key}"`);
+  throw versionConflict(`segment "${key}"`, live.version);
+}
+
+export async function createSegment(
+  scope: Scope,
+  env: { id: string; key: string },
   input: SegmentInput,
 ): Promise<SegmentView> {
-  try {
-    return await scope.db.transaction().execute(async (trx) => {
-      await lockEnvironments(trx, [env.id]);
-      const row = await trx
-        .insertInto('segments')
-        .values({
-          environment_id: env.id,
-          key: input.key,
-          name: input.name,
-          description: input.description ?? '',
-          included: JSON.stringify(input.included),
-          excluded: JSON.stringify(input.excluded),
-          rules: JSON.stringify(input.rules),
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      await validateCandidate(trx, env.id, () => undefined);
-      await recordChange(trx, env.id, 'segment', row.key, scope.retention);
-      await recordAudit(trx, {
-        projectId: scope.project.id,
-        environmentId: env.id,
-        actor: scope.actor,
-        action: 'segment.create',
-        targetType: 'segment',
-        targetKey: row.key,
-        after: content(row),
-      });
-      return view(row);
-    });
-  } catch (err) {
-    if (uniqueViolation(err)) throw new AppError('already_exists', `segment "${input.key}" exists`);
-    throw err;
-  }
+  const row = await directWrite(scope, env, input.key, inputContent(input), 0);
+  return view(row as SegmentRow);
 }
 
 export async function updateSegment(
   scope: Scope,
-  env: { id: string },
+  env: { id: string; key: string },
   key: string,
   input: Omit<SegmentInput, 'key'>,
   version: number,
 ): Promise<SegmentView> {
-  return scope.db.transaction().execute(async (trx) => {
-    await lockEnvironments(trx, [env.id]);
-    const before = await lockSegment(trx, env.id, key);
-    if (before.version !== version) throw versionConflict(`segment "${key}"`, before.version);
-    const after = await trx
-      .updateTable('segments')
-      .set({
-        name: input.name,
-        description: input.description ?? '',
-        included: JSON.stringify(input.included),
-        excluded: JSON.stringify(input.excluded),
-        rules: JSON.stringify(input.rules),
-        version: before.version + 1,
-        updated_at: new Date(),
-      })
-      .where('id', '=', before.id)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await validateCandidate(trx, env.id, () => undefined);
-    await recordChange(trx, env.id, 'segment', key, scope.retention);
-    await recordAudit(trx, {
-      projectId: scope.project.id,
-      environmentId: env.id,
-      actor: scope.actor,
-      action: 'segment.update',
-      targetType: 'segment',
-      targetKey: key,
-      before: content(before),
-      after: content(after),
-    });
-    return view(after);
-  });
+  if (version === 0) await refuseVersionZero(scope.db, env, key);
+  const row = await directWrite(scope, env, key, inputContent(input), version);
+  return view(row as SegmentRow);
 }
 
 export async function deleteSegment(
   scope: Scope,
-  env: { id: string },
+  env: { id: string; key: string },
   key: string,
   version: number,
 ): Promise<void> {
-  await scope.db.transaction().execute(async (trx) => {
-    await lockEnvironments(trx, [env.id]);
-    const before = await lockSegment(trx, env.id, key);
-    if (before.version !== version) throw versionConflict(`segment "${key}"`, before.version);
-    await validateCandidate(trx, env.id, (rs) => {
-      Reflect.deleteProperty(rs.segments, key);
-    });
-    await trx.deleteFrom('segments').where('id', '=', before.id).execute();
-    await recordChange(trx, env.id, 'segment', key, scope.retention);
-    await recordAudit(trx, {
-      projectId: scope.project.id,
-      environmentId: env.id,
-      actor: scope.actor,
-      action: 'segment.delete',
-      targetType: 'segment',
-      targetKey: key,
-      before: content(before),
-    });
-  });
+  if (version === 0) await refuseVersionZero(scope.db, env, key);
+  await directWrite(scope, env, key, null, version);
 }

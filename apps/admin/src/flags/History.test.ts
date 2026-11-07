@@ -36,6 +36,18 @@ describe('describeAction', () => {
     ]);
   });
 
+  it('names every step of a segment change request', () => {
+    const steps = ['open', 'approve', 'request_changes', 'apply', 'rebase', 'close'];
+    expect(steps.map((s) => describeAction(entry(`segment.change_request.${s}`)))).toEqual([
+      'opened a change request for segment',
+      'approved a change request for segment',
+      'requested changes to a change request for segment',
+      'applied a change request to segment',
+      'rebased a change request for segment',
+      'closed a change request for segment',
+    ]);
+  });
+
   it('falls back to the raw action name', () => {
     expect(describeAction(entry('flag.something_new'))).toBe('flag.something_new');
   });

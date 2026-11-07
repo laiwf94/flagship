@@ -219,4 +219,19 @@ export const migrations: Record<string, Migration> = {
     )`,
     `CREATE INDEX change_request_reviews_request_idx ON change_request_reviews (change_request_id, id)`,
   ]),
+  // A change request targets a flag's targeting or a segment. Segments are
+  // per environment and can be created or deleted through a request, so the
+  // target is the segment key, the base or proposal is JSON null when the
+  // segment is absent on that side, and base version 0 means it didn't exist.
+  '006_segment_change_requests': statements([
+    `ALTER TABLE change_requests ALTER COLUMN flag_id DROP NOT NULL`,
+    `ALTER TABLE change_requests ADD COLUMN segment_key text`,
+    `ALTER TABLE change_requests ADD CONSTRAINT change_requests_one_target
+      CHECK ((flag_id IS NULL) <> (segment_key IS NULL))`,
+    `ALTER TABLE change_requests DROP CONSTRAINT change_requests_base_version_check`,
+    `ALTER TABLE change_requests ADD CONSTRAINT change_requests_base_version_check
+      CHECK (base_version >= 0 AND (base_version >= 1 OR segment_key IS NOT NULL))`,
+    `CREATE INDEX change_requests_segment_idx ON change_requests (environment_id, segment_key)
+      WHERE status = 'open' AND segment_key IS NOT NULL`,
+  ]),
 };

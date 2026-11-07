@@ -30,6 +30,7 @@ describe('migrations', () => {
       '003_flag_config_versions',
       '004_ruleset_change_checksums',
       '005_change_requests',
+      '006_segment_change_requests',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -68,6 +69,7 @@ describe('migrations', () => {
         'audit_log_target_idx',
         'change_request_reviews_request_idx',
         'change_requests_project_idx',
+        'change_requests_segment_idx',
         'change_requests_target_idx',
         'login_attempts_last_at_idx',
         'scheduled_changes_due_idx',
@@ -101,6 +103,28 @@ describe('migrations', () => {
         .values({ project_id: project.id, key: 'prod', name: 'P', required_approvals: 6 })
         .execute(),
     ).rejects.toThrow(/check constraint/);
+  });
+
+  it('give every change request exactly one target, and version 0 only to segments', async () => {
+    await sql`INSERT INTO projects (key, name) VALUES ('targets', 'T')`.execute(db);
+    await sql`INSERT INTO environments (project_id, key, name)
+      SELECT id, 'prod', 'Prod' FROM projects WHERE key = 'targets'`.execute(db);
+    await sql`INSERT INTO flags (project_id, key, name, type, variants, salt)
+      SELECT id, 'f', 'f', 'boolean', '[]', 'f' FROM projects WHERE key = 'targets'`.execute(db);
+    const insert = (flag: boolean, segment: string | null, baseVersion: number) =>
+      sql`INSERT INTO change_requests (project_id, environment_id, flag_id, segment_key, title,
+          base_version, base, proposed, author_name)
+        SELECT projects.id, environments.id, ${flag ? sql`flags.id` : null}, ${segment}, 't',
+          ${baseVersion}, 'null', 'null', 'a'
+        FROM projects JOIN environments ON environments.project_id = projects.id
+          JOIN flags ON flags.project_id = projects.id
+        WHERE projects.key = 'targets'`.execute(db);
+    await insert(true, null, 1);
+    await insert(false, 'beta', 0);
+    await expect(insert(true, 'beta', 1)).rejects.toThrow(/change_requests_one_target/);
+    await expect(insert(false, null, 1)).rejects.toThrow(/change_requests_one_target/);
+    await expect(insert(true, null, 0)).rejects.toThrow(/change_requests_base_version_check/);
+    await expect(insert(false, 'beta', -1)).rejects.toThrow(/change_requests_base_version_check/);
   });
 
   it('survives idle connections being cut', async () => {

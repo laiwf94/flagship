@@ -73,7 +73,8 @@ const configInput = z.strictObject({
 });
 
 const member = z.string().min(1).max(LIMITS.segmentMemberLength);
-const segmentBody = {
+/** A segment's content, as created, edited or proposed in a change request. */
+export const segmentBody = {
   name,
   description: description.optional(),
   included: z.array(member).max(LIMITS.segmentMembers),

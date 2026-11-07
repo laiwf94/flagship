@@ -166,10 +166,13 @@ export interface ChangeRequestsTable {
   id: Generated<string>;
   project_id: string;
   environment_id: string;
-  flag_id: string;
+  /** The flag whose targeting this proposes; null for a segment request. */
+  flag_id: string | null;
+  /** The segment this proposes; null for a flag request. */
+  segment_key: string | null;
   title: string;
   description: string;
-  /** Targeting version in the environment that `base` was read at. */
+  /** Version of the target that `base` was read at; 0 for a segment that didn't exist. */
   base_version: number;
   base: Json<unknown>;
   proposed: Json<unknown>;

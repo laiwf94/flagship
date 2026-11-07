@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { jsonEqual, threeWayMerge } from './merge.js';
+import { mergeSegment } from './changeRequests.js';
+import { jsonEqual, mergeSet, threeWayMerge } from './merge.js';
 
 const KEYS = { rules: 'id', prerequisites: 'flag' };
 
@@ -208,5 +209,66 @@ describe('threeWayMerge', () => {
         if (ab.conflicts.length === 0) expect(jsonEqual(ab.merged, ba.merged)).toBe(true);
       }),
     );
+  });
+});
+
+describe('mergeSet', () => {
+  it("applies each side's additions and removals, keeping the live order", () => {
+    expect(mergeSet(['a', 'b', 'c'], ['a', 'c', 'mine'], ['c', 'b', 'theirs'])).toEqual([
+      'c',
+      'theirs',
+      'mine',
+    ]);
+    expect(mergeSet([], ['x', 'x'], ['x'])).toEqual(['x']);
+  });
+
+  it('holds exactly what either side kept or added, without duplicates', () => {
+    const list = fc.uniqueArray(fc.constantFrom('a', 'b', 'c', 'd', 'e', 'f'), { maxLength: 6 });
+    fc.assert(
+      fc.property(list, list, list, (base, ours, theirs) => {
+        const merged = mergeSet(base, ours, theirs);
+        expect(new Set(merged).size).toBe(merged.length);
+        const expected = new Set(
+          [...base, ...ours, ...theirs].filter((x) => {
+            const keptBy = (side: string[]) => side.includes(x) === base.includes(x);
+            // A side "changed" x when it added or removed it; a change wins.
+            if (!keptBy(ours)) return ours.includes(x);
+            if (!keptBy(theirs)) return theirs.includes(x);
+            return base.includes(x);
+          }),
+        );
+        expect(new Set(merged)).toEqual(expected);
+      }),
+    );
+  });
+});
+
+describe('mergeSegment', () => {
+  const seg = (included: string[], name = 'S', rules: unknown[] = []) => ({
+    name,
+    description: '',
+    included,
+    excluded: [],
+    rules: rules as never[],
+  });
+
+  it('merges members as sets and the rest field by field', () => {
+    const r = mergeSegment(seg(['a']), seg(['a', 'o'], 'Ours'), seg(['t'], 'S', [rule('x', 'on')]));
+    expect(r.conflicts).toEqual([]);
+    expect(r.merged).toEqual({ ...seg(['t', 'o'], 'Ours', [rule('x', 'on')]) });
+  });
+
+  it('reports a field both sides changed differently', () => {
+    expect(mergeSegment(seg([]), seg([], 'Ours'), seg([], 'Theirs')).conflicts).toEqual([
+      { path: 'name', base: 'S', ours: 'Ours', theirs: 'Theirs' },
+    ]);
+  });
+
+  it('treats the whole segment as one value when a side has none', () => {
+    expect(mergeSegment(seg([]), null, null)).toEqual({ merged: null, conflicts: [] });
+    expect(mergeSegment(seg([]), null, seg([]))).toEqual({ merged: null, conflicts: [] });
+    expect(mergeSegment(null, seg(['a']), seg(['b'])).conflicts).toEqual([
+      { path: 'segment', base: null, ours: seg(['a']), theirs: seg(['b']) },
+    ]);
   });
 });

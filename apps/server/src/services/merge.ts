@@ -150,3 +150,28 @@ export function threeWayMerge<T>(
   const merged = merger.value(base, ours, theirs, '') as T;
   return { merged, conflicts: merger.conflicts };
 }
+
+/**
+ * Three-way merge of a list used as a set (segment members). Whatever `ours`
+ * added since `base` is added to `theirs`, and whatever it removed is
+ * removed, so it never conflicts. `theirs` keeps its order, and additions go
+ * at the end in the order `ours` has them.
+ */
+export function mergeSet(
+  base: readonly string[],
+  ours: readonly string[],
+  theirs: readonly string[],
+): string[] {
+  const b = new Set(base);
+  const o = new Set(ours);
+  const removed = new Set(base.filter((x) => !o.has(x)));
+  const out = theirs.filter((x) => !removed.has(x));
+  const present = new Set(out);
+  for (const x of ours) {
+    if (!b.has(x) && !present.has(x)) {
+      out.push(x);
+      present.add(x);
+    }
+  }
+  return out;
+}

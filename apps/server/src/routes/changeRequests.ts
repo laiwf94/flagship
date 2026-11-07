@@ -10,11 +10,13 @@ import {
   getChangeRequest,
   listChangeRequests,
   proposeChange,
+  proposeSegmentChange,
   rebaseChange,
   reviewChange,
 } from '../services/changeRequests.js';
 import type { Scope } from '../services/flags.js';
 import { getEnvironment, getProject } from '../services/projects.js';
+import { segmentBody } from './flags.js';
 
 const text = z.string().max(4000);
 const revision = z.strictObject({ revision: z.int().min(1) });
@@ -30,6 +32,13 @@ const proposalInput = z.strictObject({
   fallthrough: serveSchema,
 });
 
+const segmentProposalInput = z.strictObject({
+  baseVersion: z.int().min(0),
+  title: z.string().trim().min(1).max(200),
+  description: text.optional(),
+  segment: z.strictObject(segmentBody).nullable(),
+});
+
 const reviewInput = z.strictObject({
   revision: z.int().min(1),
   decision: z.enum(['comment', 'approve', 'request_changes']),
@@ -40,6 +49,7 @@ const listQuery = z.object({
   status: z.enum(['open', 'applied', 'closed']).optional(),
   environment: keySchema.optional(),
   flag: keySchema.optional(),
+  segment: keySchema.optional(),
   before: z.uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -47,6 +57,11 @@ const listQuery = z.object({
 const projectParams = z.object({ project: keySchema });
 const requestParams = z.object({ project: keySchema, id: z.uuid() });
 const targetParams = z.object({ project: keySchema, flag: keySchema, environment: keySchema });
+const segmentParams = z.object({
+  project: keySchema,
+  environment: keySchema,
+  segment: keySchema,
+});
 
 export function changeRequestRoutes(ctx: Context) {
   const scope = async (request: FastifyRequest, projectKey: string): Promise<Scope> => {
@@ -93,6 +108,31 @@ export function changeRequestRoutes(ctx: Context) {
           title,
           description,
           config,
+        });
+        return reply.status(201).send(created);
+      },
+    );
+
+    api.post(
+      '/projects/:project/environments/:environment/segments/:segment/change-requests',
+      { config: { role: 'editor' } },
+      async (request, reply) => {
+        const p = parse(segmentParams, request.params, 'path');
+        const { segment, ...rest } = parse(segmentProposalInput, request.body, 'change request');
+        const s = await scope(request, p.project);
+        const env = await getEnvironment(ctx.db, s.project.id, p.environment);
+        const created = await proposeSegmentChange(s, { id: env.id, key: env.key }, p.segment, {
+          ...rest,
+          segment:
+            segment === null
+              ? null
+              : {
+                  name: segment.name,
+                  description: segment.description ?? '',
+                  included: segment.included,
+                  excluded: segment.excluded,
+                  rules: segment.rules,
+                },
         });
         return reply.status(201).send(created);
       },

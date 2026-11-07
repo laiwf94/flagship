@@ -158,7 +158,7 @@ interesting ones:
 | `ruleset_changes`                                                                   | one row per version: kind, key, new value (or null), ruleset checksum  |
 | `audit_log`                                                                         | actor, action, before and after JSON                                   |
 | `login_attempts`                                                                    | recent sign-in attempts per email and per address, shared by instances |
-| `change_requests`, `change_request_reviews`                                         | proposed targeting with its base, and each review of a revision        |
+| `change_requests`, `change_request_reviews`                                         | proposed targeting or segment with its base, and each review           |
 | `scheduled_changes`, `exposure_counts`, `sessions`, `api_keys`, `users`, `projects` |                                                                        |
 
 Every write follows the same shape inside one transaction:
@@ -392,14 +392,19 @@ demote or disable themselves, so a project can't lose its last admin by accident
 ## Change requests
 
 An environment can require approvals (`PUT .../environments/:env/approvals`, admins, zero to
-five). Above zero it is **protected**: targeting edits and new scheduled changes there are
-refused with `403`, and targeting changes only through change requests. The kill switch still
+five). Above zero it is **protected**: targeting edits, segment edits (create, update, delete)
+and new scheduled changes there are refused with `403`, and targeting and segments change only
+through change requests. The kill switch still
 works directly, because nobody should wait for a review in an incident, and it is audited
 like any other change.
 
-A change request proposes the whole targeting of one flag in one environment. It records the
-targeting it started from (`base`) and that version (`baseVersion`, which must be live when it
-is proposed), so reviewers see exactly what would change. It is validated against the whole
+A change request proposes the whole targeting of one flag in one environment
+(`POST .../flags/:flag/environments/:env/change-requests`), or a whole segment there
+(`POST .../environments/:env/segments/:segment/change-requests`). It records what it started
+from (`base`) and that version (`baseVersion`, which must be live when it is proposed), so
+reviewers see exactly what would change. A segment request can also create a segment
+(`baseVersion` 0, `base` null) or delete one (`segment: null`); a delete a flag still depends on
+is refused when proposed. It is validated against the whole
 ruleset when proposed, rebased and applied.
 
 - **Reviews** are comments, approvals or requests for changes, each for the revision the
@@ -409,18 +414,23 @@ ruleset when proposed, rebased and applied.
   changes. It goes through the normal write path with `baseVersion` as the precondition, so a
   request whose target moved on is refused, and of two requests from one base only the first
   lands. The request row is locked first, so two applies of one request give one winner.
-- **Stale detection** compares `baseVersion` with the live version. A stale request shows
+- **Stale detection** compares `baseVersion` with the live version. A segment deleted and
+  created again starts over at version 1, so for segments the live content is compared with
+  the base too. A stale request shows
   what changed live since its base and runs a three-way merge (base, proposal, live).
   Objects merge field by field; rules merge by `id` and prerequisites by `flag`, so edits to
-  different rules don't conflict, and an order change on one side is kept. A part both sides
-  changed differently is a conflict, reported with all three values.
+  different rules don't conflict, and an order change on one side is kept. Segment members
+  merge as sets, so each side's additions and removals all apply; a segment rule merges by
+  `id`. Deleting a segment the other side edited, or two sides creating one differently, is
+  a conflict on the whole `segment`. A part both sides changed differently is a conflict,
+  reported with all three values.
 - **Rebase** writes the merge as a new revision on the live base when there are no conflicts.
   Approvals of the old revision no longer count, so the merged result is reviewed again.
 - **Close**: the author or an admin can close an open request without applying it.
 
-Every step is in the flag's audit history (`flag.change_request.open`, `.approve`,
-`.request_changes`, `.apply`, `.rebase`, `.close`), and the apply entry holds the targeting
-before and after like any edit.
+Every step is in the target's audit history (`flag.change_request.open` or
+`segment.change_request.open`, then `.approve`, `.request_changes`, `.apply`, `.rebase`,
+`.close`), and the apply entry holds the targeting or segment before and after like any edit.
 
 ## Scheduled changes
 
