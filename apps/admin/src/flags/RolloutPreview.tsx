@@ -35,10 +35,15 @@ export function RolloutPreview({
   saved,
   draft,
   flagKey,
+  when = 'if you save',
+  title = 'Who gets what',
 }: {
   saved: Ruleset;
   draft: Ruleset;
   flagKey: string;
+  /** Ends the "would change variant" sentence. */
+  when?: string;
+  title?: string;
 }) {
   const id = useId();
   const [lines, setLines] = useState(
@@ -70,7 +75,7 @@ export function RolloutPreview({
   return (
     <section className="card preview" aria-labelledby={`${id}-h`}>
       <header className="card-head">
-        <h2 id={`${id}-h`}>Who gets what</h2>
+        <h2 id={`${id}-h`}>{title}</h2>
       </header>
       <div
         className="bars"
@@ -90,7 +95,7 @@ export function RolloutPreview({
       <p className="hint" aria-live="polite">
         {moved === 0
           ? `None of ${SAMPLE.toLocaleString()} sample users would change variant.`
-          : `${moved.toLocaleString()} of ${SAMPLE.toLocaleString()} sample users (${((moved / SAMPLE) * 100).toFixed(1)}%) would change variant if you save.`}
+          : `${moved.toLocaleString()} of ${SAMPLE.toLocaleString()} sample users (${((moved / SAMPLE) * 100).toFixed(1)}%) would change variant ${when}.`}
       </p>
       <div className="field">
         <label htmlFor={`${id}-u`}>Check specific users</label>

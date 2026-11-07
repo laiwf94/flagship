@@ -178,6 +178,7 @@ describe('change requests', () => {
       status: 'open',
       revision: 1,
       author: 'alice',
+      authorId: (await alice.request('GET', '/api/session')).json().user.id,
       baseVersion: before.version,
       approvals: { required: 1, approvedBy: [], changesRequestedBy: [] },
       live: { version: before.version, stale: false, conflicts: [], changedSinceBase: [] },

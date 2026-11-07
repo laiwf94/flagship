@@ -260,4 +260,31 @@ export async function seed(base: string): Promise<void> {
     }),
   });
   await new Promise((r) => setTimeout(r, 500));
+
+  // Staging is protected: targeting there goes through change requests, and
+  // one is waiting for review so its page is judged with real content.
+  await call(base, s, 'POST', `${P}/environments`, { key: 'staging', name: 'Staging' });
+  await call(base, s, 'PUT', `${P}/environments/staging/approvals`, { requiredApprovals: 1 });
+  const checkout = await call<{ environments: { staging: { version: number } } }>(
+    base,
+    s,
+    'GET',
+    `${P}/flags/new-checkout`,
+  );
+  await call(base, s, 'POST', `${P}/flags/new-checkout/environments/staging/change-requests`, {
+    baseVersion: checkout.environments.staging.version,
+    title: 'Open new checkout to staff in staging',
+    description: 'Staff try it in staging before the production rollout.',
+    enabled: true,
+    offVariant: 'off',
+    prerequisites: [],
+    rules: [
+      {
+        id: 'staff',
+        clauses: [{ attribute: 'email', operator: 'endsWith', values: ['@acme.com'] }],
+        serve: { variant: 'on' },
+      },
+    ],
+    fallthrough: rollout(10),
+  });
 }

@@ -126,6 +126,53 @@ test('viewers can look but not change anything', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Add rule' })).toHaveCount(0);
 });
 
+test('a protected change goes through review before it goes live', async ({ browser }) => {
+  const S = '/p/default/staging';
+  const eddie = await newSignedInPage(browser, EDITOR);
+  await eddie.goto(`${base()}${S}/flags/dark-mode`);
+  await expect(eddie.getByText(/Staging is protected/)).toBeVisible();
+  await eddie.getByLabel('Serve when off or a prerequisite fails').selectOption('on');
+  await eddie.getByRole('button', { name: 'Review and request approval' }).click();
+  const dialog = eddie.getByRole('dialog', { name: /Request approval for Dark mode/ });
+  await dialog.getByLabel('Title').fill('Serve dark mode when off');
+  await dialog.getByLabel('Why (optional)').fill('Night shift asked for it.');
+  await expectAccessible(eddie, 'request approval dialog');
+  await dialog.getByRole('button', { name: 'Open change request' }).click();
+
+  await expect(eddie.getByRole('heading', { name: 'Serve dark mode when off' })).toBeVisible();
+  await expect(eddie.getByText('Night shift asked for it.')).toBeVisible();
+  await expect(eddie.getByRole('list', { name: 'Changes' })).toContainText('Variant when off');
+  await expect(eddie.getByText('Needs 1 approval, has 0.')).toBeVisible();
+  // Authors can comment on their own request but never approve it.
+  await expect(eddie.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+  await eddie.getByLabel('Your review').fill('Ready when you are');
+  await eddie.getByRole('button', { name: 'Comment' }).click();
+  await expect(eddie.getByText('Comment added.')).toBeVisible();
+  await expectAccessible(eddie, 'change request (author)');
+  const url = eddie.url();
+
+  // Still the old targeting live until it is applied.
+  await eddie.goto(`${base()}${S}/flags/dark-mode`);
+  await expect(eddie.getByLabel('Serve when off or a prerequisite fails')).toHaveValue('off');
+
+  const admin = await newSignedInPage(browser, ADMIN);
+  await admin.goto(`${base()}${S}/change-requests`);
+  await admin.getByRole('link', { name: /Serve dark mode when off/ }).click();
+  await expect(admin.getByText('Ready when you are')).toBeVisible();
+  await admin.getByLabel('Your review').fill('Approved for staging');
+  await admin.getByRole('button', { name: 'Approve' }).click();
+  await expect(admin.getByText('Approved.')).toBeVisible();
+  await admin.getByRole('button', { name: 'Apply change' }).click();
+  await expect(admin.getByText('Applied to Staging.')).toBeVisible();
+  await expect(admin.getByText('Applied', { exact: true })).toBeVisible();
+  expect(admin.url()).toBe(url);
+
+  await eddie.reload();
+  await expect(eddie.getByLabel('Serve when off or a prerequisite fails')).toHaveValue('on');
+  await eddie.context().close();
+  await admin.context().close();
+});
+
 test('the main journey works with the keyboard alone', async ({ page }) => {
   await page.goto(`${base()}/sign-in`);
   await page.keyboard.press('Tab');
@@ -217,6 +264,11 @@ const PAGES: { name: string; path: string; ready: (page: Page) => Promise<void> 
     ready: async (p) => expect(p.getByRole('list', { name: 'Change history' })).toBeVisible(),
   },
   {
+    name: 'change-requests',
+    path: '/p/default/staging/change-requests',
+    ready: async (p) => expect(p.getByRole('list', { name: 'Change requests' })).toBeVisible(),
+  },
+  {
     name: 'settings',
     path: `${P}/settings`,
     ready: async (p) => expect(p.getByRole('list', { name: 'SDK keys' })).toBeVisible(),
@@ -251,6 +303,14 @@ for (const width of [1440, 390] as const) {
         fullPage: width === 1440 && p.name === 'flag-targeting',
       });
     }
+
+    await page.goto(`${base()}/p/default/staging/change-requests`);
+    await page.getByRole('link', { name: /Open new checkout to staff/ }).click();
+    await expect(page.getByRole('heading', { name: 'Who gets what' })).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await expectAccessible(page, 'change-request');
+    await expectNoHorizontalScroll(page, 'change-request');
+    await page.screenshot({ path: `docs/screenshots/change-request-${width}.png`, fullPage: true });
 
     await page.goto(`${base()}${P}/flags`);
     await page.getByRole('button', { name: 'Create flag' }).click();

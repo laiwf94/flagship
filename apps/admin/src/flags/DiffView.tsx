@@ -4,6 +4,11 @@ import type { DiffEntry } from '@flagship/core';
 export function humanPath(path: string): string {
   if (path === '') return 'Whole item';
   return path
+    .replace(/^rules\[id=([^\]]+)\]/, (_, id: string) => `Rule "${id}"`)
+    .replace(/^prerequisites\[flag=([^\]]+)\]/, (_, f: string) => `Prerequisite "${f}"`)
+    .replace(/^included/, 'Always include')
+    .replace(/^excluded/, 'Always exclude')
+    .replace(/^segment$/, 'Whole segment')
     .replace(/^rules\[(\d+)\]/, (_, i: string) => `Rule ${Number(i) + 1}`)
     .replace(/\.clauses\[(\d+)\]/g, (_, i: string) => ` › condition ${Number(i) + 1}`)
     .replace(/^prerequisites\[(\d+)\]/, (_, i: string) => `Prerequisite ${Number(i) + 1}`)

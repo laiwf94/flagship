@@ -13,7 +13,12 @@ export interface User {
 export interface Project {
   key: string;
   name: string;
-  environments: { key: string; name: string }[];
+  environments: {
+    key: string;
+    name: string;
+    /** Approvals a targeting or segment change needs here; 0 means unprotected. */
+    requiredApprovals?: number;
+  }[];
 }
 
 export interface FlagSummary {
@@ -107,6 +112,84 @@ export interface ExposureSummary {
   to: string;
   totals: { variant: string; count: number }[];
   series: { hour: string; counts: Record<string, number> }[];
+}
+
+export type ChangeRequestStatus = 'open' | 'applied' | 'closed';
+export type ReviewDecision = 'comment' | 'approve' | 'request_changes';
+
+/** Segment content as a change request proposes it; null means no segment. */
+export type SegmentContent = Pick<
+  SegmentView,
+  'name' | 'description' | 'included' | 'excluded' | 'rules'
+>;
+
+export interface MergeConflict {
+  path: string;
+  base: unknown;
+  ours: unknown;
+  theirs: unknown;
+}
+
+export interface Approvals {
+  required: number;
+  approvedBy: string[];
+  changesRequestedBy: string[];
+}
+
+export interface ChangeRequestSummary {
+  id: string;
+  target: 'flag' | 'segment';
+  flag: string | null;
+  segment: string | null;
+  environment: string;
+  title: string;
+  status: ChangeRequestStatus;
+  revision: number;
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+  approvals: Approvals;
+  stale: boolean | null;
+}
+
+export interface Review {
+  id: number;
+  revision: number;
+  reviewer: string;
+  decision: ReviewDecision;
+  body: string;
+  at: string;
+}
+
+export interface ChangeRequest {
+  id: string;
+  target: 'flag' | 'segment';
+  flag: string | null;
+  segment: string | null;
+  environment: string;
+  title: string;
+  description: string;
+  status: ChangeRequestStatus;
+  revision: number;
+  author: string;
+  authorId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  finishedBy: string | null;
+  baseVersion: number;
+  base: EnvConfig | SegmentContent | null;
+  proposed: EnvConfig | SegmentContent | null;
+  diff: DiffEntry[];
+  approvals: Approvals;
+  live: {
+    version: number;
+    stale: boolean;
+    changedSinceBase: DiffEntry[];
+    conflicts: MergeConflict[];
+  } | null;
+  canApply: boolean;
+  reviews: Review[];
 }
 
 export interface FieldIssue {
@@ -318,6 +401,82 @@ export const api = {
     request<undefined>(
       'DELETE',
       `/api/projects/${enc(project)}/environments/${enc(env)}/segments/${enc(key)}?version=${version}`,
+    ),
+
+  changeRequests: (
+    project: string,
+    params: {
+      status?: ChangeRequestStatus;
+      environment?: string;
+      flag?: string;
+      segment?: string;
+      before?: string;
+      limit?: number;
+    },
+  ) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) q.set(k, String(v));
+    return request<{ changeRequests: ChangeRequestSummary[]; next: string | null }>(
+      'GET',
+      `/api/projects/${enc(project)}/change-requests?${q.toString()}`,
+    );
+  },
+  changeRequest: (project: string, id: string) =>
+    request<ChangeRequest>('GET', `/api/projects/${enc(project)}/change-requests/${enc(id)}`),
+  proposeTargeting: (
+    project: string,
+    key: string,
+    env: string,
+    input: EnvConfig & { baseVersion: number; title: string; description?: string },
+  ) =>
+    request<ChangeRequest>(
+      'POST',
+      `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/change-requests`,
+      input,
+    ),
+  proposeSegment: (
+    project: string,
+    env: string,
+    key: string,
+    input: {
+      baseVersion: number;
+      title: string;
+      description?: string;
+      segment: SegmentContent | null;
+    },
+  ) =>
+    request<ChangeRequest>(
+      'POST',
+      `/api/projects/${enc(project)}/environments/${enc(env)}/segments/${enc(key)}/change-requests`,
+      input,
+    ),
+  reviewChange: (
+    project: string,
+    id: string,
+    input: { revision: number; decision: ReviewDecision; body?: string },
+  ) =>
+    request<ChangeRequest>(
+      'POST',
+      `/api/projects/${enc(project)}/change-requests/${enc(id)}/reviews`,
+      input,
+    ),
+  applyChange: (project: string, id: string, revision: number) =>
+    request<ChangeRequest>(
+      'POST',
+      `/api/projects/${enc(project)}/change-requests/${enc(id)}/apply`,
+      { revision },
+    ),
+  rebaseChange: (project: string, id: string, revision: number) =>
+    request<ChangeRequest>(
+      'POST',
+      `/api/projects/${enc(project)}/change-requests/${enc(id)}/rebase`,
+      { revision },
+    ),
+  closeChange: (project: string, id: string, reason?: string) =>
+    request<ChangeRequest>(
+      'POST',
+      `/api/projects/${enc(project)}/change-requests/${enc(id)}/close`,
+      reason === undefined || reason === '' ? {} : { reason },
     ),
 
   apiKeys: (project: string, env: string) =>

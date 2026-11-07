@@ -8,6 +8,8 @@ import {
 } from 'react-router';
 import { ToastProvider } from './components/toast';
 import { Loading } from './components/ui';
+import { ChangeRequest } from './pages/ChangeRequest';
+import { ChangeRequests } from './pages/ChangeRequests';
 import { FlagDetail } from './pages/FlagDetail';
 import { FlagList } from './pages/FlagList';
 import { HistoryPage } from './pages/HistoryPage';
@@ -61,6 +63,8 @@ export const routes: RouteObject[] = [
               { path: 'flags', element: <FlagList /> },
               { path: 'flags/:flag', element: <FlagDetail /> },
               { path: 'segments', element: <Segments /> },
+              { path: 'change-requests', element: <ChangeRequests /> },
+              { path: 'change-requests/:id', element: <ChangeRequest /> },
               { path: 'history', element: <HistoryPage /> },
               { path: 'settings', element: <Settings /> },
               { path: '*', element: <NotFound /> },

@@ -25,6 +25,7 @@ export function useScope(): Scope {
 const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: 'flags', label: 'Flags', icon: 'flag' },
   { to: 'segments', label: 'Segments', icon: 'segment' },
+  { to: 'change-requests', label: 'Changes', icon: 'diff' },
   { to: 'history', label: 'History', icon: 'history' },
   { to: 'settings', label: 'Settings', icon: 'settings' },
 ];

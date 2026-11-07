@@ -69,6 +69,8 @@ export interface ChangeRequestView {
   /** Goes up when the proposal changes; reviews count for the revision they saw. */
   revision: number;
   author: string;
+  /** The author's user id, so a client can tell its own requests apart; null once deleted. */
+  authorId: string | null;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -363,6 +365,7 @@ function toView(r: RequestRow, reviews: ReviewRow[], live: LiveState | null): Ch
     status: r.status,
     revision: r.revision,
     author: r.author_name,
+    authorId: r.author_id,
     createdAt: r.created_at.toISOString(),
     updatedAt: r.updated_at.toISOString(),
     finishedAt: r.finished_at?.toISOString() ?? null,

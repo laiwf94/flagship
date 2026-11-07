@@ -559,6 +559,13 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
   first.
 - The preview evaluates the draft in the browser with the core evaluator over 10,000 sample
   users and any users typed in, and says how many sample users would change variant.
+- In a protected environment the same review dialog opens a change request instead of saving,
+  and the segment editor proposes creates, edits and deletes. The review page
+  (`/change-requests/:id`) shows the diff, the same preview run over base and proposal with
+  the rest of the live ruleset, the discussion by revision, and approve, request-changes,
+  apply, rebase and close as the server allows them. A segment request previews each flag
+  whose variants depend on it, directly or through prerequisites. The author's own request
+  offers no approval, matching the server rule, and a disabled Apply says why.
 - Status is a badge, filters are chips that live in the URL, on/off is a switch,
   2–4 choices are a segmented control, results are toasts (the kill switch's has Undo), errors
   sit at the field.

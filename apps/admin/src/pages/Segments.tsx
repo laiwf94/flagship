@@ -1,6 +1,7 @@
 import { keySchema, validateSegment, type AttributeClause, type SegmentRule } from '@flagship/core';
 import { useState, type SyntheticEvent } from 'react';
-import { ApiError, api, type SegmentView } from '../api';
+import { useNavigate } from 'react-router';
+import { ApiError, api, type ChangeRequest, type SegmentView } from '../api';
 import { Dialog } from '../components/dialog';
 import { useToast } from '../components/toast';
 import { Button, EmptyState, ErrorState, Field, IconButton, Loading } from '../components/ui';
@@ -22,8 +23,10 @@ const lines = (text: string) => [
 ];
 
 export function Segments() {
-  const { project, env } = useScope();
+  const { project, env, link } = useScope();
+  const navigate = useNavigate();
   const envName = project.environments.find((e) => e.key === env)?.name ?? env;
+  const required = project.environments.find((e) => e.key === env)?.requiredApprovals ?? 0;
   const { can } = useSession();
   const list = useResource(() => api.segments(project.key, env), `${project.key}/${env}/segments`);
   const [editing, setEditing] = useState<SegmentView | 'new' | undefined>();
@@ -88,6 +91,12 @@ export function Segments() {
           env={env}
           segment={editing === 'new' ? undefined : editing}
           canEdit={can('editor')}
+          required={required}
+          envName={envName}
+          onProposed={(request) => {
+            setEditing(undefined);
+            void navigate(link(`change-requests/${request.id}`));
+          }}
           onClose={() => {
             setEditing(undefined);
           }}
@@ -106,16 +115,24 @@ function SegmentEditor({
   env,
   segment,
   canEdit,
+  required,
+  envName,
   onClose,
   onChanged,
+  onProposed,
 }: {
   project: string;
   env: string;
   segment: SegmentView | undefined;
   canEdit: boolean;
+  /** Approvals the environment needs; above 0, edits become change requests. */
+  required: number;
+  envName: string;
   onClose: () => void;
   onChanged: () => void;
+  onProposed: (request: ChangeRequest) => void;
 }) {
+  const guarded = required > 0;
   const toast = useToast();
   const [name, setName] = useState(segment?.name ?? '');
   const [key, setKey] = useState(segment?.key ?? '');
@@ -167,6 +184,18 @@ function SegmentEditor({
     setBusy(true);
     setFailure(undefined);
     try {
+      if (guarded) {
+        const { key: _key, ...content } = body;
+        const created = await api.proposeSegment(project, env, body.key, {
+          baseVersion: segment?.version ?? 0,
+          title:
+            segment === undefined ? `Create segment ${body.name}` : `Edit segment ${body.name}`,
+          segment: content,
+        });
+        toast(`Opened a change request for ${body.name} in ${envName}.`);
+        onProposed(created);
+        return;
+      }
       if (segment === undefined) await api.createSegment(project, env, body);
       else {
         const { key: _key, ...rest } = body;
@@ -187,6 +216,16 @@ function SegmentEditor({
     if (segment === undefined) return;
     setBusy(true);
     try {
+      if (guarded) {
+        const created = await api.proposeSegment(project, env, segment.key, {
+          baseVersion: segment.version,
+          title: `Delete segment ${segment.name}`,
+          segment: null,
+        });
+        toast(`Opened a change request to delete ${segment.name} in ${envName}.`);
+        onProposed(created);
+        return;
+      }
       await api.deleteSegment(project, env, segment.key, segment.version);
       toast(`Deleted ${segment.name}.`);
       onChanged();
@@ -228,7 +267,11 @@ function SegmentEditor({
             )}
             <Button onClick={onClose}>Cancel</Button>
             <Button variant="primary" type="submit" form="segment-form" busy={busy}>
-              {segment === undefined ? 'Create segment' : 'Save segment'}
+              {guarded
+                ? 'Request approval'
+                : segment === undefined
+                  ? 'Create segment'
+                  : 'Save segment'}
             </Button>
           </>
         ) : undefined
@@ -255,6 +298,14 @@ function SegmentEditor({
         <History project={project} segment={segment.key} />
       ) : (
         <form id="segment-form" className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
+          {guarded && canEdit && (
+            <div className="banner banner-info" role="status">
+              <p>
+                {envName} is protected: saving opens a change request that needs {required}{' '}
+                {required === 1 ? 'approval' : 'approvals'} before it goes live.
+              </p>
+            </div>
+          )}
           {failure !== undefined && (
             <div className="banner" role="alert">
               <div>
@@ -442,7 +493,7 @@ function SegmentEditor({
                 Cancel
               </Button>
               <Button variant="danger" busy={busy} onClick={() => void remove()}>
-                Delete segment
+                {guarded ? 'Request deletion' : 'Delete segment'}
               </Button>
             </>
           }

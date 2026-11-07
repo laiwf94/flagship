@@ -1,6 +1,6 @@
 import { diff, validateRuleset, type Flag, type Ruleset } from '@flagship/core';
-import { useEffect, useMemo, useState } from 'react';
-import { useBlocker } from 'react-router';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Link, useBlocker, useNavigate } from 'react-router';
 import { ApiError, api, type EnvConfig, type FlagDetail } from '../api';
 import { Dialog } from '../components/dialog';
 import { Icon } from '../components/icons';
@@ -11,6 +11,7 @@ import { RolloutPreview } from './RolloutPreview';
 import { RuleEditor } from './RuleEditor';
 import { newRule } from './rules';
 import { ServeEditor } from './ServeEditor';
+import { useScope } from '../pages/Layout';
 
 function envOf(flag: FlagDetail, env: string) {
   const c = flag.environments[env];
@@ -93,6 +94,16 @@ export function Targeting({
   onReload: () => void;
 }) {
   const toast = useToast();
+  const navigate = useNavigate();
+  const { project: scopeProject, link } = useScope();
+  const fieldId = useId();
+  // A protected environment takes targeting changes only through a change request.
+  const required = scopeProject.environments.find((e) => e.key === env)?.requiredApprovals ?? 0;
+  const guarded = required > 0;
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  // Set when leaving for the new change request, so the unsaved-changes guard lets it go.
+  const leaving = useRef(false);
   const saved = configOf(flag, env);
   // Targeting has its own version per environment: saves here only conflict
   // with other changes to this environment's targeting.
@@ -123,7 +134,7 @@ export function Targeting({
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
-      dirty && currentLocation.pathname !== nextLocation.pathname,
+      !leaving.current && dirty && currentLocation.pathname !== nextLocation.pathname,
   );
   useEffect(() => {
     if (!dirty) return;
@@ -175,6 +186,31 @@ export function Targeting({
     }
   };
 
+  const propose = async () => {
+    const t = title.trim() === '' ? `Change targeting of ${flag.name}` : title.trim();
+    setBusy(true);
+    setSaveError(undefined);
+    try {
+      const created = await api.proposeTargeting(project, flag.key, env, {
+        ...draft,
+        baseVersion: base,
+        title: t,
+        ...(description.trim() === '' ? {} : { description: description.trim() }),
+      });
+      leaving.current = true;
+      toast(`Opened a change request for ${flag.name} in ${envName}.`);
+      void navigate(link(`change-requests/${created.id}`));
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError
+          ? err
+          : new ApiError(0, 'internal', 'Could not open the change request.', undefined),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const kill = async (enabled: boolean) => {
     setBusy(true);
     try {
@@ -206,6 +242,19 @@ export function Targeting({
   return (
     <div className="targeting">
       <div className="targeting-main">
+        {guarded && (
+          <div className="banner banner-info" role="status">
+            <Icon name="diff" />
+            <p>
+              {envName} is protected: targeting changes need {required}{' '}
+              {required === 1 ? 'approval' : 'approvals'} through a change request. The on and off
+              switch still works straight away, for incidents.{' '}
+              <Link to={`${link('change-requests')}?flag=${encodeURIComponent(flag.key)}`}>
+                Change requests for this flag
+              </Link>
+            </p>
+          </div>
+        )}
         <Card>
           <Switch
             checked={draft.enabled}
@@ -435,7 +484,7 @@ export function Targeting({
                 setReviewing(true);
               }}
             >
-              Review and save
+              {guarded ? 'Review and request approval' : 'Review and save'}
             </Button>
           </div>
         </div>
@@ -443,7 +492,11 @@ export function Targeting({
 
       {reviewing && (
         <Dialog
-          title={`Review changes to ${flag.name} in ${envName}`}
+          title={
+            guarded
+              ? `Request approval for ${flag.name} in ${envName}`
+              : `Review changes to ${flag.name} in ${envName}`
+          }
           wide
           onClose={() => {
             setReviewing(false);
@@ -461,10 +514,10 @@ export function Targeting({
                 variant="primary"
                 busy={busy}
                 disabled={!valid}
-                onClick={() => void save()}
-                data-autofocus
+                onClick={() => void (guarded ? propose() : save())}
+                data-autofocus={guarded ? undefined : true}
               >
-                Save to {envName}
+                {guarded ? 'Open change request' : `Save to ${envName}`}
               </Button>
             </>
           }
@@ -520,6 +573,39 @@ export function Targeting({
                 )}
               </div>
             </div>
+          )}
+          {guarded && (
+            <>
+              <div className="field">
+                <label htmlFor={`${fieldId}-t`}>Title</label>
+                <input
+                  id={`${fieldId}-t`}
+                  value={title}
+                  maxLength={200}
+                  placeholder={`Change targeting of ${flag.name}`}
+                  data-autofocus
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                  }}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor={`${fieldId}-d`}>Why (optional)</label>
+                <textarea
+                  id={`${fieldId}-d`}
+                  value={description}
+                  maxLength={4000}
+                  aria-describedby={`${fieldId}-dh`}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                  }}
+                />
+                <p className="hint" id={`${fieldId}-dh`}>
+                  Reviewers see this next to the changes. Nothing goes live until someone else
+                  approves it and it is applied.
+                </p>
+              </div>
+            </>
           )}
           <DiffView entries={changes} />
         </Dialog>

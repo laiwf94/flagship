@@ -85,6 +85,7 @@ describe('flag list', () => {
     ).toEqual([
       ['Flags', '/p/default/production/flags'],
       ['Segments', '/p/default/production/segments'],
+      ['Changes', '/p/default/production/change-requests'],
       ['History', '/p/default/production/history'],
       ['Settings', '/p/default/production/settings'],
     ]);
