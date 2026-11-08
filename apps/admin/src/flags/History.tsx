@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, type AuditEntry } from '../api';
 import { Badge, Button, EmptyState, ErrorState, Loading } from '../components/ui';
 import { fullDate, timeAgo } from '../format';
 import { useResource } from '../hooks';
 import { DiffView } from './DiffView';
+import { hasFilters, type AuditFilters } from './historyFilters';
 
 const ACTIONS: Record<string, string> = {
   'flag.create': 'created flag',
@@ -86,28 +87,39 @@ function Entry({ entry }: { entry: AuditEntry }) {
   );
 }
 
-/** Newest first, 25 at a time. */
+/** Newest first, 25 at a time, optionally narrowed by actor, text and dates. */
 export function History({
   project,
   flag,
   segment,
+  filters = {},
 }: {
   project: string;
   flag?: string;
   segment?: string;
+  filters?: AuditFilters;
 }) {
-  const first = useResource(
-    () =>
-      api.audit(project, {
-        ...(flag === undefined ? {} : { flag }),
-        ...(segment === undefined ? {} : { segment }),
-        limit: 25,
-      }),
-    `${project}/${flag ?? ''}/${segment ?? ''}`,
-  );
+  const query = {
+    ...(flag === undefined ? {} : { flag }),
+    ...(segment === undefined ? {} : { segment }),
+    ...filters,
+  };
+  const key = `${project}?${JSON.stringify(query)}`;
+  const first = useResource(() => api.audit(project, { ...query, limit: 25 }), key);
   const [more, setMore] = useState<AuditEntry[]>([]);
   const [next, setNext] = useState<string | null | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Older pages belong to one search: a new search starts again from its first page.
+  const currentKey = useRef(key);
+  useEffect(() => {
+    currentKey.current = key;
+  }, [key]);
+  const [pagesFor, setPagesFor] = useState(key);
+  if (pagesFor !== key) {
+    setPagesFor(key);
+    setMore([]);
+    setNext(undefined);
+  }
 
   if (first.error !== undefined)
     return <ErrorState message={first.error.message} onRetry={first.reload} />;
@@ -115,6 +127,13 @@ export function History({
   const entries = [...first.data.entries, ...more];
   const cursor = next === undefined ? first.data.next : next;
   if (entries.length === 0) {
+    if (hasFilters(filters)) {
+      return (
+        <EmptyState icon="history" title="No changes match">
+          Try fewer words, another name, or a wider range of days.
+        </EmptyState>
+      );
+    }
     return (
       <EmptyState icon="history" title="No changes yet">
         Every change to flags, segments and keys is recorded here with who made it.
@@ -134,14 +153,12 @@ export function History({
             busy={loadingMore}
             onClick={() => {
               setLoadingMore(true);
+              const forKey = key;
               void api
-                .audit(project, {
-                  ...(flag === undefined ? {} : { flag }),
-                  ...(segment === undefined ? {} : { segment }),
-                  cursor,
-                  limit: 25,
-                })
+                .audit(project, { ...query, cursor, limit: 25 })
                 .then((page) => {
+                  // Drop a page that arrives after the search changed.
+                  if (forKey !== currentKey.current) return;
                   setMore((m) => [...m, ...page.entries]);
                   setNext(page.next);
                 })

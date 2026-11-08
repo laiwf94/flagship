@@ -607,6 +607,15 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
   apply, rebase and close as the server allows them. A segment request previews each flag
   whose variants depend on it, directly or through prerequisites. The author's own request
   offers no approval, matching the server rule, and a disabled Apply says why.
+- Every form that writes in an environment (the targeting review, the kill switch dialog,
+  the segment editor and its delete, scheduling) has Reason and Ticket link fields, sent as
+  the `Flagship-Reason` and `Flagship-Link` headers. They are marked required, and checked
+  before the request, when the environment asks for them; a change request form asks only for
+  the link, since its title is the reason. The Undo on the kill switch's toast resends the same
+  note. Settings shows each environment's approvals and note rules, and an admin changes the
+  note rules there. History searches by text, exact actor name and a range of local days (the
+  last day included), with the filters in the URL so a search can be shared; older pages keep
+  the same filters.
 - Status is a badge, filters are chips that live in the URL, on/off is a switch,
   2–4 choices are a segmented control, results are toasts (the kill switch's has Undo), errors
   sit at the field.

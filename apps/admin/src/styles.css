@@ -370,6 +370,8 @@ input[type='password'],
 input[type='search'],
 input[type='number'],
 input[type='datetime-local'],
+input[type='date'],
+input[type='url'],
 select,
 textarea {
   width: 100%;
@@ -1311,9 +1313,57 @@ input[type='range'] {
 }
 
 .env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 40px;
+}
+
+/* The name, then what changes there need; badges wrap under the name on narrow screens. */
+.env-policy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.note-fields {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.history-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.history-filters .field {
+  margin: 0;
+}
+
+.history-filters-actions {
   display: flex;
   gap: var(--space-2);
-  align-items: baseline;
+  /* Level with the inputs, below their labels. */
+  padding-top: 26px;
+}
+
+@media (max-width: 900px) {
+  .history-filters {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .history-filters .history-filter-text,
+  .history-filters-actions {
+    grid-column: 1 / -1;
+  }
+
+  .history-filters-actions {
+    padding-top: 0;
+  }
 }
 
 /* Narrow screens */

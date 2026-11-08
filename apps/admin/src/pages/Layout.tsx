@@ -12,6 +12,8 @@ export interface Scope {
   projects: Project[];
   /** Builds a link inside the current project and environment. */
   link: (path: string) => string;
+  /** Loads the projects again, after a change to an environment's settings. */
+  reload: () => void;
 }
 
 const ScopeContext = createContext<Scope | null>(null);
@@ -69,6 +71,7 @@ export function Layout() {
     env,
     projects: projects.data.projects,
     link: (path) => `${base}/${path.replace(/^\//, '')}`,
+    reload: projects.reload,
   };
 
   return (

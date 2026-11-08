@@ -1,7 +1,17 @@
 import { keySchema, validateSegment, type AttributeClause, type SegmentRule } from '@flagship/core';
 import { useState, type SyntheticEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { ApiError, api, type ChangeRequest, type SegmentView } from '../api';
+import { ApiError, api, type ChangeNote, type ChangeRequest, type SegmentView } from '../api';
+import {
+  checkNote,
+  EMPTY_NOTE,
+  noteErrorsOf,
+  type NoteDraft,
+  type NoteErrors,
+  type NotePolicy,
+  policyOf,
+} from '../changeNote';
+import { NoteFields } from '../components/NoteFields';
 import { Dialog } from '../components/dialog';
 import { useToast } from '../components/toast';
 import { Button, EmptyState, ErrorState, Field, IconButton, Loading } from '../components/ui';
@@ -92,6 +102,7 @@ export function Segments() {
           segment={editing === 'new' ? undefined : editing}
           canEdit={can('editor')}
           required={required}
+          policy={policyOf(project, env)}
           envName={envName}
           onProposed={(request) => {
             setEditing(undefined);
@@ -116,6 +127,7 @@ function SegmentEditor({
   segment,
   canEdit,
   required,
+  policy,
   envName,
   onClose,
   onChanged,
@@ -127,6 +139,8 @@ function SegmentEditor({
   canEdit: boolean;
   /** Approvals the environment needs; above 0, edits become change requests. */
   required: number;
+  /** What the environment asks each change to carry. */
+  policy: NotePolicy;
   envName: string;
   onClose: () => void;
   onChanged: () => void;
@@ -145,8 +159,24 @@ function SegmentEditor({
   const [failure, setFailure] = useState<ApiError | undefined>();
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [noteDraft, setNoteDraft] = useState<NoteDraft>(EMPTY_NOTE);
+  const [noteErrors, setNoteErrors] = useState<NoteErrors>({});
   const [tab, setTab] = useState<'edit' | 'history'>('edit');
   const effectiveKey = keyEdited ? key : slugify(name);
+
+  /** The note to send, or undefined after showing what is missing. A request's title is its reason. */
+  const noteFor = (): ChangeNote | undefined => {
+    const checked = checkNote(noteDraft, policy, envName, { reason: !guarded });
+    setNoteErrors(checked.ok ? {} : checked.errors);
+    return checked.ok ? checked.note : undefined;
+  };
+  const failedWith = (err: unknown) => {
+    const e = err instanceof ApiError ? err : undefined;
+    const fieldErrors = noteErrorsOf(e?.issues ?? []);
+    setNoteErrors(fieldErrors);
+    // A missing note is shown at its field; anything else in the banner.
+    if (Object.keys(fieldErrors).length === 0) setFailure(e);
+  };
 
   const submit = async (e: SyntheticEvent) => {
     e.preventDefault();
@@ -180,33 +210,46 @@ function SegmentEditor({
       }
     }
     setErrors(next);
-    if (Object.keys(next).length > 0) return;
+    const note = noteFor();
+    if (Object.keys(next).length > 0 || note === undefined) return;
     setBusy(true);
     setFailure(undefined);
     try {
       if (guarded) {
         const { key: _key, ...content } = body;
-        const created = await api.proposeSegment(project, env, body.key, {
-          baseVersion: segment?.version ?? 0,
-          title:
-            segment === undefined ? `Create segment ${body.name}` : `Edit segment ${body.name}`,
-          segment: content,
-        });
+        const created = await api.proposeSegment(
+          project,
+          env,
+          body.key,
+          {
+            baseVersion: segment?.version ?? 0,
+            title:
+              segment === undefined ? `Create segment ${body.name}` : `Edit segment ${body.name}`,
+            segment: content,
+          },
+          note,
+        );
         toast(`Opened a change request for ${body.name} in ${envName}.`);
         onProposed(created);
         return;
       }
-      if (segment === undefined) await api.createSegment(project, env, body);
+      if (segment === undefined) await api.createSegment(project, env, body, note);
       else {
         const { key: _key, ...rest } = body;
-        await api.updateSegment(project, env, segment.key, { ...rest, version: segment.version });
+        await api.updateSegment(
+          project,
+          env,
+          segment.key,
+          { ...rest, version: segment.version },
+          note,
+        );
       }
       toast(segment === undefined ? `Created ${body.name}.` : `Saved ${body.name}.`);
       onChanged();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'already_exists')
         setErrors({ key: 'A segment with this key exists' });
-      else setFailure(err instanceof ApiError ? err : undefined);
+      else failedWith(err);
     } finally {
       setBusy(false);
     }
@@ -214,24 +257,32 @@ function SegmentEditor({
 
   const remove = async () => {
     if (segment === undefined) return;
+    const note = noteFor();
+    if (note === undefined) return;
     setBusy(true);
     try {
       if (guarded) {
-        const created = await api.proposeSegment(project, env, segment.key, {
-          baseVersion: segment.version,
-          title: `Delete segment ${segment.name}`,
-          segment: null,
-        });
+        const created = await api.proposeSegment(
+          project,
+          env,
+          segment.key,
+          { baseVersion: segment.version, title: `Delete segment ${segment.name}`, segment: null },
+          note,
+        );
         toast(`Opened a change request to delete ${segment.name} in ${envName}.`);
         onProposed(created);
         return;
       }
-      await api.deleteSegment(project, env, segment.key, segment.version);
+      await api.deleteSegment(project, env, segment.key, segment.version, note);
       toast(`Deleted ${segment.name}.`);
       onChanged();
     } catch (err) {
-      setConfirmDelete(false);
-      setFailure(err instanceof ApiError ? err : undefined);
+      const fieldErrors = noteErrorsOf(err instanceof ApiError ? err.issues : []);
+      if (Object.keys(fieldErrors).length > 0) setNoteErrors(fieldErrors);
+      else {
+        setConfirmDelete(false);
+        setFailure(err instanceof ApiError ? err : undefined);
+      }
     } finally {
       setBusy(false);
     }
@@ -259,6 +310,7 @@ function SegmentEditor({
                 icon="trash"
                 className="push-left"
                 onClick={() => {
+                  setNoteErrors({});
                   setConfirmDelete(true);
                 }}
               >
@@ -475,6 +527,16 @@ function SegmentEditor({
               </div>
             )}
           </div>
+          {canEdit && (
+            <NoteFields
+              value={noteDraft}
+              onChange={setNoteDraft}
+              policy={policy}
+              envName={envName}
+              errors={noteErrors}
+              reason={!guarded}
+            />
+          )}
         </form>
       )}
       {confirmDelete && segment !== undefined && (
@@ -499,6 +561,14 @@ function SegmentEditor({
           }
         >
           <p>Flags that target this segment must stop using it first; you'll be told which.</p>
+          <NoteFields
+            value={noteDraft}
+            onChange={setNoteDraft}
+            policy={policy}
+            envName={envName}
+            errors={noteErrors}
+            reason={!guarded}
+          />
         </Dialog>
       )}
     </Dialog>

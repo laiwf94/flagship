@@ -77,6 +77,8 @@ test('sign in, create a flag, add a rule, roll out, review the diff and save', a
   const review = page.getByRole('dialog', { name: /Review changes/ });
   await expect(review.getByText('Rule 1', { exact: true })).toBeVisible();
   await expect(review.getByText('Default rule › rollout')).toBeVisible();
+  await review.getByLabel('Reason (optional)').fill('Ramp onboarding to 20% for the café pilot');
+  await review.getByLabel('Ticket link (optional)').fill('https://tracker.example.com/PILOT-20');
   await expectAccessible(page, 'review dialog');
   await review.getByRole('button', { name: 'Save to Production' }).click();
   await expect(
@@ -94,6 +96,17 @@ test('sign in, create a flag, add a rule, roll out, review the diff and save', a
     .first()
     .click();
   await expect(page.getByText('Flag on', { exact: true })).toBeVisible();
+
+  // The reason went to the server and can be found again by a word in it.
+  await page.getByRole('link', { name: 'History' }).click();
+  const search = page.getByRole('search', { name: 'Search history' });
+  await search.getByLabel('Search').fill('PILOT-20');
+  await search.getByRole('button', { name: 'Search' }).click();
+  await expect(page).toHaveURL(/history\?q=PILOT-20$/);
+  const found = page.getByRole('list', { name: 'Change history' });
+  await expect(found.getByText('Ramp onboarding to 20% for the café pilot')).toBeVisible();
+  await expect(found.getByRole('listitem')).toHaveCount(1);
+  await expectAccessible(page, 'history search');
 });
 
 test('a second editor saving first gets the other a clear conflict', async ({ browser }) => {

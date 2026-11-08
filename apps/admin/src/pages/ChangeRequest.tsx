@@ -154,6 +154,16 @@ function Review({
             {r.revision > 1 && ` · revision ${r.revision}`}
           </p>
           {r.description !== '' && <p className="cr-description">{r.description}</p>}
+          {((r.reason ?? null) !== null || (r.link ?? null) !== null) && (
+            <p className="history-note small">
+              {(r.reason ?? null) !== null && <span>Reason: {r.reason}</span>}
+              {(r.link ?? null) !== null && (
+                <a href={r.link ?? undefined} target="_blank" rel="noreferrer noopener">
+                  {r.link}
+                </a>
+              )}
+            </p>
+          )}
         </div>
       </div>
 

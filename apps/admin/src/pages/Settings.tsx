@@ -1,6 +1,6 @@
 import { keySchema } from '@flagship/core';
 import { useState, type SyntheticEvent } from 'react';
-import { ApiError, api, type ApiKey, type ManagedUser, type Role } from '../api';
+import { ApiError, api, type ApiKey, type ManagedUser, type Project, type Role } from '../api';
 import { Dialog } from '../components/dialog';
 import { useToast } from '../components/toast';
 import {
@@ -42,10 +42,29 @@ export function Settings() {
   );
 }
 
+type Env = Project['environments'][number];
+
+/** What changes in an environment need, in a few words each. */
+function policyBadges(e: Env) {
+  const approvals = e.requiredApprovals ?? 0;
+  return (
+    <>
+      {approvals > 0 && (
+        <Badge tone="info">
+          {approvals} {approvals === 1 ? 'approval' : 'approvals'}
+        </Badge>
+      )}
+      {e.requireReason === true && <Badge tone="neutral">Reason required</Badge>}
+      {e.requireLink === true && <Badge tone="neutral">Ticket link required</Badge>}
+    </>
+  );
+}
+
 function Environments() {
   const { project } = useScope();
   const { can } = useSession();
   const toast = useToast();
+  const [editing, setEditing] = useState<Env | undefined>();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | undefined>();
@@ -91,13 +110,37 @@ function Environments() {
         ) : undefined
       }
     >
-      <ul className="plain-list">
+      <ul className="plain-list" aria-label="Environments">
         {project.environments.map((e) => (
           <li key={e.key} className="env-row">
-            <strong>{e.name}</strong> <span className="mono muted">{e.key}</span>
+            <span className="env-policy">
+              <span>
+                <strong>{e.name}</strong> <span className="mono muted">{e.key}</span>
+              </span>
+              {policyBadges(e)}
+            </span>
+            {can('admin') && (
+              <Button
+                variant="plain"
+                aria-label={`Change rules for ${e.name}`}
+                onClick={() => {
+                  setEditing(e);
+                }}
+              >
+                Change rules
+              </Button>
+            )}
           </li>
         ))}
       </ul>
+      {editing !== undefined && (
+        <ChangeRulesDialog
+          env={editing}
+          onClose={() => {
+            setEditing(undefined);
+          }}
+        />
+      )}
       {adding && (
         <Dialog
           title="Add environment"
@@ -141,6 +184,70 @@ function Environments() {
         </Dialog>
       )}
     </Card>
+  );
+}
+
+/** Whether every change in an environment must say why and link a ticket. */
+function ChangeRulesDialog({ env, onClose }: { env: Env; onClose: () => void }) {
+  const { project, reload } = useScope();
+  const toast = useToast();
+  const [requireReason, setRequireReason] = useState(env.requireReason === true);
+  const [requireLink, setRequireLink] = useState(env.requireLink === true);
+  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+  const unchanged =
+    requireReason === (env.requireReason === true) && requireLink === (env.requireLink === true);
+
+  const save = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.setChangeNotes(project.key, env.key, { requireReason, requireLink });
+      toast(`Saved the change rules for ${env.name}.`);
+      reload();
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not save the rules.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      title={`Change rules for ${env.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" busy={busy} disabled={unchanged} onClick={() => void save()}>
+            Save rules
+          </Button>
+        </>
+      }
+    >
+      {error !== undefined && (
+        <div className="banner" role="alert">
+          <p>{error}</p>
+        </div>
+      )}
+      <p className="muted small">
+        Applies to targeting edits, the on and off switch, segments and scheduled changes in{' '}
+        {env.name}. A change request&rsquo;s title counts as its reason.
+      </p>
+      <Switch
+        checked={requireReason}
+        onChange={setRequireReason}
+        label="Require a reason"
+        description="Every change has to say why. The reason shows in History and is searchable."
+      />
+      <Switch
+        checked={requireLink}
+        onChange={setRequireLink}
+        label="Require a ticket link"
+        description="Every change has to link a ticket or incident."
+      />
+    </Dialog>
   );
 }
 

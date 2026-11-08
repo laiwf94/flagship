@@ -1,7 +1,16 @@
 import { diff, validateRuleset, type Flag, type Ruleset } from '@flagship/core';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useNavigate } from 'react-router';
-import { ApiError, api, type EnvConfig, type FlagDetail } from '../api';
+import { ApiError, api, type ChangeNote, type EnvConfig, type FlagDetail } from '../api';
+import {
+  checkNote,
+  EMPTY_NOTE,
+  noteErrorsOf,
+  policyOf,
+  type NoteDraft,
+  type NoteErrors,
+} from '../changeNote';
+import { NoteFields } from '../components/NoteFields';
 import { Dialog } from '../components/dialog';
 import { Icon } from '../components/icons';
 import { useToast } from '../components/toast';
@@ -102,6 +111,10 @@ export function Targeting({
   const guarded = required > 0;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  // Reason and ticket link for the save, the change request or the kill switch.
+  const policy = policyOf(scopeProject, env);
+  const [noteDraft, setNoteDraft] = useState<NoteDraft>(EMPTY_NOTE);
+  const [noteErrors, setNoteErrors] = useState<NoteErrors>({});
   // Set when leaving for the new change request, so the unsaved-changes guard lets it go.
   const leaving = useRef(false);
   const saved = configOf(flag, env);
@@ -168,19 +181,38 @@ export function Targeting({
     setDraft((d) => ({ ...d, ...patch }));
   };
 
+  /** The note to send, or undefined after showing what is missing. */
+  const noteFor = (fields: { reason: boolean }): ChangeNote | undefined => {
+    const checked = checkNote(noteDraft, policy, envName, fields);
+    setNoteErrors(checked.ok ? {} : checked.errors);
+    return checked.ok ? checked.note : undefined;
+  };
+  const failed = (err: unknown, fallback: string) => {
+    const e = err instanceof ApiError ? err : new ApiError(0, 'internal', fallback, undefined);
+    setNoteErrors(noteErrorsOf(e.issues));
+    setSaveError(e);
+  };
+
   const save = async () => {
+    const note = noteFor({ reason: true });
+    if (note === undefined) return;
     setBusy(true);
     setSaveError(undefined);
     try {
-      const next = await api.saveTargeting(project, flag.key, env, { ...draft, version: base });
+      const next = await api.saveTargeting(
+        project,
+        flag.key,
+        env,
+        { ...draft, version: base },
+        note,
+      );
       setReviewing(false);
       onSaved(next);
       setDraft(configOf(next, env));
+      setNoteDraft(EMPTY_NOTE);
       toast(`Saved targeting for ${flag.name} in ${envName}.`);
     } catch (err) {
-      setSaveError(
-        err instanceof ApiError ? err : new ApiError(0, 'internal', 'Save failed.', undefined),
-      );
+      failed(err, 'Save failed.');
     } finally {
       setBusy(false);
     }
@@ -188,52 +220,71 @@ export function Targeting({
 
   const propose = async () => {
     const t = title.trim() === '' ? `Change targeting of ${flag.name}` : title.trim();
+    // The title is the request's reason, so only the link is asked for here.
+    const note = noteFor({ reason: false });
+    if (note === undefined) return;
     setBusy(true);
     setSaveError(undefined);
     try {
-      const created = await api.proposeTargeting(project, flag.key, env, {
-        ...draft,
-        baseVersion: base,
-        title: t,
-        ...(description.trim() === '' ? {} : { description: description.trim() }),
-      });
+      const created = await api.proposeTargeting(
+        project,
+        flag.key,
+        env,
+        {
+          ...draft,
+          baseVersion: base,
+          title: t,
+          ...(description.trim() === '' ? {} : { description: description.trim() }),
+        },
+        note,
+      );
       leaving.current = true;
       toast(`Opened a change request for ${flag.name} in ${envName}.`);
       void navigate(link(`change-requests/${created.id}`));
     } catch (err) {
-      setSaveError(
-        err instanceof ApiError
-          ? err
-          : new ApiError(0, 'internal', 'Could not open the change request.', undefined),
-      );
+      failed(err, 'Could not open the change request.');
     } finally {
       setBusy(false);
     }
   };
 
   const kill = async (enabled: boolean) => {
+    const note = noteFor({ reason: true });
+    if (note === undefined) return;
     setBusy(true);
     try {
-      const next = await api.killSwitch(project, flag.key, env, enabled);
+      const next = await api.killSwitch(project, flag.key, env, enabled, note);
       onSaved(next);
       update({ enabled });
       setConfirmKill(null);
+      setNoteDraft(EMPTY_NOTE);
       toast(`${flag.name} is now ${enabled ? 'on' : 'off'} in ${envName}.`, {
         action: {
           label: 'Undo',
           run: () => {
-            void api.killSwitch(project, flag.key, env, !enabled).then((back) => {
-              onSaved(back);
-              update({ enabled: !enabled });
-            });
+            // Undoing is part of the same incident, so it carries the same note.
+            void api
+              .killSwitch(project, flag.key, env, !enabled, note)
+              .then((back) => {
+                onSaved(back);
+                update({ enabled: !enabled });
+              })
+              .catch((err: unknown) => {
+                toast(err instanceof ApiError ? err.message : 'Could not undo.', {
+                  tone: 'critical',
+                });
+              });
           },
         },
       });
     } catch (err) {
-      setConfirmKill(null);
-      toast(err instanceof ApiError ? err.message : 'Could not change the flag.', {
-        tone: 'critical',
-      });
+      const e = err instanceof ApiError ? err : undefined;
+      const fieldErrors = noteErrorsOf(e?.issues ?? []);
+      if (Object.keys(fieldErrors).length > 0) setNoteErrors(fieldErrors);
+      else {
+        setConfirmKill(null);
+        toast(e?.message ?? 'Could not change the flag.', { tone: 'critical' });
+      }
     } finally {
       setBusy(false);
     }
@@ -260,6 +311,7 @@ export function Targeting({
             checked={draft.enabled}
             disabled={!canEdit || busy}
             onChange={(next) => {
+              setNoteErrors({});
               setConfirmKill(next);
             }}
             label={draft.enabled ? `On in ${envName}` : `Off in ${envName}`}
@@ -481,6 +533,7 @@ export function Targeting({
               icon="diff"
               onClick={() => {
                 setSaveError(undefined);
+                setNoteErrors({});
                 setReviewing(true);
               }}
             >
@@ -602,11 +655,19 @@ export function Targeting({
                 />
                 <p className="hint" id={`${fieldId}-dh`}>
                   Reviewers see this next to the changes. Nothing goes live until someone else
-                  approves it and it is applied.
+                  approves it and it is applied. The title is recorded as the reason in History.
                 </p>
               </div>
             </>
           )}
+          <NoteFields
+            value={noteDraft}
+            onChange={setNoteDraft}
+            policy={policy}
+            envName={envName}
+            errors={noteErrors}
+            reason={!guarded}
+          />
           <DiffView entries={changes} />
         </Dialog>
       )}
@@ -634,7 +695,7 @@ export function Targeting({
                 variant={confirmKill ? 'primary' : 'danger'}
                 icon="power"
                 busy={busy}
-                data-autofocus
+                data-autofocus={policy.requireReason || policy.requireLink ? undefined : true}
                 onClick={() => void kill(confirmKill)}
               >
                 {confirmKill ? 'Turn on' : 'Turn off'}
@@ -648,6 +709,14 @@ export function Targeting({
               : `Every user gets "${draft.offVariant}" within seconds, for every connected app.`}{' '}
             This takes effect immediately and doesn't wait for your other edits.
           </p>
+          <NoteFields
+            value={noteDraft}
+            onChange={setNoteDraft}
+            policy={policy}
+            envName={envName}
+            errors={noteErrors}
+            autoFocus={policy.requireReason || policy.requireLink}
+          />
         </Dialog>
       )}
 

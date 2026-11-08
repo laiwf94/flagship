@@ -198,6 +198,16 @@ export interface ChangeRequest {
   } | null;
   canApply: boolean;
   reviews: Review[];
+  /** The reason it was proposed with, beyond its title. */
+  reason?: string | null;
+  /** The ticket link it was proposed with. */
+  link?: string | null;
+}
+
+/** Why a change is made and its ticket, sent with a write and kept on its audit entry. */
+export interface ChangeNote {
+  reason?: string;
+  link?: string;
 }
 
 export interface FieldIssue {
@@ -239,10 +249,18 @@ export function setUnauthenticatedHandler(fn: () => void): void {
   onUnauthenticated = fn;
 }
 
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  note?: ChangeNote,
+): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (method !== 'GET') headers['x-csrf-token'] = csrfToken;
+  // Headers carry only Latin-1, so the reason goes percent-encoded; the server decodes it.
+  if (note?.reason !== undefined) headers['flagship-reason'] = encodeURIComponent(note.reason);
+  if (note?.link !== undefined) headers['flagship-link'] = note.link;
   let res: Response;
   try {
     res = await fetch(path, {
@@ -318,17 +336,20 @@ export const api = {
     key: string,
     env: string,
     config: EnvConfig & { version: number },
+    note?: ChangeNote,
   ) =>
     request<FlagDetail>(
       'PUT',
       `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}`,
       config,
+      note,
     ),
-  killSwitch: (project: string, key: string, env: string, enabled: boolean) =>
+  killSwitch: (project: string, key: string, env: string, enabled: boolean, note?: ChangeNote) =>
     request<FlagDetail>(
       'POST',
       `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/kill-switch`,
       { enabled },
+      note,
     ),
   archive: (project: string, key: string, version: number) =>
     request<FlagDetail>('POST', `/api/projects/${enc(project)}/flags/${enc(key)}/archive`, {
@@ -351,11 +372,13 @@ export const api = {
     key: string,
     env: string,
     input: { runAt: string; change: Schedule['change'] },
+    note?: ChangeNote,
   ) =>
     request<Schedule>(
       'POST',
       `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/schedules`,
       input,
+      note,
     ),
   cancelSchedule: (project: string, key: string, env: string, id: string) =>
     request<Schedule>(
@@ -397,27 +420,33 @@ export const api = {
     project: string,
     env: string,
     input: Omit<SegmentView, 'version' | 'updatedAt'>,
+    note?: ChangeNote,
   ) =>
     request<SegmentView>(
       'POST',
       `/api/projects/${enc(project)}/environments/${enc(env)}/segments`,
       input,
+      note,
     ),
   updateSegment: (
     project: string,
     env: string,
     key: string,
     input: Omit<SegmentView, 'key' | 'updatedAt'>,
+    note?: ChangeNote,
   ) =>
     request<SegmentView>(
       'PUT',
       `/api/projects/${enc(project)}/environments/${enc(env)}/segments/${enc(key)}`,
       input,
+      note,
     ),
-  deleteSegment: (project: string, env: string, key: string, version: number) =>
+  deleteSegment: (project: string, env: string, key: string, version: number, note?: ChangeNote) =>
     request<undefined>(
       'DELETE',
       `/api/projects/${enc(project)}/environments/${enc(env)}/segments/${enc(key)}?version=${version}`,
+      undefined,
+      note,
     ),
 
   changeRequests: (
@@ -445,11 +474,13 @@ export const api = {
     key: string,
     env: string,
     input: EnvConfig & { baseVersion: number; title: string; description?: string },
+    note?: ChangeNote,
   ) =>
     request<ChangeRequest>(
       'POST',
       `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/change-requests`,
       input,
+      note,
     ),
   proposeSegment: (
     project: string,
@@ -461,11 +492,13 @@ export const api = {
       description?: string;
       segment: SegmentContent | null;
     },
+    note?: ChangeNote,
   ) =>
     request<ChangeRequest>(
       'POST',
       `/api/projects/${enc(project)}/environments/${enc(env)}/segments/${enc(key)}/change-requests`,
       input,
+      note,
     ),
   reviewChange: (
     project: string,
@@ -511,6 +544,16 @@ export const api = {
     request<undefined>(
       'DELETE',
       `/api/projects/${enc(project)}/environments/${enc(env)}/api-keys/${enc(id)}`,
+    ),
+  setChangeNotes: (
+    project: string,
+    env: string,
+    input: { requireReason: boolean; requireLink: boolean },
+  ) =>
+    request<unknown>(
+      'PUT',
+      `/api/projects/${enc(project)}/environments/${enc(env)}/change-notes`,
+      input,
     ),
   createEnvironment: (project: string, input: { key: string; name: string }) =>
     request<{ key: string; name: string }>(

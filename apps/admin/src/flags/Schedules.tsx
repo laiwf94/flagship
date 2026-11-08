@@ -1,5 +1,16 @@
 import { useState, type SyntheticEvent } from 'react';
-import { ApiError, api, type FlagDetail, type Schedule } from '../api';
+import { ApiError, api, type ChangeNote, type FlagDetail, type Schedule } from '../api';
+import {
+  checkNote,
+  EMPTY_NOTE,
+  noteErrorsOf,
+  policyOf,
+  type NoteDraft,
+  type NoteErrors,
+  type NotePolicy,
+} from '../changeNote';
+import { NoteFields } from '../components/NoteFields';
+import { useScope } from '../pages/Layout';
 import { Dialog } from '../components/dialog';
 import { useToast } from '../components/toast';
 import {
@@ -57,6 +68,7 @@ export function Schedules({
   canEdit: boolean;
 }) {
   const toast = useToast();
+  const { project: scopeProject } = useScope();
   const list = useResource(
     () => api.schedules(project, flag.key, env),
     `${project}/${flag.key}/${env}`,
@@ -122,17 +134,19 @@ export function Schedules({
       {adding && (
         <ScheduleDialog
           boolean={boolean}
+          policy={policyOf(scopeProject, env)}
+          envName={envName}
           onClose={() => {
             setAdding(false);
           }}
-          onSubmit={async (runAt, kind, percent) => {
+          onSubmit={async (runAt, kind, percent, note) => {
             const on = flag.variants.find((v) => v.value === true)?.key ?? '';
             const off = flag.variants.find((v) => v.value === false)?.key ?? '';
             const change: Schedule['change'] =
               kind === 'rollout'
                 ? { enabled: true, fallthrough: twoWay(on, off, percent) }
                 : { enabled: kind === 'on' };
-            await api.createSchedule(project, flag.key, env, { runAt, change });
+            await api.createSchedule(project, flag.key, env, { runAt, change }, note);
             setAdding(false);
             toast(`Scheduled for ${fullDate(runAt)}.`);
             list.reload();
@@ -189,13 +203,19 @@ export function Schedules({
 
 function ScheduleDialog({
   boolean,
+  policy,
+  envName,
   onClose,
   onSubmit,
 }: {
   boolean: boolean;
+  policy: NotePolicy;
+  envName: string;
   onClose: () => void;
-  onSubmit: (runAt: string, kind: Kind, percent: number) => Promise<void>;
+  onSubmit: (runAt: string, kind: Kind, percent: number, note: ChangeNote) => Promise<void>;
 }) {
+  const [noteDraft, setNoteDraft] = useState<NoteDraft>(EMPTY_NOTE);
+  const [noteErrors, setNoteErrors] = useState<NoteErrors>({});
   const [when, setWhen] = useState(inAnHour());
   const [kind, setKind] = useState<Kind>('on');
   const [percent, setPercent] = useState('50');
@@ -212,12 +232,19 @@ function ScheduleDialog({
     if (kind === 'rollout' && (!Number.isFinite(p) || p < 0 || p > 100))
       next.percent = 'Enter 0 to 100';
     setErrors(next);
-    if (Object.keys(next).length > 0) return;
+    const checked = checkNote(noteDraft, policy, envName);
+    setNoteErrors(checked.ok ? {} : checked.errors);
+    if (Object.keys(next).length > 0 || !checked.ok) return;
     setBusy(true);
     try {
-      await onSubmit(at.toISOString(), kind, p);
+      await onSubmit(at.toISOString(), kind, p, checked.note);
     } catch (err) {
-      setErrors({ form: err instanceof ApiError ? err.message : 'Could not schedule the change.' });
+      const fieldErrors = noteErrorsOf(err instanceof ApiError ? err.issues : []);
+      if (Object.keys(fieldErrors).length > 0) setNoteErrors(fieldErrors);
+      else
+        setErrors({
+          form: err instanceof ApiError ? err.message : 'Could not schedule the change.',
+        });
     } finally {
       setBusy(false);
     }
@@ -278,6 +305,13 @@ function ScheduleDialog({
             )}
           </Field>
         )}
+        <NoteFields
+          value={noteDraft}
+          onChange={setNoteDraft}
+          policy={policy}
+          envName={envName}
+          errors={noteErrors}
+        />
       </form>
     </Dialog>
   );
