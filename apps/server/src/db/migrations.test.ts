@@ -31,6 +31,7 @@ describe('migrations', () => {
       '004_ruleset_change_checksums',
       '005_change_requests',
       '006_segment_change_requests',
+      '007_audit_search',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -65,7 +66,9 @@ describe('migrations', () => {
       SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname`.execute(db);
     expect(indexes.rows.map((r) => r.indexname)).toEqual(
       expect.arrayContaining([
+        'audit_log_actor_idx',
         'audit_log_project_idx',
+        'audit_log_search_idx',
         'audit_log_target_idx',
         'change_request_reviews_request_idx',
         'change_requests_project_idx',
@@ -125,6 +128,23 @@ describe('migrations', () => {
     await expect(insert(false, null, 1)).rejects.toThrow(/change_requests_one_target/);
     await expect(insert(true, null, 0)).rejects.toThrow(/change_requests_base_version_check/);
     await expect(insert(false, 'beta', -1)).rejects.toThrow(/change_requests_base_version_check/);
+  });
+
+  it('index audit text for search and check reasons and links', async () => {
+    const insert = (reason: string | null, link: string | null) =>
+      sql`INSERT INTO audit_log (actor_name, action, target_type, target_key, reason, link)
+        VALUES ('Dana', 'flag.kill_switch', 'flag', 'checkout-v2', ${reason}, ${link})`.execute(db);
+    await insert('Rollback after INC-42 latency', 'https://tickets.example.com/INC-42');
+    const hit = (query: string) =>
+      sql<{ n: number }>`SELECT count(*)::int AS n FROM audit_log
+        WHERE search @@ websearch_to_tsquery('simple', ${query})`.execute(db);
+    for (const q of ['latency', 'checkout', '"checkout v2"', 'dana', '"inc 42"', 'kill switch']) {
+      expect((await hit(q)).rows[0]?.n, q).toBe(1);
+    }
+    expect((await hit('latency -dana')).rows[0]?.n).toBe(0);
+    await expect(insert('', null)).rejects.toThrow(/audit_log_reason_check/);
+    await expect(insert(null, 'ftp://x')).rejects.toThrow(/audit_log_link_check/);
+    await expect(insert('x'.repeat(1001), null)).rejects.toThrow(/audit_log_reason_check/);
   });
 
   it('survives idle connections being cut', async () => {

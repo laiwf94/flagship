@@ -1251,6 +1251,15 @@ input[type='range'] {
   flex: 1 1 280px;
 }
 
+.history-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .history {
   display: grid;
   gap: var(--space-3);

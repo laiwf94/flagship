@@ -639,9 +639,9 @@ describe('audit', () => {
   it('pages through the whole project history', async () => {
     const first = (await viewer.request('GET', `${P}/audit?limit=5`)).json();
     expect(first.entries).toHaveLength(5);
-    expect(first.next).toBe(first.entries[4].id);
-    const second = (await viewer.request('GET', `${P}/audit?limit=5&before=${first.next}`)).json();
-    expect(second.entries[0].id).toBeLessThan(first.next);
+    expect(typeof first.next).toBe('string');
+    const second = (await viewer.request('GET', `${P}/audit?limit=5&cursor=${first.next}`)).json();
+    expect(second.entries[0].id).toBeLessThan(first.entries[4].id);
     const all = (await viewer.request('GET', `${P}/audit?limit=200`)).json();
     expect(all.next).toBeNull();
     for (const e of all.entries) {

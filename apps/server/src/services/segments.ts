@@ -2,7 +2,13 @@ import type { Segment } from '@flagship/core';
 import type { Db } from '../db/database.js';
 import { AppError, notFound } from '../errors.js';
 import { recordAudit } from './audit.js';
-import { requireUnprotected, validateCandidate, versionConflict, type Scope } from './flags.js';
+import {
+  requireNote,
+  requireUnprotected,
+  validateCandidate,
+  versionConflict,
+  type Scope,
+} from './flags.js';
 import { lockEnvironments, recordChange, toSegment, type SegmentRow } from './rulesets.js';
 
 export interface SegmentView {
@@ -195,6 +201,7 @@ async function directWrite(
   return scope.db.transaction().execute(async (trx) => {
     await lockEnvironments(trx, [env.id]);
     await requireUnprotected(trx, env, 'segment changes');
+    await requireNote(trx, env, scope.actor.note);
     return writeSegment(trx, scope, env, key, next, expectedVersion);
   });
 }

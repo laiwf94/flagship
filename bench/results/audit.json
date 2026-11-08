@@ -1,0 +1,143 @@
+{
+  "benchmark": "audit search",
+  "entries": 1000000,
+  "runsPerQuery": 200,
+  "pageSize": 50,
+  "budgetMs": 50,
+  "postgres": "postgres:17-alpine, default settings",
+  "node": "v22.23.4",
+  "seedSeconds": 56.58,
+  "tableSize": "728 MB",
+  "searchIndexSize": "38 MB",
+  "unit": "ms",
+  "results": [
+    {
+      "query": "newest page",
+      "p50": 1.45,
+      "p95": 2.38,
+      "p99": 7.02,
+      "max": 7.97,
+      "meanRows": 50
+    },
+    {
+      "query": "deep page (keyset at 50%)",
+      "p50": 1.13,
+      "p95": 2.51,
+      "p99": 4.85,
+      "max": 4.99,
+      "meanRows": 50
+    },
+    {
+      "query": "flag",
+      "p50": 1.11,
+      "p95": 2.31,
+      "p99": 6.11,
+      "max": 6.45,
+      "meanRows": 50
+    },
+    {
+      "query": "segment",
+      "p50": 0.92,
+      "p95": 1.43,
+      "p99": 2.15,
+      "max": 2.54,
+      "meanRows": 50
+    },
+    {
+      "query": "actor (frequent)",
+      "p50": 0.93,
+      "p95": 1.93,
+      "p99": 8.15,
+      "max": 9.86,
+      "meanRows": 50
+    },
+    {
+      "query": "actor (rare)",
+      "p50": 1.05,
+      "p95": 2.1,
+      "p99": 5.49,
+      "max": 9.24,
+      "meanRows": 50
+    },
+    {
+      "query": "text, rare (ticket number)",
+      "p50": 0.89,
+      "p95": 1.48,
+      "p99": 3.08,
+      "max": 4.14,
+      "meanRows": 1
+    },
+    {
+      "query": "text, common word",
+      "p50": 1.22,
+      "p95": 2.16,
+      "p99": 5.25,
+      "max": 7.23,
+      "meanRows": 50
+    },
+    {
+      "query": "text, two words",
+      "p50": 1.25,
+      "p95": 1.96,
+      "p99": 3.31,
+      "max": 4.34,
+      "meanRows": 50
+    },
+    {
+      "query": "text, phrase",
+      "p50": 1.39,
+      "p95": 2.53,
+      "p99": 3.92,
+      "max": 6.91,
+      "meanRows": 50
+    },
+    {
+      "query": "text, no match",
+      "p50": 0.65,
+      "p95": 0.9,
+      "p99": 1,
+      "max": 1.18,
+      "meanRows": 0
+    },
+    {
+      "query": "dates, one day",
+      "p50": 0.9,
+      "p95": 1.25,
+      "p99": 5.75,
+      "max": 8.13,
+      "meanRows": 50
+    },
+    {
+      "query": "dates, 30 days a year ago",
+      "p50": 0.85,
+      "p95": 1.32,
+      "p99": 2.56,
+      "max": 9.11,
+      "meanRows": 50
+    },
+    {
+      "query": "flag + 90 days",
+      "p50": 0.9,
+      "p95": 1.42,
+      "p99": 3.97,
+      "max": 4.5,
+      "meanRows": 50
+    },
+    {
+      "query": "actor + text",
+      "p50": 1.35,
+      "p95": 2.81,
+      "p99": 6.21,
+      "max": 6.44,
+      "meanRows": 50
+    },
+    {
+      "query": "text + one week",
+      "p50": 1.22,
+      "p95": 1.85,
+      "p99": 2,
+      "max": 2.13,
+      "meanRows": 50
+    }
+  ]
+}

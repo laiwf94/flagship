@@ -33,6 +33,7 @@ const ACTIONS: Record<string, string> = {
   'project.create': 'created project',
   'environment.create': 'created environment',
   'environment.approvals': 'changed the approvals needed in',
+  'environment.change_notes': 'changed the reasons and links needed in',
   'api_key.create': 'created SDK key',
   'api_key.revoke': 'revoked SDK key',
 };
@@ -43,6 +44,8 @@ export function describeAction(e: AuditEntry): string {
 
 function Entry({ entry }: { entry: AuditEntry }) {
   const [open, setOpen] = useState(false);
+  const reason = entry.reason ?? null;
+  const link = entry.link ?? null;
   return (
     <li className="history-entry">
       <div className="history-line">
@@ -68,6 +71,16 @@ function Entry({ entry }: { entry: AuditEntry }) {
           </Button>
         )}
       </div>
+      {(reason !== null || link !== null) && (
+        <p className="history-note small">
+          {reason !== null && <span>{reason}</span>}
+          {link !== null && (
+            <a href={link} target="_blank" rel="noreferrer noopener">
+              {link}
+            </a>
+          )}
+        </p>
+      )}
       {open && <DiffView entries={entry.diff} />}
     </li>
   );
@@ -93,7 +106,7 @@ export function History({
     `${project}/${flag ?? ''}/${segment ?? ''}`,
   );
   const [more, setMore] = useState<AuditEntry[]>([]);
-  const [next, setNext] = useState<number | null | undefined>(undefined);
+  const [next, setNext] = useState<string | null | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
 
   if (first.error !== undefined)
@@ -125,7 +138,7 @@ export function History({
                 .audit(project, {
                   ...(flag === undefined ? {} : { flag }),
                   ...(segment === undefined ? {} : { segment }),
-                  before: cursor,
+                  cursor,
                   limit: 25,
                 })
                 .then((page) => {

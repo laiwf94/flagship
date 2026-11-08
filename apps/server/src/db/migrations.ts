@@ -234,4 +234,38 @@ export const migrations: Record<string, Migration> = {
     `CREATE INDEX change_requests_segment_idx ON change_requests (environment_id, segment_key)
       WHERE status = 'open' AND segment_key IS NOT NULL`,
   ]),
+  // Audit entries carry the reason and ticket link the author gave, and are
+  // searchable by text, actor and date. `search` is a generated tsvector over
+  // the words people search for (action, target, actor, reason, link) with
+  // the 'simple' configuration, so keys and names match as typed rather than
+  // stemmed. Separators inside keys, actions, tickets and URLs become spaces
+  // first, so "checkout-v2", "kill_switch" and "INC-42" index as words the
+  // search query (normalized the same way) can find as phrases. The listing pages by (created_at, id), newest first, so each
+  // filter has an index in that order and a date range is an index range.
+  // An environment can require a reason, a link or both on every change, and
+  // a change request keeps the ones it was proposed with for its apply.
+  '007_audit_search': statements([
+    `ALTER TABLE audit_log
+      ADD COLUMN reason text CHECK (length(reason) BETWEEN 1 AND 1000),
+      ADD COLUMN link text CHECK (length(link) <= 2000 AND link ~ '^https?://')`,
+    `ALTER TABLE audit_log ADD COLUMN search tsvector GENERATED ALWAYS AS (
+      to_tsvector('simple', translate(
+        action || ' ' || target_key || ' ' || actor_name || ' ' ||
+          coalesce(reason, '') || ' ' || coalesce(link, ''),
+        '.-_/:@#?&=+~%', '             '))
+    ) STORED`,
+    `CREATE INDEX audit_log_search_idx ON audit_log USING gin (search)`,
+    `DROP INDEX audit_log_project_idx`,
+    `DROP INDEX audit_log_target_idx`,
+    `CREATE INDEX audit_log_project_idx ON audit_log (project_id, created_at DESC, id DESC)`,
+    `CREATE INDEX audit_log_target_idx
+      ON audit_log (project_id, target_type, target_key, created_at DESC, id DESC)`,
+    `CREATE INDEX audit_log_actor_idx ON audit_log (project_id, actor_name, created_at DESC, id DESC)`,
+    `ALTER TABLE environments
+      ADD COLUMN require_reason boolean NOT NULL DEFAULT false,
+      ADD COLUMN require_link boolean NOT NULL DEFAULT false`,
+    `ALTER TABLE change_requests
+      ADD COLUMN reason text CHECK (length(reason) BETWEEN 1 AND 1000),
+      ADD COLUMN link text CHECK (length(link) <= 2000 AND link ~ '^https?://')`,
+  ]),
 };

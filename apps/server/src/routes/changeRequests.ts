@@ -17,6 +17,7 @@ import {
 import type { Scope } from '../services/flags.js';
 import { getEnvironment, getProject } from '../services/projects.js';
 import { segmentBody } from './flags.js';
+import { actorOf } from './note.js';
 
 const text = z.string().max(4000);
 const revision = z.strictObject({ revision: z.int().min(1) });
@@ -65,11 +66,10 @@ const segmentParams = z.object({
 
 export function changeRequestRoutes(ctx: Context) {
   const scope = async (request: FastifyRequest, projectKey: string): Promise<Scope> => {
-    const user = currentUser(request);
     return {
       db: ctx.db,
       project: await getProject(ctx.db, projectKey),
-      actor: { id: user.id, name: user.name },
+      actor: actorOf(request),
       retention: ctx.config.changeRetention,
     };
   };

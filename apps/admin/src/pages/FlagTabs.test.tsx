@@ -95,17 +95,21 @@ describe('flag tabs', () => {
       ...base(),
       'GET /api/projects/default/flags/banner': flag(),
       'GET /api/projects/default/audit': (_b: unknown, url: URL) =>
-        url.searchParams.get('before') === null
+        url.searchParams.get('cursor') === null
           ? {
               entries: [
                 entry(1, 'flag.config.update', [
                   { path: 'fallthrough.variant', op: 'changed', before: 'a', after: 'b' },
                 ]),
-                entry(2, 'flag.kill_switch', [
-                  { path: 'enabled', op: 'changed', before: false, after: true },
-                ]),
+                {
+                  ...entry(2, 'flag.kill_switch', [
+                    { path: 'enabled', op: 'changed', before: false, after: true },
+                  ]),
+                  reason: 'Checkout errors after deploy',
+                  link: 'https://tickets.example.com/INC-7',
+                },
               ],
-              next: 2,
+              next: 'c2',
             }
           : { entries: [entry(3, 'flag.create')], next: null },
     });
@@ -120,6 +124,12 @@ describe('flag tabs', () => {
     expect(within(list).getByLabelText('before').textContent).toBe('"a"');
     await user.click(toggle);
     expect(within(list).queryByText('Default rule › variant')).toBeNull();
+    expect(within(list).getByText('Checkout errors after deploy')).toBeTruthy();
+    expect(
+      within(list)
+        .getByRole('link', { name: 'https://tickets.example.com/INC-7' })
+        .getAttribute('rel'),
+    ).toContain('noopener');
     await user.click(screen.getByRole('button', { name: 'Show older changes' }));
     expect(await within(list).findByText(/created flag/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Show older changes' })).toBeNull();

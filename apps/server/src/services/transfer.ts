@@ -101,6 +101,9 @@ const projectDoc = z.strictObject({ key: keySchema, name });
 const environmentDoc = projectDoc.extend({
   /** Approvals a change request needs; left out when the environment is unprotected. */
   requiredApprovals: z.int().min(0).max(MAX_REQUIRED_APPROVALS).optional(),
+  /** Whether every change needs a reason or a ticket link; left out when not. */
+  requireReason: z.boolean().optional(),
+  requireLink: z.boolean().optional(),
 });
 
 export const exportDocumentSchema = z.strictObject({
@@ -241,6 +244,8 @@ interface EnvRef {
   key: string;
   name: string;
   required_approvals: number;
+  require_reason: boolean;
+  require_link: boolean;
 }
 
 /**
@@ -268,7 +273,7 @@ export async function* exportProject(
     if (project === undefined) throw notFound(`project "${projectKey}"`);
     const envs: EnvRef[] = await trx
       .selectFrom('environments')
-      .select(['id', 'key', 'name', 'required_approvals'])
+      .select(['id', 'key', 'name', 'required_approvals', 'require_reason', 'require_link'])
       .where('project_id', '=', project.id)
       .orderBy('created_at')
       .orderBy('key')
@@ -287,6 +292,8 @@ export async function* exportProject(
           key: e.key,
           name: e.name,
           ...(e.required_approvals > 0 ? { requiredApprovals: e.required_approvals } : {}),
+          ...(e.require_reason ? { requireReason: true } : {}),
+          ...(e.require_link ? { requireLink: true } : {}),
         })),
         1,
       )},\n` +
@@ -565,6 +572,8 @@ export async function importProject(
             key: env.key,
             name: env.name,
             required_approvals: env.requiredApprovals ?? 0,
+            require_reason: env.requireReason ?? false,
+            require_link: env.requireLink ?? false,
           })
           .returning('id')
           .executeTakeFirstOrThrow();

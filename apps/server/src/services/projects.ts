@@ -11,6 +11,10 @@ export interface EnvironmentView {
 export interface EnvironmentSettings extends EnvironmentView {
   /** Approvals a change request needs; above zero, targeting changes only go through one. */
   requiredApprovals: number;
+  /** Every change here must give a reason. */
+  requireReason: boolean;
+  /** Every change here must give a ticket link. */
+  requireLink: boolean;
 }
 
 export interface ProjectView {
@@ -31,6 +35,8 @@ export interface EnvironmentRow {
   name: string;
   project_id: string;
 }
+
+const UNPROTECTED = { requiredApprovals: 0, requireReason: false, requireLink: false };
 
 export const DEFAULT_ENVIRONMENTS: EnvironmentView[] = [
   { key: 'development', name: 'Development' },
@@ -74,7 +80,7 @@ export async function listProjects(db: Db): Promise<ProjectView[]> {
     .execute();
   const envs = await db
     .selectFrom('environments')
-    .select(['project_id', 'key', 'name', 'required_approvals'])
+    .select(['project_id', 'key', 'name', 'required_approvals', 'require_reason', 'require_link'])
     .orderBy('created_at')
     .orderBy('key')
     .execute();
@@ -83,7 +89,13 @@ export async function listProjects(db: Db): Promise<ProjectView[]> {
     name: p.name,
     environments: envs
       .filter((e) => e.project_id === p.id)
-      .map((e) => ({ key: e.key, name: e.name, requiredApprovals: e.required_approvals })),
+      .map((e) => ({
+        key: e.key,
+        name: e.name,
+        requiredApprovals: e.required_approvals,
+        requireReason: e.require_reason,
+        requireLink: e.require_link,
+      })),
   }));
 }
 
@@ -134,7 +146,7 @@ export async function createProject(
       const view = {
         key: input.key,
         name: input.name,
-        environments: environments.map((e) => ({ ...e, requiredApprovals: 0 })),
+        environments: environments.map((e) => ({ ...e, ...UNPROTECTED })),
       };
       await recordAudit(trx, {
         projectId: project.id,
@@ -172,7 +184,7 @@ export async function createEnvironment(
         targetKey: env.key,
         after: env,
       });
-      return { ...env, requiredApprovals: 0 };
+      return { ...env, ...UNPROTECTED };
     });
   } catch (err) {
     if (isUniqueViolation(err))
@@ -196,7 +208,7 @@ export async function setRequiredApprovals(
   return db.transaction().execute(async (trx) => {
     const before = await trx
       .selectFrom('environments')
-      .select(['key', 'name', 'required_approvals'])
+      .select(['key', 'name', 'required_approvals', 'require_reason', 'require_link'])
       .where('id', '=', env.id)
       .forUpdate()
       .executeTakeFirstOrThrow();
@@ -215,7 +227,55 @@ export async function setRequiredApprovals(
       before: { requiredApprovals: before.required_approvals },
       after: { requiredApprovals },
     });
-    return { key: before.key, name: before.name, requiredApprovals };
+    return {
+      key: before.key,
+      name: before.name,
+      requiredApprovals,
+      requireReason: before.require_reason,
+      requireLink: before.require_link,
+    };
+  });
+}
+
+/**
+ * Sets whether every change in an environment must give a reason, a ticket
+ * link or both. Takes the environment row lock like the approvals setting,
+ * so a write already checking the old setting finishes first.
+ */
+export async function setChangeNotes(
+  db: Db,
+  env: { id: string; projectId: string; key: string },
+  settings: { requireReason: boolean; requireLink: boolean },
+  actor: Actor,
+): Promise<EnvironmentSettings> {
+  return db.transaction().execute(async (trx) => {
+    const before = await trx
+      .selectFrom('environments')
+      .select(['key', 'name', 'required_approvals', 'require_reason', 'require_link'])
+      .where('id', '=', env.id)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    await trx
+      .updateTable('environments')
+      .set({ require_reason: settings.requireReason, require_link: settings.requireLink })
+      .where('id', '=', env.id)
+      .execute();
+    await recordAudit(trx, {
+      projectId: env.projectId,
+      environmentId: env.id,
+      actor,
+      action: 'environment.change_notes',
+      targetType: 'environment',
+      targetKey: env.key,
+      before: { requireReason: before.require_reason, requireLink: before.require_link },
+      after: settings,
+    });
+    return {
+      key: before.key,
+      name: before.name,
+      requiredApprovals: before.required_approvals,
+      ...settings,
+    };
   });
 }
 

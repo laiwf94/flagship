@@ -432,6 +432,47 @@ Every step is in the target's audit history (`flag.change_request.open` or
 `segment.change_request.open`, then `.approve`, `.request_changes`, `.apply`, `.rebase`,
 `.close`), and the apply entry holds the targeting or segment before and after like any edit.
 
+## Reasons and audit search
+
+Every write can say why. Two request headers carry it, so no request body changes shape and a
+`DELETE` can carry them too: `Flagship-Reason` (percent-encoded UTF-8, 1 to 1,000 characters
+after trimming) and `Flagship-Link` (an `http` or `https` URL of at most 2,000 characters, such
+as a ticket or incident). Malformed values are refused with `400` and a field path such as
+`header.flagship-reason`, before anything changes. Both go on the change's audit entry.
+
+An admin can make them mandatory per environment (`PUT .../environments/:env/change-notes`,
+`{"requireReason": true, "requireLink": false}`); the setting is in the project listing and
+in exports. Then targeting edits, the kill switch, segment writes and new scheduled changes
+there without them are refused with `400`, naming what is missing. A change request's title
+stands in for its reason, so only a required link has to come with the proposal. The request
+keeps the reason and link it was proposed with, and its apply is recorded with them (the
+title when no reason was given), not with whatever the person pressing Apply sent.
+Project-level changes (flag names, archiving) have no environment and never require one.
+
+`GET /api/projects/:p/audit` searches the log, newest first:
+
+| Parameter         | Matches                                                                 |
+| ----------------- | ----------------------------------------------------------------------- |
+| `flag`, `segment` | one target (not both)                                                   |
+| `actor`           | the exact actor name                                                    |
+| `q`               | words in the action, target, actor, reason and link (web-search syntax) |
+| `from`, `to`      | entry time, `from` inclusive and `to` exclusive (ISO 8601 with offset)  |
+| `cursor`, `limit` | the `next` value of the previous page; 1–200 entries (50)               |
+
+Text search uses a generated `tsvector` column with a GIN index and the `simple`
+configuration, so keys and names match as typed and nothing is stemmed. Separators inside
+words (`.-_/:@#?&=+~%`) become spaces before indexing, and the query is rewritten the same
+way with each such word made a phrase: `INC-42` finds "inc 42" in that order, and
+`kill_switch` finds `flag.kill_switch`. `"quoted phrases"`, `-word` and `or` work as in
+`websearch_to_tsquery`.
+
+Pages are keyset pages on `(created_at, id)`: the cursor is the last entry's
+microsecond-precision time and id, so a deep page costs what the first does and entries with
+the same timestamp are neither skipped nor repeated. The project, target and actor filters
+each have a B-tree index in that order, so a date range is an index range and the first 50
+matches end the scan. The response asks for one entry more than the page to tell whether
+`next` is null.
+
 ## Scheduled changes
 
 A scheduled change sets `enabled`, the default rule or the rule list of one flag in one
@@ -659,6 +700,27 @@ transaction is included) to each stream receiving the patch:
 | 10,000  | 53.8 ms | 78.0 ms | 81.3 ms |
 
 Client and server share one machine, so these numbers include the client threads' own parsing.
+
+`pnpm bench:audit [--entries N] [--runs N] [--budget MS] [--out FILE]` seeds one project
+with 1,000,000 audit entries over 400 days in a stock `postgres:17-alpine` (2,000 flags, 200
+segments, 50 actors with a skewed share of changes, a reason on one entry in three and a link
+on one in ten), then times 200 runs of `searchAudit`, the function behind the route, per query
+with a 50-entry page and its diffs. It writes `bench/results/audit.json` and exits 1 if any
+p95 reaches the budget (50 ms). On a 4-vCPU Xeon with Node 22 (table 728 MB, search index
+38 MB), in ms:
+
+| Query                                | p50         | p95         | p99         |
+| ------------------------------------ | ----------- | ----------- | ----------- |
+| newest page                          | 1.45        | 2.38        | 7.02        |
+| deep page (keyset cursor at 500,000) | 1.13        | 2.51        | 4.85        |
+| one flag                             | 1.11        | 2.31        | 6.11        |
+| one actor (frequent / rare)          | 0.93 / 1.05 | 1.93 / 2.10 | 8.15 / 5.49 |
+| text: unique ticket number           | 0.89        | 1.48        | 3.08        |
+| text: common word / phrase           | 1.22 / 1.39 | 2.16 / 2.53 | 5.25 / 3.92 |
+| text: no match                       | 0.65        | 0.90        | 1.00        |
+| one day / 30 days a year ago         | 0.90 / 0.85 | 1.25 / 1.32 | 5.75 / 2.56 |
+| flag in the last 90 days             | 0.90        | 1.42        | 3.97        |
+| actor and word / word in one week    | 1.35 / 1.22 | 2.81 / 1.85 | 6.21 / 2.00 |
 
 `pnpm bench:faults [--rounds N] [--out FILE]` runs `apps/server/test/faults` with N rounds
 per fault (10) and writes a JSON report (`bench/results/faults.json` by default) when every

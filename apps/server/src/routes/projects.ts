@@ -2,7 +2,6 @@ import { Readable } from 'node:stream';
 import { keySchema } from '@flagship/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { currentUser } from '../auth/guard.js';
 import type { Context } from '../context.js';
 import { parse } from '../errors.js';
 import { createApiKey, listApiKeys, revokeApiKey } from '../services/apikeys.js';
@@ -12,9 +11,11 @@ import {
   getEnvironment,
   getProject,
   listProjects,
+  setChangeNotes,
   setRequiredApprovals,
 } from '../services/projects.js';
 import { exportProject, importProject, MAX_REQUIRED_APPROVALS } from '../services/transfer.js';
+import { actorOf } from './note.js';
 
 const name = z.string().trim().min(1).max(100);
 const envInput = z.strictObject({ key: keySchema, name });
@@ -26,6 +27,10 @@ const projectInput = z.strictObject({
 const importQuery = z.strictObject({ key: keySchema.optional(), name: name.optional() });
 const approvalsInput = z.strictObject({
   requiredApprovals: z.int().min(0).max(MAX_REQUIRED_APPROVALS),
+});
+const changeNotesInput = z.strictObject({
+  requireReason: z.boolean(),
+  requireLink: z.boolean(),
 });
 const keyInput = z.strictObject({ kind: z.enum(['server', 'client']), name });
 
@@ -44,7 +49,7 @@ export function projectRoutes(ctx: Context) {
     api.get('/projects', async () => ({ projects: await listProjects(ctx.db) }));
 
     api.post('/projects', { config: { role: 'admin' } }, async (request, reply) => {
-      const user = currentUser(request);
+      const user = actorOf(request);
       const body = parse(projectInput, request.body, 'project');
       return reply.status(201).send(await createProject(ctx.db, body, user));
     });
@@ -75,7 +80,7 @@ export function projectRoutes(ctx: Context) {
       '/projects/import',
       { config: { role: 'admin' }, bodyLimit: ctx.config.importMaxBytes },
       async (request, reply) => {
-        const user = currentUser(request);
+        const user = actorOf(request);
         const as = parse(importQuery, request.query, 'query');
         const summary = await importProject(ctx.db, request.body, user, as);
         return reply.status(201).send(summary);
@@ -86,7 +91,7 @@ export function projectRoutes(ctx: Context) {
       '/projects/:project/environments',
       { config: { role: 'admin' } },
       async (request, reply) => {
-        const user = currentUser(request);
+        const user = actorOf(request);
         const { project } = parse(projectParams, request.params, 'path');
         const body = parse(envInput, request.body, 'environment');
         return reply.status(201).send(await createEnvironment(ctx.db, project, body, user));
@@ -97,10 +102,21 @@ export function projectRoutes(ctx: Context) {
       '/projects/:project/environments/:environment/approvals',
       { config: { role: 'admin' } },
       async (request) => {
-        const user = currentUser(request);
+        const user = actorOf(request);
         const env = await environment(request.params);
         const body = parse(approvalsInput, request.body, 'approval settings');
         return setRequiredApprovals(ctx.db, env, body.requiredApprovals, user);
+      },
+    );
+
+    api.put(
+      '/projects/:project/environments/:environment/change-notes',
+      { config: { role: 'admin' } },
+      async (request) => {
+        const user = actorOf(request);
+        const env = await environment(request.params);
+        const body = parse(changeNotesInput, request.body, 'change note settings');
+        return setChangeNotes(ctx.db, env, body, user);
       },
     );
 
@@ -116,7 +132,7 @@ export function projectRoutes(ctx: Context) {
       '/projects/:project/environments/:environment/api-keys',
       { config: { role: 'admin' } },
       async (request, reply) => {
-        const user = currentUser(request);
+        const user = actorOf(request);
         const env = await environment(request.params);
         const body = parse(keyInput, request.body, 'API key');
         return reply.status(201).send(await createApiKey(ctx.db, env, body, user));
@@ -127,7 +143,7 @@ export function projectRoutes(ctx: Context) {
       '/projects/:project/environments/:environment/api-keys/:id',
       { config: { role: 'admin' } },
       async (request, reply) => {
-        const user = currentUser(request);
+        const user = actorOf(request);
         const env = await environment(request.params);
         const { id } = parse(z.object({ id: z.uuid() }), request.params, 'path');
         await revokeApiKey(ctx.db, env, id, user);

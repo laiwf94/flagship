@@ -44,6 +44,10 @@ export interface EnvironmentsTable {
   ruleset_version: Generated<number>;
   /** Approvals a change request needs here; above zero, direct targeting edits are refused. */
   required_approvals: Generated<number>;
+  /** Every change here must give a reason. */
+  require_reason: Generated<boolean>;
+  /** Every change here must give a ticket link. */
+  require_link: Generated<boolean>;
   created_at: CreatedAt;
 }
 
@@ -114,6 +118,12 @@ export interface AuditLogTable {
   target_key: string;
   before: Json<unknown> | null;
   after: Json<unknown> | null;
+  /** Why the change was made, as its author gave it. */
+  reason: string | null;
+  /** A ticket or incident link the author gave. */
+  link: string | null;
+  /** Generated from action, target, actor, reason and link; never written. */
+  search: ColumnType<string, never, never>;
   created_at: CreatedAt;
 }
 
@@ -184,6 +194,9 @@ export interface ChangeRequestsTable {
   updated_at: UpdatedAt;
   finished_at: Date | null;
   finished_by_name: string | null;
+  /** The reason the author proposed it with; the apply is recorded with it. */
+  reason: string | null;
+  link: string | null;
 }
 
 export interface ChangeRequestReviewsTable {

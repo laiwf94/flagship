@@ -3,9 +3,10 @@ import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
 import type { ChangeRequestStatus, ReviewDecision } from '../db/schema.js';
 import { AppError, notFound } from '../errors.js';
-import { recordAudit } from './audit.js';
+import { recordAudit, type ChangeNote } from './audit.js';
 import {
   configView,
+  requireNote,
   validateCandidate,
   versionConflict,
   writeConfig,
@@ -64,6 +65,10 @@ export interface ChangeRequestView {
   segment: string | null;
   environment: string;
   title: string;
+  /** The reason it was proposed with, when one was given beyond the title. */
+  reason: string | null;
+  /** The ticket link it was proposed with. */
+  link: string | null;
   description: string;
   status: ChangeRequestStatus;
   /** Goes up when the proposal changes; reviews count for the revision they saw. */
@@ -122,6 +127,8 @@ interface RequestRow {
   updated_at: Date;
   finished_at: Date | null;
   finished_by_name: string | null;
+  reason: string | null;
+  link: string | null;
   flag_key: string | null;
   environment_key: string;
   required_approvals: number;
@@ -158,6 +165,26 @@ function describeTarget(kind: TargetKind, key: string, environment: string): str
 
 function failedPrecondition(message: string, details?: unknown): AppError {
   return new AppError('failed_precondition', message, details);
+}
+
+/**
+ * A request's title stands in for its reason, so an environment that
+ * requires reasons asks a request only for the link it may also require.
+ */
+async function requireProposalNote(
+  trx: Db,
+  env: { id: string; key: string },
+  scope: Scope,
+  title: string,
+): Promise<ChangeNote> {
+  const note = scope.actor.note;
+  await requireNote(trx, env, { reason: note?.reason ?? title, link: note?.link ?? null });
+  return { reason: note?.reason ?? null, link: note?.link ?? null };
+}
+
+/** What the apply of a request is recorded with: its reason, or else its title, and its link. */
+function noteOf(r: RequestRow): ChangeNote {
+  return { reason: r.reason ?? r.title, link: r.link };
 }
 
 /** Approvals a request needs: the environment's setting, and at least one. */
@@ -362,6 +389,8 @@ function toView(r: RequestRow, reviews: ReviewRow[], live: LiveState | null): Ch
     environment: r.environment_key,
     title: r.title,
     description: r.description,
+    reason: r.reason,
+    link: r.link,
     status: r.status,
     revision: r.revision,
     author: r.author_name,
@@ -605,6 +634,7 @@ export async function proposeChange(
       );
     }
     await validateProposal(trx, scope.project.id, env.id, flag.id, input.config, live.version + 1);
+    const note = await requireProposalNote(trx, env, scope, input.title);
     const row = await trx
       .insertInto('change_requests')
       .values({
@@ -618,6 +648,8 @@ export async function proposeChange(
         proposed: JSON.stringify(input.config),
         author_id: scope.actor.id,
         author_name: scope.actor.name,
+        reason: note.reason,
+        link: note.link,
       })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -690,6 +722,7 @@ export async function proposeSegmentChange(
       );
     }
     await validateSegmentProposal(trx, env.id, key, input.segment, live.version + 1);
+    const note = await requireProposalNote(trx, env, scope, input.title);
     const row = await trx
       .insertInto('change_requests')
       .values({
@@ -704,6 +737,8 @@ export async function proposeSegmentChange(
         proposed: JSON.stringify(input.segment),
         author_id: scope.actor.id,
         author_name: scope.actor.name,
+        reason: note.reason,
+        link: note.link,
       })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -830,6 +865,8 @@ export async function applyChange(
     }
     const kind = kindOf(r);
     const env = { id: r.environment_id, key: r.environment_key };
+    // The change is recorded with the reason it was proposed and approved with.
+    const applier: Scope = { ...scope, actor: { ...scope.actor, note: noteOf(r) } };
     const stale = async (): Promise<AppError> => {
       const state = liveState(
         kind,
@@ -852,7 +889,7 @@ export async function applyChange(
       if (isStale(kind, r.base as Proposal, r.base_version, live)) throw await stale();
       await writeSegment(
         trx,
-        scope,
+        applier,
         env,
         r.segment_key,
         r.proposed as SegmentContent | null,
@@ -864,7 +901,7 @@ export async function applyChange(
       try {
         await writeConfig(
           trx,
-          scope,
+          applier,
           env,
           r.flag_key as string,
           () => proposed,

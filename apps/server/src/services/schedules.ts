@@ -7,6 +7,7 @@ import { AppError, notFound } from '../errors.js';
 import type { Metrics } from '../metrics.js';
 import { recordAudit, type Actor } from './audit.js';
 import {
+  requireNote,
   requireUnprotected,
   validateCandidate,
   writeConfig,
@@ -146,6 +147,7 @@ export async function createSchedule(
   return scope.db.transaction().execute(async (trx) => {
     await lockEnvironments(trx, [env.id]);
     await requireUnprotected(trx, env, 'scheduled changes');
+    await requireNote(trx, env, scope.actor.note);
     const flag = await flagAndConfig(trx, scope.project.id, env.id, key);
     if (flag.archived_at !== null)
       throw new AppError('invalid_argument', `flag "${key}" is archived`);

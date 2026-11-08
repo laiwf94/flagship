@@ -18,6 +18,10 @@ export interface Project {
     name: string;
     /** Approvals a targeting or segment change needs here; 0 means unprotected. */
     requiredApprovals?: number;
+    /** Every change here must give a reason. */
+    requireReason?: boolean;
+    /** Every change here must give a ticket link. */
+    requireLink?: boolean;
   }[];
 }
 
@@ -80,6 +84,10 @@ export interface AuditEntry {
   targetType: string;
   targetKey: string;
   environment: string | null;
+  /** Why the change was made, as its author gave it. */
+  reason?: string | null;
+  /** A ticket or incident link the author gave. */
+  link?: string | null;
   diff: DiffEntry[];
 }
 
@@ -361,11 +369,20 @@ export const api = {
     ),
   audit: (
     project: string,
-    params: { flag?: string; segment?: string; before?: number; limit?: number },
+    params: {
+      flag?: string;
+      segment?: string;
+      actor?: string;
+      q?: string;
+      from?: string;
+      to?: string;
+      cursor?: string;
+      limit?: number;
+    },
   ) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) q.set(k, String(v));
-    return request<{ entries: AuditEntry[]; next: number | null }>(
+    return request<{ entries: AuditEntry[]; next: string | null }>(
       'GET',
       `/api/projects/${enc(project)}/audit?${q.toString()}`,
     );

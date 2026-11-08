@@ -2,7 +2,7 @@ import { validateRuleset, type Flag, type Ruleset, type Variant } from '@flagshi
 import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
 import { AppError, notFound } from '../errors.js';
-import { recordAudit, type Actor } from './audit.js';
+import { recordAudit, type Actor, type ChangeNote } from './audit.js';
 import type { ProjectRow } from './projects.js';
 import {
   loadRuleset,
@@ -509,6 +509,37 @@ export async function requireUnprotected(
   }
 }
 
+/**
+ * Refuses a change without the reason or ticket link its environment
+ * requires. Change requests pass their title as the reason, so only a link
+ * can be missing there.
+ */
+export async function requireNote(
+  trx: Db,
+  env: { id: string; key: string },
+  note: ChangeNote | undefined,
+): Promise<void> {
+  const row = await trx
+    .selectFrom('environments')
+    .select(['require_reason', 'require_link'])
+    .where('id', '=', env.id)
+    .executeTakeFirstOrThrow();
+  const needReason = row.require_reason && (note?.reason ?? null) === null;
+  const needLink = row.require_link && (note?.link ?? null) === null;
+  if (!needReason && !needLink) return;
+  const issues = [
+    ...(needReason ? [{ path: 'header.flagship-reason', message: `required in ${env.key}` }] : []),
+    ...(needLink ? [{ path: 'header.flagship-link', message: `required in ${env.key}` }] : []),
+  ];
+  const what =
+    needReason && needLink
+      ? 'a reason and a ticket link'
+      : needReason
+        ? 'a reason'
+        : 'a ticket link';
+  throw new AppError('invalid_argument', `changes in ${env.key} need ${what}`, issues);
+}
+
 export async function updateConfig(
   scope: Scope,
   env: { id: string; key: string },
@@ -519,6 +550,7 @@ export async function updateConfig(
   await scope.db.transaction().execute(async (trx) => {
     await lockEnvironments(trx, [env.id]);
     await requireUnprotected(trx, env, 'targeting changes');
+    await requireNote(trx, env, scope.actor.note);
     await writeConfig(trx, scope, env, key, () => config, expectedVersion, 'flag.config.update');
   });
   return getFlag(scope.db, scope.project.id, key);
@@ -537,11 +569,18 @@ export async function setKillSwitch(
   key: string,
   enabled: boolean,
 ): Promise<FlagView> {
-  await scope.db
-    .transaction()
-    .execute((trx) =>
-      writeConfig(trx, scope, env, key, (c) => ({ ...c, enabled }), undefined, 'flag.kill_switch'),
+  await scope.db.transaction().execute(async (trx) => {
+    await requireNote(trx, env, scope.actor.note);
+    await writeConfig(
+      trx,
+      scope,
+      env,
+      key,
+      (c) => ({ ...c, enabled }),
+      undefined,
+      'flag.kill_switch',
     );
+  });
   return getFlag(scope.db, scope.project.id, key);
 }
 

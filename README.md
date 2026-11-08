@@ -120,8 +120,9 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 
 ## HTTP API
 
-Admin routes use the session cookie and need `X-CSRF-Token` on writes. SDK routes take
-`Authorization: Bearer <key>`.
+Admin routes use the session cookie and need `X-CSRF-Token` on writes. Any write can carry
+`Flagship-Reason` (percent-encoded) and `Flagship-Link` headers, recorded on its audit entry.
+SDK routes take `Authorization: Bearer <key>`.
 
 | Endpoint                                                                    | Purpose                                                       |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -141,7 +142,8 @@ Admin routes use the session cookie and need `X-CSRF-Token` on writes. SDK route
 | `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                            |
 | `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                     |
 | `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI             |
-| `GET /api/projects/:p/audit?flag=&segment=&before=`                         | change history with diffs                                     |
+| `GET /api/projects/:p/audit?flag=&segment=&actor=&q=&from=&to=&cursor=`     | change history with diffs, searchable, keyset-paged           |
+| `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)   |
 | `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)               |
 | `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`     |
 | `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only) |
@@ -206,6 +208,10 @@ No evaluation fell back to a default in any round. A lost LISTEN session costs t
 listener's 1 s reconnect delay, and a killed instance the SDK's 0.5–1 s jittered first
 reconnect.
 
+`pnpm bench:audit` seeds 1,000,000 audit entries and times search by flag, actor, text and
+dates: every query's p95 is under 3 ms against a 50 ms budget
+([`bench/results/audit.json`](bench/results/audit.json)).
+
 `pnpm bench` and `pnpm bench:fanout` reproduce the first two tables. `pnpm bench:faults` runs
 the fault suite with 10 rounds per fault and writes recovery times to
 [`bench/results/faults.json`](bench/results/faults.json); a nightly CI job runs it too and
@@ -234,6 +240,6 @@ packages/sdk-browser   browser SDK
 apps/server            Fastify server: admin API, SDK endpoints, streaming hub, scheduler, exposures
 apps/admin             React admin UI
 e2e                    Playwright and axe tests
-bench                  evaluation and fan-out benchmarks
+bench                  evaluation, fan-out, fault and audit search benchmarks
 examples               demo script and a small Node app
 ```

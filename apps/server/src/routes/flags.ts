@@ -10,10 +10,10 @@ import {
 } from '@flagship/core';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { currentUser } from '../auth/guard.js';
 import type { Context } from '../context.js';
+import { actorOf } from './note.js';
 import { parse } from '../errors.js';
-import { listAudit } from '../services/audit.js';
+import { decodeCursor, searchAudit } from '../services/audit.js';
 import { exposureSummary } from '../services/exposures.js';
 import {
   archiveFlag,
@@ -93,12 +93,28 @@ const listQuery = z.object({
   after: keySchema.optional(),
 });
 
-const auditQuery = z.object({
-  flag: keySchema.optional(),
-  segment: keySchema.optional(),
-  before: z.coerce.number().int().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-});
+const auditQuery = z
+  .object({
+    flag: keySchema.optional(),
+    segment: keySchema.optional(),
+    actor: z.string().trim().min(1).max(100).optional(),
+    q: z.string().trim().min(1).max(200).optional(),
+    from: z.iso.datetime({ offset: true }).optional(),
+    to: z.iso.datetime({ offset: true }).optional(),
+    cursor: z.string().max(200).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .refine((v) => v.flag === undefined || v.segment === undefined, {
+    message: 'filter by a flag or a segment, not both',
+    path: ['segment'],
+  })
+  .refine(
+    (v) => v.from === undefined || v.to === undefined || Date.parse(v.from) < Date.parse(v.to),
+    {
+      message: 'must be after from',
+      path: ['to'],
+    },
+  );
 
 const projectParams = z.object({ project: keySchema });
 const flagParams = z.object({ project: keySchema, flag: keySchema });
@@ -113,11 +129,10 @@ const scheduleInput = z.strictObject({
 
 export function flagRoutes(ctx: Context) {
   const scope = async (request: FastifyRequest, projectKey: string): Promise<Scope> => {
-    const user = currentUser(request);
     return {
       db: ctx.db,
       project: await getProject(ctx.db, projectKey),
-      actor: { id: user.id, name: user.name },
+      actor: actorOf(request),
       retention: ctx.config.changeRetention,
     };
   };
@@ -316,13 +331,15 @@ export function flagRoutes(ctx: Context) {
           : q.segment !== undefined
             ? { targetType: 'segment', targetKey: q.segment }
             : {};
-      const entries = await listAudit(ctx.db, p.id, {
+      return searchAudit(ctx.db, p.id, {
         ...target,
-        before: q.before,
+        actor: q.actor,
+        text: q.q,
+        from: q.from === undefined ? undefined : new Date(q.from),
+        to: q.to === undefined ? undefined : new Date(q.to),
+        after: q.cursor === undefined ? undefined : decodeCursor(q.cursor),
         limit: q.limit,
       });
-      const last = entries.at(-1);
-      return { entries, next: entries.length === q.limit && last !== undefined ? last.id : null };
     });
   };
 }

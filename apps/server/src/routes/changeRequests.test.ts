@@ -115,8 +115,20 @@ describe('protected environments', () => {
     await setApprovals('production', 1);
     const projects = (await viewer.request('GET', '/api/projects')).json().projects;
     expect(projects[0].environments).toEqual([
-      { key: 'development', name: 'Development', requiredApprovals: 0 },
-      { key: 'production', name: 'Production', requiredApprovals: 1 },
+      {
+        key: 'development',
+        name: 'Development',
+        requiredApprovals: 0,
+        requireReason: false,
+        requireLink: false,
+      },
+      {
+        key: 'production',
+        name: 'Production',
+        requiredApprovals: 1,
+        requireReason: false,
+        requireLink: false,
+      },
     ]);
     const audit = await t.db
       .selectFrom('audit_log')
@@ -597,6 +609,8 @@ describe('change requests', () => {
       key: 'production',
       name: 'Production',
       requiredApprovals: 1,
+      requireReason: false,
+      requireLink: false,
     });
   });
 });
