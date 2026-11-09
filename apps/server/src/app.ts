@@ -21,6 +21,7 @@ import { userRoutes } from './routes/users.js';
 import { KeyAuthenticator } from './services/apikeys.js';
 import { RulesetCache } from './services/cache.js';
 import { ExposureQueue, exposureWriter } from './services/exposures.js';
+import { lifecycleCheck } from './services/lifecycle.js';
 import { Scheduler } from './services/schedules.js';
 import { Hub } from './streaming/hub.js';
 import { bootstrapProject } from './services/projects.js';
@@ -204,7 +205,11 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     now,
     intervalMs: config.schedulerIntervalMs,
     retention: config.changeRetention,
-    housekeeping: [{ name: 'login_attempts', everyMs: 60_000, run: (at) => limiter.prune(at) }],
+    housekeeping: [
+      { name: 'login_attempts', everyMs: 60_000, run: (at) => limiter.prune(at) },
+      // Hourly turns, each checking the rows not checked in the last day.
+      { name: 'lifecycle', everyMs: 3_600_000, run: lifecycleCheck({ db, metrics, logger }) },
+    ],
   });
   scheduler.start();
 

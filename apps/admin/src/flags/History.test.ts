@@ -36,6 +36,10 @@ describe('describeAction', () => {
     ]);
   });
 
+  it('names the lifecycle check', () => {
+    expect(describeAction(entry('flag.lifecycle'))).toBe('recorded a lifecycle change of');
+  });
+
   it('names every step of a segment change request', () => {
     const steps = ['open', 'approve', 'request_changes', 'apply', 'rebase', 'close'];
     expect(steps.map((s) => describeAction(entry(`segment.change_request.${s}`)))).toEqual([

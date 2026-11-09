@@ -243,7 +243,7 @@ export interface SchedulerOptions {
 export interface HousekeepingJob {
   name: string;
   everyMs: number;
-  /** Does a bounded amount of work and returns how many rows it removed. */
+  /** Does a bounded amount of work and returns how many rows it removed or changed. */
   run: (now: Date) => Promise<number>;
 }
 

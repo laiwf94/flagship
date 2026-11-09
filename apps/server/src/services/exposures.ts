@@ -142,9 +142,49 @@ export class ExposureQueue {
   }
 }
 
-/** One multi-row upsert per 1,000 rows. */
+/**
+ * The latest hour each (environment, flag) was seen in, in key order so two
+ * instances flushing at once take row locks in the same order.
+ */
+export function lastEvaluations(rows: readonly ExposureRow[]) {
+  const latest = new Map<
+    string,
+    { environment_id: string; flag_key: string; last_evaluated_at: Date }
+  >();
+  for (const r of rows) {
+    const key = `${r.environmentId}\u0000${r.flag}`;
+    const seen = latest.get(key);
+    if (seen === undefined) {
+      latest.set(key, {
+        environment_id: r.environmentId,
+        flag_key: r.flag,
+        last_evaluated_at: r.hour,
+      });
+    } else if (r.hour > seen.last_evaluated_at) {
+      seen.last_evaluated_at = r.hour;
+    }
+  }
+  return [...latest.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, v]) => v);
+}
+
+/**
+ * One multi-row upsert per 1,000 rows, then the last-evaluated time per flag,
+ * which only moves forward (an SDK may report an older window late).
+ */
 export function exposureWriter(db: Db) {
   return async (rows: ExposureRow[]): Promise<void> => {
+    const seen = lastEvaluations(rows);
+    for (let i = 0; i < seen.length; i += 1000) {
+      await db
+        .insertInto('flag_evaluations')
+        .values(seen.slice(i, i + 1000))
+        .onConflict((oc) =>
+          oc.columns(['environment_id', 'flag_key']).doUpdateSet({
+            last_evaluated_at: sql`greatest(flag_evaluations.last_evaluated_at, excluded.last_evaluated_at)`,
+          }),
+        )
+        .execute();
+    }
     for (let i = 0; i < rows.length; i += 1000) {
       const chunk = rows.slice(i, i + 1000);
       await db

@@ -25,6 +25,7 @@ const ACTIONS: Record<string, string> = {
   'flag.change_request.apply': 'applied a change request to',
   'flag.change_request.rebase': 'rebased a change request for',
   'flag.change_request.close': 'closed a change request for',
+  'flag.lifecycle': 'recorded a lifecycle change of',
   'segment.create': 'created segment',
   'segment.update': 'edited segment',
   'segment.delete': 'deleted segment',

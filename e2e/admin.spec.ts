@@ -264,6 +264,16 @@ const PAGES: { name: string; path: string; ready: (page: Page) => Promise<void> 
     ready: async (p) => expect(p.getByText('New checkout')).toBeVisible(),
   },
   {
+    name: 'flag-cleanup',
+    path: `${P}/flags?view=cleanup`,
+    ready: async (p) =>
+      expect(
+        p
+          .getByRole('list', { name: 'Stale flags' })
+          .or(p.getByRole('heading', { name: 'Nothing to clean up' })),
+      ).toBeVisible(),
+  },
+  {
     name: 'flag-targeting',
     path: `${P}/flags/new-checkout`,
     ready: async (p) => expect(p.getByRole('heading', { name: 'Who gets what' })).toBeVisible(),

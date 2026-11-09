@@ -14,6 +14,8 @@ const flag = (key: string, status: string, extra: Record<string, unknown> = {}) 
   updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
   status,
   ruleCount: 0,
+  lifecycle: { stage: 'active', stale: false, reasons: [] },
+  lastEvaluatedAt: null,
   ...extra,
 });
 
@@ -143,6 +145,126 @@ describe('flag list', () => {
       expect(api.calls.at(-1)?.path).toContain('environment=development');
     });
     expect(api.calls.at(-1)?.path).toContain('status=off');
+  });
+});
+
+describe('flag lifecycle', () => {
+  const since = '2030-04-01T09:00:00.000Z';
+
+  it('marks new and stale flags in the list with the reason', async () => {
+    mockApi({
+      'GET /api/session': session,
+      'GET /api/projects': projects,
+      'GET /api/projects/default/flags': {
+        flags: [
+          flag('brand-new', 'off', { lifecycle: { stage: 'new', stale: false, reasons: [] } }),
+          flag('in-use', 'rollout'),
+          flag('done', 'on', {
+            lifecycle: {
+              stage: 'launched',
+              stale: true,
+              reasons: [{ kind: 'launched', variant: 'on', enabled: true, since }],
+            },
+          }),
+        ],
+      },
+    });
+    renderAt('/p/default/production/flags');
+    const list = await screen.findByRole('list', { name: 'Flags' });
+    const rows = within(list).getAllByRole('link');
+    expect(within(rows[0] as HTMLElement).getByText('New')).toBeTruthy();
+    expect(within(rows[1] as HTMLElement).queryByText('Active')).toBeNull();
+    expect(within(rows[2] as HTMLElement).getByText('Launched')).toBeTruthy();
+    expect(rows[2]?.textContent).toContain('Serves on to everyone, unchanged since 2030-04-01');
+    expect(
+      within(rows[2] as HTMLElement)
+        .getByText('Launched')
+        .closest('.lifecycle-chip')
+        ?.getAttribute('title'),
+    ).toBe('Serves on to everyone, unchanged since 2030-04-01');
+  });
+
+  it('lists stale flags with their reasons in the cleanup view', async () => {
+    const api = mockApi({
+      'GET /api/session': session,
+      'GET /api/projects': projects,
+      'GET /api/projects/default/flags': { flags: [flag('in-use', 'on')] },
+      'GET /api/projects/default/environments/production/stale-flags': {
+        staleAfterDays: 30,
+        flags: [
+          {
+            key: 'old-banner',
+            name: 'Old banner',
+            stage: 'inactive',
+            reasons: [
+              { kind: 'unevaluated', lastEvaluatedAt: since, since },
+              { kind: 'launched', variant: 'off', enabled: false, since },
+            ],
+            lastEvaluatedAt: since,
+            targetingChangedAt: since,
+          },
+          {
+            key: 'never-used',
+            name: 'Never used',
+            stage: 'inactive',
+            reasons: [{ kind: 'unevaluated', lastEvaluatedAt: null, since }],
+            lastEvaluatedAt: null,
+            targetingChangedAt: since,
+          },
+        ],
+      },
+      'GET /api/projects/default/environments/development/stale-flags': {
+        staleAfterDays: 30,
+        flags: [],
+      },
+    });
+    const { user } = renderAt('/p/default/production/flags');
+    await screen.findByRole('list', { name: 'Flags' });
+    await user.click(screen.getByRole('button', { name: 'Cleanup' }));
+    const list = await screen.findByRole('list', { name: 'Stale flags' });
+    expect(screen.getByRole('button', { name: 'Cleanup' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(screen.queryByLabelText('Search flags')).toBeNull();
+    const rows = within(list).getAllByRole('link');
+    expect(rows.map((r) => r.getAttribute('href'))).toEqual([
+      '/p/default/production/flags/old-banner',
+      '/p/default/production/flags/never-used',
+    ]);
+    expect(within(rows[0] as HTMLElement).getByText('Not evaluated since 2030-04-01')).toBeTruthy();
+    expect(
+      within(rows[0] as HTMLElement).getByText(
+        'Switched off (serves off to everyone) since 2030-04-01',
+      ),
+    ).toBeTruthy();
+    expect(within(rows[1] as HTMLElement).getByText('Never')).toBeTruthy();
+    expect(screen.getByText(/in Production for 30 days or more/)).toBeTruthy();
+
+    await user.click(screen.getByRole('radio', { name: 'Development' }));
+    expect(await screen.findByText('Nothing to clean up')).toBeTruthy();
+    expect(api.calls.at(-1)?.path).toBe(
+      '/api/projects/default/environments/development/stale-flags',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'All flags' }));
+    expect(await screen.findByRole('list', { name: 'Flags' })).toBeTruthy();
+  });
+
+  it('shows an error with a retry in the cleanup view', async () => {
+    let fail = true;
+    mockApi({
+      'GET /api/session': session,
+      'GET /api/projects': projects,
+      'GET /api/projects/default/environments/production/stale-flags': () =>
+        fail
+          ? apiError(503, 'unavailable', 'database is unreachable')
+          : { staleAfterDays: 30, flags: [] },
+    });
+    const { user } = renderAt('/p/default/production/flags?view=cleanup');
+    expect(await screen.findByText('database is unreachable')).toBeTruthy();
+    fail = false;
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Nothing to clean up')).toBeTruthy();
   });
 });
 

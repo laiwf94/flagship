@@ -1,4 +1,4 @@
-import type { Flag, Segment } from '@flagship/core';
+import type { Flag, LifecycleStage, Segment } from '@flagship/core';
 import type { ColumnType, Generated } from 'kysely';
 
 type CreatedAt = ColumnType<Date, never, never>;
@@ -91,6 +91,9 @@ export interface FlagConfigsTable {
   /** Targeting version in this environment; flags.version covers metadata. */
   version: Generated<number>;
   updated_at: UpdatedAt;
+  /** The stage the nightly lifecycle check last saw; null until it has run. */
+  lifecycle_stage: ColumnType<LifecycleStage | null, never, LifecycleStage>;
+  lifecycle_checked_at: ColumnType<Date | null, never, Date>;
 }
 
 export interface SegmentsTable {
@@ -164,6 +167,13 @@ export interface ExposureCountsTable {
   count: number;
 }
 
+export interface FlagEvaluationsTable {
+  environment_id: string;
+  flag_key: string;
+  /** Start of the latest hour with an exposure, as the SDKs reported it. */
+  last_evaluated_at: Date;
+}
+
 export interface LoginAttemptsTable {
   scope: 'email' | 'ip';
   key: string;
@@ -228,6 +238,7 @@ export interface Database {
   ruleset_changes: RulesetChangesTable;
   scheduled_changes: ScheduledChangesTable;
   exposure_counts: ExposureCountsTable;
+  flag_evaluations: FlagEvaluationsTable;
   login_attempts: LoginAttemptsTable;
   change_requests: ChangeRequestsTable;
   change_request_reviews: ChangeRequestReviewsTable;

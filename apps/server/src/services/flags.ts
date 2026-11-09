@@ -1,8 +1,15 @@
-import { validateRuleset, type Flag, type Ruleset, type Variant } from '@flagship/core';
+import {
+  validateRuleset,
+  type Flag,
+  type Lifecycle,
+  type Ruleset,
+  type Variant,
+} from '@flagship/core';
 import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
 import { AppError, notFound } from '../errors.js';
 import { recordAudit, type Actor, type ChangeNote } from './audit.js';
+import { lifecycleFromRow, lifecycleQuery } from './lifecycle.js';
 import type { ProjectRow } from './projects.js';
 import {
   loadRuleset,
@@ -55,6 +62,10 @@ export interface FlagSummary {
   updatedAt: string;
   status: FlagStatus;
   ruleCount: number;
+  /** Stage in the listed environment, and why it is stale when it is. */
+  lifecycle: Lifecycle;
+  /** Start of the latest hour it was evaluated in the listed environment. */
+  lastEvaluatedAt: string | null;
 }
 
 export interface FlagInput {
@@ -213,10 +224,9 @@ export async function listFlags(
     limit: number;
     after?: string | undefined;
   },
+  now: Date,
 ): Promise<FlagSummary[]> {
-  let query = db
-    .selectFrom('flags')
-    .innerJoin('flag_configs', 'flag_configs.flag_id', 'flags.id')
+  let query = lifecycleQuery(db)
     .select([
       'flags.key',
       'flags.name',
@@ -253,6 +263,8 @@ export async function listFlags(
     updatedAt: r.updated_at.toISOString(),
     status: r.status,
     ruleCount: r.rule_count,
+    lifecycle: lifecycleFromRow(r, now),
+    lastEvaluatedAt: r.last_evaluated_at?.toISOString() ?? null,
   }));
 }
 

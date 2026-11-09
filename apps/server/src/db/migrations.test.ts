@@ -33,6 +33,7 @@ describe('migrations', () => {
       '006_segment_change_requests',
       '007_audit_search',
       '008_audit_snapshots',
+      '009_flag_lifecycle',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -54,6 +55,7 @@ describe('migrations', () => {
       'environments',
       'exposure_counts',
       'flag_configs',
+      'flag_evaluations',
       'flags',
       'login_attempts',
       'projects',
@@ -75,6 +77,8 @@ describe('migrations', () => {
         'change_requests_project_idx',
         'change_requests_segment_idx',
         'change_requests_target_idx',
+        'flag_configs_lifecycle_due_idx',
+        'flag_evaluations_pkey',
         'login_attempts_last_at_idx',
         'scheduled_changes_due_idx',
         'sessions_expires_idx',
@@ -278,6 +282,55 @@ describe('migrations', () => {
       await expect(sql`UPDATE audit_log SET snapshot = 'project'`.execute(old)).rejects.toThrow(
         /check constraint/,
       );
+    } finally {
+      await old.destroy();
+      await fresh.drop();
+    }
+  });
+
+  it('backfill when each flag was last evaluated from the stored exposure counts', async () => {
+    const fresh = await createTestDatabase();
+    const { db: old } = createDatabase({ url: fresh.url });
+    try {
+      const migrator = new Migrator({
+        db: old,
+        provider: { getMigrations: () => Promise.resolve(migrations) },
+      });
+      expect((await migrator.migrateTo('008_audit_snapshots')).error).toBeUndefined();
+      await sql`INSERT INTO projects (key, name) VALUES ('p', 'P')`.execute(old);
+      await sql`INSERT INTO environments (project_id, key, name)
+        SELECT id, e, e FROM projects, unnest(ARRAY['dev', 'prod']) AS e`.execute(old);
+      await sql`INSERT INTO exposure_counts (environment_id, flag_key, hour, variant, count)
+        SELECT environments.id, c.flag, c.hour::timestamptz, c.variant, 1
+        FROM environments, (VALUES
+          ('dev', 'checkout', '2030-01-01T10:00:00Z', 'on'),
+          ('dev', 'checkout', '2030-01-03T07:00:00Z', 'off'),
+          ('prod', 'checkout', '2030-01-02T00:00:00Z', 'on'),
+          ('prod', 'search', '2030-01-01T00:00:00Z', 'a')
+        ) AS c (env, flag, hour, variant)
+        WHERE environments.key = c.env`.execute(old);
+      await migrate(old);
+      const rows = await sql<{ env: string; flag_key: string; last_evaluated_at: Date }>`
+        SELECT environments.key AS env, flag_key, last_evaluated_at FROM flag_evaluations
+        JOIN environments ON environments.id = environment_id ORDER BY 1, 2`.execute(old);
+      expect(rows.rows.map((r) => [r.env, r.flag_key, r.last_evaluated_at.toISOString()])).toEqual([
+        ['dev', 'checkout', '2030-01-03T07:00:00.000Z'],
+        ['prod', 'checkout', '2030-01-02T00:00:00.000Z'],
+        ['prod', 'search', '2030-01-01T00:00:00.000Z'],
+      ]);
+      await sql`INSERT INTO flags (project_id, key, name, type, variants, salt)
+        SELECT id, 'checkout', 'c', 'boolean', '[]', 'c' FROM projects`.execute(old);
+      await sql`INSERT INTO flag_configs (environment_id, flag_id, off_variant, fallthrough)
+        SELECT environments.id, flags.id, 'off', '{"variant":"off"}' FROM environments, flags`.execute(
+        old,
+      );
+      const stages = await sql<{ lifecycle_stage: string | null }>`
+        SELECT lifecycle_stage FROM flag_configs`.execute(old);
+      expect(stages.rows).toEqual([{ lifecycle_stage: null }, { lifecycle_stage: null }]);
+      await sql`UPDATE flag_configs SET lifecycle_stage = 'launched'`.execute(old);
+      await expect(
+        sql`UPDATE flag_configs SET lifecycle_stage = 'stale'`.execute(old),
+      ).rejects.toThrow(/check constraint/);
     } finally {
       await old.destroy();
       await fresh.drop();

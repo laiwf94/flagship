@@ -1,4 +1,15 @@
-import type { DiffEntry, Flag, Rule, Ruleset, Segment, Serve, Variant } from '@flagship/core';
+import type {
+  DiffEntry,
+  Flag,
+  Lifecycle,
+  LifecycleStage,
+  Rule,
+  Ruleset,
+  Segment,
+  Serve,
+  StaleReason,
+  Variant,
+} from '@flagship/core';
 
 export type Role = 'viewer' | 'editor' | 'admin';
 export type FlagStatus = 'on' | 'off' | 'rollout' | 'archived';
@@ -38,6 +49,19 @@ export interface FlagSummary {
   updatedAt: string;
   status: FlagStatus;
   ruleCount: number;
+  /** Stage in the listed environment, with the reasons when it is stale. */
+  lifecycle: Lifecycle;
+  /** Start of the latest hour it was evaluated in the listed environment. */
+  lastEvaluatedAt: string | null;
+}
+
+export interface StaleFlag {
+  key: string;
+  name: string;
+  stage: LifecycleStage;
+  reasons: StaleReason[];
+  lastEvaluatedAt: string | null;
+  targetingChangedAt: string;
 }
 
 export interface EnvConfig {
@@ -448,6 +472,12 @@ export const api = {
       `/api/projects/${enc(project)}/audit/${id}/restore`,
       input,
       note,
+    ),
+
+  staleFlags: (project: string, env: string) =>
+    request<{ staleAfterDays: number; flags: StaleFlag[] }>(
+      'GET',
+      `/api/projects/${enc(project)}/environments/${enc(env)}/stale-flags`,
     ),
 
   segments: (project: string, env: string) =>

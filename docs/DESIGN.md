@@ -545,6 +545,48 @@ hidden, posting `text/plain` (no CORS preflight) with the client key in the quer
 Counts are per instance until flushed, so a crash loses at most one flush interval. For a
 feature count that is the right trade against a write per request.
 
+## Flag lifecycle and stale flags
+
+Every flag has a stage in each environment, computed by `lifecycleOf` in
+`packages/core/src/lifecycle.ts` from its targeting, when that targeting last changed, when the
+flag was created and when it was last evaluated there:
+
+| Stage      | When                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------ |
+| `new`      | created less than 30 days ago and not evaluated there yet                            |
+| `active`   | evaluated in the last 30 days, and serving more than one variant or changed recently |
+| `launched` | every context gets the same variant, and the targeting hasn't changed for 30 days    |
+| `inactive` | not evaluated for 30 days (or never, for a flag older than that)                     |
+| `archived` | archived in the project                                                              |
+
+`launched` and `inactive` are stale, and carry their reasons: "serves `on` to everyone,
+unchanged since 2026-10-01", "switched off since …", "not evaluated since …". One variant
+for everyone means the kill switch is off, or every rule and the default rule serve the same
+variant (a rollout counts only variants with a non-zero weight, so one finished at 100% is
+launched) and no prerequisite can send anyone to the off variant.
+
+**Last evaluated** comes from exposures. Each flush also upserts `flag_evaluations`
+(environment, flag key, latest hour seen) with `greatest`, so a late report of an older window
+never moves it back, and in key order so two instances flushing at once lock rows in the same
+order. It has hour precision like the counts, so an evaluation in the hour a flag was created
+counts as after its creation, and evaluations older than the flag (a key deleted and created
+again) are ignored. Migration `009_flag_lifecycle` backfills it from the stored counts.
+
+The flag list computes the stage on every read, so it is always current, and the
+`GET /api/projects/:p/environments/:e/stale-flags` cleanup list classifies every unarchived flag
+of the environment (at most 5,000) in memory, longest stale first. In the console each row
+shows a chip for new and stale flags, with the reasons in its tooltip and for screen readers,
+and **Cleanup** lists the stale ones with their reasons and last evaluation.
+
+The **nightly lifecycle check** runs from the scheduler's housekeeping loop every hour. Each
+turn claims, in transactions of 500 with `FOR UPDATE SKIP LOCKED`, the targeting rows not
+checked in the last 24 hours, so every row is checked about once a day by exactly one instance.
+It stores the stage and, when a flag becomes stale or stops being stale (other than by being
+archived), records a `flag.lifecycle` audit entry by "Lifecycle check" with the old and new
+stage and the reasons, so History answers when a flag went stale. It then publishes
+`flagship_flags_lifecycle{stage}` and counts transitions in
+`flagship_lifecycle_transitions_total{stage}`.
+
 ## Export and import
 
 `GET /api/projects/:p/export` writes a whole project as one JSON document, and

@@ -208,6 +208,20 @@ export function createMetrics() {
     schedules: registry.register(
       new Counter('flagship_scheduled_changes_total', 'Scheduled changes processed.', ['result']),
     ),
+    flagsByLifecycle: registry.register(
+      new Gauge(
+        'flagship_flags_lifecycle',
+        'Flag targeting rows per lifecycle stage, as of the last lifecycle check.',
+        ['stage'],
+      ),
+    ),
+    lifecycleTransitions: registry.register(
+      new Counter(
+        'flagship_lifecycle_transitions_total',
+        'Flags that became stale, or stopped being stale, by new stage.',
+        ['stage'],
+      ),
+    ),
     rulesetBuilds: registry.register(
       new Counter('flagship_ruleset_builds_total', 'Rulesets rebuilt from the database.'),
     ),

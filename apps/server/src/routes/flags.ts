@@ -7,6 +7,7 @@ import {
   serveSchema,
   variantSchema,
   LIMITS,
+  STALE_AFTER_DAYS,
 } from '@flagship/core';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -26,6 +27,7 @@ import {
   updateFlag,
   type Scope,
 } from '../services/flags.js';
+import { staleFlags } from '../services/lifecycle.js';
 import { getEnvironment, getProject } from '../services/projects.js';
 import { planRestore, restoreEntry } from '../services/restore.js';
 import { loadRuleset } from '../services/rulesets.js';
@@ -161,7 +163,17 @@ export function flagRoutes(ctx: Context) {
       const q = parse(listQuery, request.query, 'query');
       const p = await getProject(ctx.db, project);
       const e = await env(p.id, q.environment);
-      return { flags: await listFlags(ctx.db, p.id, e.id, q) };
+      return { flags: await listFlags(ctx.db, p.id, e.id, q, ctx.now()) };
+    });
+
+    api.get('/projects/:project/environments/:environment/stale-flags', async (request) => {
+      const { project, environment } = parse(envParams, request.params, 'path');
+      const p = await getProject(ctx.db, project);
+      const e = await env(p.id, environment);
+      return {
+        staleAfterDays: STALE_AFTER_DAYS,
+        flags: await staleFlags(ctx.db, p.id, e.id, ctx.now()),
+      };
     });
 
     api.post('/projects/:project/flags', { config: { role: 'editor' } }, async (request, reply) => {

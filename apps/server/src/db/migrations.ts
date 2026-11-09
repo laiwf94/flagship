@@ -287,4 +287,24 @@ export const migrations: Record<string, Migration> = {
         'flag.schedule.apply', 'flag.change_request.apply', 'segment.create', 'segment.update',
         'segment.delete', 'segment.change_request.apply')`,
   ]),
+  // Lifecycle: when each flag was last evaluated in each environment, kept
+  // from exposure flushes so stale detection doesn't scan hourly counts, and
+  // backfilled from the counts already stored (hour precision). The nightly
+  // lifecycle check stores the stage it last saw per flag and environment, so
+  // a flag becoming stale, or no longer stale, is recorded once in History.
+  '009_flag_lifecycle': statements([
+    `CREATE TABLE flag_evaluations (
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      flag_key text NOT NULL,
+      last_evaluated_at timestamptz NOT NULL,
+      PRIMARY KEY (environment_id, flag_key)
+    )`,
+    `INSERT INTO flag_evaluations (environment_id, flag_key, last_evaluated_at)
+      SELECT environment_id, flag_key, max(hour) FROM exposure_counts GROUP BY 1, 2`,
+    `ALTER TABLE flag_configs
+      ADD COLUMN lifecycle_stage text
+        CHECK (lifecycle_stage IN ('new', 'active', 'launched', 'inactive', 'archived')),
+      ADD COLUMN lifecycle_checked_at timestamptz`,
+    `CREATE INDEX flag_configs_lifecycle_due_idx ON flag_configs (lifecycle_checked_at NULLS FIRST)`,
+  ]),
 };
