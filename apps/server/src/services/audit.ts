@@ -1,6 +1,7 @@
 import { diff, type DiffEntry } from '@flagship/core';
 import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
+import type { SnapshotKind } from '../db/schema.js';
 import { AppError } from '../errors.js';
 
 /** Why a change was made, as its author gave it. */
@@ -27,6 +28,11 @@ export interface AuditEntry {
   after?: unknown;
   /** Overrides the actor's note, for example with the one a change request was proposed with. */
   note?: ChangeNote | undefined;
+  /**
+   * Set when the entry changed something live and `before` and `after` are
+   * its whole state (undefined meaning it did not exist), so it can be restored.
+   */
+  snapshot?: SnapshotKind | undefined;
 }
 
 /** Call inside the transaction that makes the change, so the two commit together. */
@@ -46,6 +52,7 @@ export async function recordAudit(db: Db, e: AuditEntry): Promise<void> {
       after: e.after === undefined ? null : JSON.stringify(e.after),
       reason: note?.reason ?? null,
       link: note?.link ?? null,
+      snapshot: e.snapshot ?? null,
     })
     .execute();
 }
@@ -63,6 +70,8 @@ export interface AuditView {
   before: unknown;
   after: unknown;
   diff: DiffEntry[];
+  /** True when the state before or after this change can be restored. */
+  restorable: boolean;
 }
 
 /** Where a page ended: the last entry's exact timestamp and id. */
@@ -172,6 +181,7 @@ export async function searchAudit(db: Db, projectId: string, f: AuditFilter): Pr
       'audit_log.link',
       'audit_log.before',
       'audit_log.after',
+      'audit_log.snapshot',
       'environments.key as environment',
       sql<string>`to_char(audit_log.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as(
         'exact_at',
@@ -215,6 +225,8 @@ export async function searchAudit(db: Db, projectId: string, f: AuditFilter): Pr
       before: r.before ?? null,
       after: r.after ?? null,
       diff: diff(r.before ?? undefined, r.after ?? undefined),
+      // A targeting or segment entry whose environment was deleted has nowhere to go back to.
+      restorable: r.snapshot !== null && (r.snapshot === 'flag' || r.environment !== null),
     })),
     next:
       rows.length > f.limit && last !== undefined

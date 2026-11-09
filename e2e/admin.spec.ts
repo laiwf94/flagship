@@ -107,6 +107,24 @@ test('sign in, create a flag, add a rule, roll out, review the diff and save', a
   await expect(found.getByText('Ramp onboarding to 20% for the café pilot')).toBeVisible();
   await expect(found.getByRole('listitem')).toHaveCount(1);
   await expectAccessible(page, 'history search');
+
+  // Undo that change from History: review what goes back, then restore it.
+  await found.getByRole('button', { name: /^Restore #/ }).click();
+  const restore = page.getByRole('dialog', { name: /^Restore #/ });
+  await expect(
+    restore.getByText('What changes in the targeting of onboarding-checklist in Production'),
+  ).toBeVisible();
+  await expect(restore.getByText('Rule 1', { exact: true })).toBeVisible();
+  await restore.getByLabel('Reason (optional)').fill('Pilot paused');
+  await expectAccessible(page, 'restore dialog');
+  await restore.getByRole('button', { name: 'Restore' }).click();
+  await expect(
+    page.getByText('Restored the targeting of onboarding-checklist in Production.'),
+  ).toBeVisible();
+  await search.getByRole('button', { name: 'Clear' }).click();
+  await expect(page.getByText('Pilot paused')).toBeVisible();
+  await page.goto(`${base()}${P}/flags/onboarding-checklist`);
+  await expect(page.getByText('Rolling out')).toHaveCount(0);
 });
 
 test('a second editor saving first gets the other a clear conflict', async ({ browser }) => {

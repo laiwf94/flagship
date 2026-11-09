@@ -5,12 +5,15 @@ import { fullDate, timeAgo } from '../format';
 import { useResource } from '../hooks';
 import { DiffView } from './DiffView';
 import { hasFilters, type AuditFilters } from './historyFilters';
+import { RestoreDialog } from './RestoreDialog';
 
 const ACTIONS: Record<string, string> = {
   'flag.create': 'created flag',
   'flag.update': 'edited flag settings of',
+  'flag.settings.restore': 'restored earlier flag settings of',
   'flag.config.update': 'changed targeting of',
   'flag.kill_switch': 'flipped the kill switch of',
+  'flag.config.restore': 'restored earlier targeting of',
   'flag.archive': 'archived',
   'flag.restore': 'restored',
   'flag.schedule.create': 'scheduled a change to',
@@ -25,6 +28,7 @@ const ACTIONS: Record<string, string> = {
   'segment.create': 'created segment',
   'segment.update': 'edited segment',
   'segment.delete': 'deleted segment',
+  'segment.restore': 'restored an earlier version of segment',
   'segment.change_request.open': 'opened a change request for segment',
   'segment.change_request.approve': 'approved a change request for segment',
   'segment.change_request.request_changes': 'requested changes to a change request for segment',
@@ -43,7 +47,13 @@ export function describeAction(e: AuditEntry): string {
   return ACTIONS[e.action] ?? e.action;
 }
 
-function Entry({ entry }: { entry: AuditEntry }) {
+function Entry({
+  entry,
+  onRestore,
+}: {
+  entry: AuditEntry;
+  onRestore?: ((entry: AuditEntry) => void) | undefined;
+}) {
   const [open, setOpen] = useState(false);
   const reason = entry.reason ?? null;
   const link = entry.link ?? null;
@@ -71,6 +81,18 @@ function Entry({ entry }: { entry: AuditEntry }) {
               : `Show ${entry.diff.length} ${entry.diff.length === 1 ? 'change' : 'changes'}`}
           </Button>
         )}
+        {onRestore !== undefined && entry.restorable === true && (
+          <Button
+            variant="plain"
+            icon="restore"
+            aria-label={`Restore #${entry.id}: ${describeAction(entry)} ${entry.targetKey}`}
+            onClick={() => {
+              onRestore(entry);
+            }}
+          >
+            Restore
+          </Button>
+        )}
       </div>
       {(reason !== null || link !== null) && (
         <p className="history-note small">
@@ -87,17 +109,23 @@ function Entry({ entry }: { entry: AuditEntry }) {
   );
 }
 
-/** Newest first, 25 at a time, optionally narrowed by actor, text and dates. */
+/**
+ * Newest first, 25 at a time, optionally narrowed by actor, text and dates.
+ * With `canRestore`, entries that changed a flag or segment offer to put it
+ * back as it was before or after them.
+ */
 export function History({
   project,
   flag,
   segment,
   filters = {},
+  canRestore = false,
 }: {
   project: string;
   flag?: string;
   segment?: string;
   filters?: AuditFilters;
+  canRestore?: boolean;
 }) {
   const query = {
     ...(flag === undefined ? {} : { flag }),
@@ -109,6 +137,7 @@ export function History({
   const [more, setMore] = useState<AuditEntry[]>([]);
   const [next, setNext] = useState<string | null | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [restoring, setRestoring] = useState<AuditEntry | undefined>();
   // Older pages belong to one search: a new search starts again from its first page.
   const currentKey = useRef(key);
   useEffect(() => {
@@ -144,9 +173,24 @@ export function History({
     <div className="history">
       <ul className="history-list" aria-label="Change history">
         {entries.map((e) => (
-          <Entry key={e.id} entry={e} />
+          <Entry key={e.id} entry={e} onRestore={canRestore ? setRestoring : undefined} />
         ))}
       </ul>
+      {restoring !== undefined && (
+        <RestoreDialog
+          entry={restoring}
+          onClose={() => {
+            setRestoring(undefined);
+          }}
+          onRestored={() => {
+            setRestoring(undefined);
+            // The restore is the newest entry: start again from the first page.
+            setMore([]);
+            setNext(undefined);
+            first.reload();
+          }}
+        />
+      )}
       {cursor !== null && (
         <div>
           <Button

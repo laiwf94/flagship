@@ -473,6 +473,41 @@ each have a B-tree index in that order, so a date range is an index range and th
 matches end the scan. The response asks for one entry more than the page to tell whether
 `next` is null.
 
+## Rollback
+
+An audit entry that changed something live is a snapshot: its `before` and `after` hold the
+whole state of what it changed, and its `snapshot` column says which kind that is. `flag` is a
+flag's settings (name, description, variants, client-side), `targeting` is its targeting in one
+environment, and `segment` is a segment, where a missing side means the segment did not exist.
+Every live write sets it: targeting edits, the kill switch, scheduled changes, change request
+applies, segment writes, flag creation and settings edits, and restores themselves. Change
+request openings and reviews carry a proposal rather than live state, so they are not
+snapshots, nor are archiving, keys or environment settings. Migration `008_audit_snapshots`
+marks earlier entries of the snapshot actions, which already stored whole states. Nothing is
+stored twice: the snapshot is the entry's own `before` and `after`, so restoring costs no extra
+space on the audit log.
+
+`GET /api/projects/:p/audit/:id/restore?to=before|after` (any role) is the review: the state
+it would write, the live state and version it was computed against, the diff from live to
+restored, and how many approvals the environment needs. `unchanged` says the live state already
+matches. `POST` with `{"to", "baseVersion", "title"?, "description"?}` (editors) restores it:
+
+- `baseVersion` must still be live, so a restore reviewed before someone else's edit is
+  refused with `409` and re-reviewed rather than silently overwriting that edit.
+- In an unprotected environment it writes through the same path as an edit, under the
+  environment lock, recorded as `flag.config.restore` or `segment.restore` with the reason and
+  link headers the environment may require. Flag settings use `flag.settings.restore`.
+- In a protected environment it opens a change request instead (`201`, `outcome: "proposed"`),
+  titled after the entry unless a title is given, and described with who made the original
+  change, when and why. The decision is taken under the environment lock, so turning protection
+  on can't race a restore. The request is then reviewed and applied like any other, and the
+  author cannot approve it.
+- The restored state is validated against today's ruleset like an edit: targeting that uses a
+  segment, prerequisite or variant deleted since is refused with `400` and the reason, and so is
+  deleting a segment (restoring the state before it was created) that a flag still uses.
+- Restoring the state before a flag was created is refused; archive the flag instead.
+  Restoring what is already live is refused too, so a double click records nothing.
+
 ## Scheduled changes
 
 A scheduled change sets `enabled`, the default rule or the rule list of one flag in one
@@ -616,6 +651,11 @@ script or style) and `frame-ancestors 'none'`. Choices worth knowing:
   note rules there. History searches by text, exact actor name and a range of local days (the
   last day included), with the filters in the URL so a search can be shared; older pages keep
   the same filters.
+- For editors, every History entry that changed a flag or segment has a Restore action. Its
+  dialog picks the state before the change (undo it) or right after it (undo what came later),
+  shows the diff against what is live now, and asks for the environment's reason and link. In
+  a protected environment it says how many approvals are needed, offers a title, and goes to
+  the change request it opens. A conflict reloads the diff against the new live state.
 - Status is a badge, filters are chips that live in the URL, on/off is a switch,
   2–4 choices are a segmented control, results are toasts (the kill switch's has Undo), errors
   sit at the field.

@@ -107,6 +107,9 @@ export interface SegmentsTable {
   updated_at: UpdatedAt;
 }
 
+/** A flag's settings, its targeting in one environment, or a segment. */
+export type SnapshotKind = 'flag' | 'targeting' | 'segment';
+
 export interface AuditLogTable {
   id: Generated<number>;
   project_id: string | null;
@@ -122,6 +125,8 @@ export interface AuditLogTable {
   reason: string | null;
   /** A ticket or incident link the author gave. */
   link: string | null;
+  /** What `before` and `after` hold in full, on entries that changed something live. */
+  snapshot: SnapshotKind | null;
   /** Generated from action, target, actor, reason and link; never written. */
   search: ColumnType<string, never, never>;
   created_at: CreatedAt;

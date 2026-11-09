@@ -186,6 +186,7 @@ export async function writeSegment(
     targetKey: key,
     ...(before === undefined ? {} : { before: content(before) }),
     ...(after === null ? {} : { after: content(after) }),
+    snapshot: 'segment',
   });
   return after;
 }

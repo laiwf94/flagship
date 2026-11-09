@@ -14,7 +14,7 @@ import { useScope } from './Layout';
 
 export function HistoryPage() {
   const { project } = useScope();
-  const { user } = useSession();
+  const { user, can } = useSession();
   const [params, setParams] = useSearchParams();
   const applied = draftFromParams(params);
   const appliedFilters = toAuditFilters(applied);
@@ -117,7 +117,13 @@ export function HistoryPage() {
           )}
         </div>
       </form>
-      {appliedFilters.ok && <History project={project.key} filters={appliedFilters.filters} />}
+      {appliedFilters.ok && (
+        <History
+          project={project.key}
+          filters={appliedFilters.filters}
+          canRestore={can('editor')}
+        />
+      )}
     </div>
   );
 }

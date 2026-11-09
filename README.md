@@ -143,6 +143,8 @@ SDK routes take `Authorization: Bearer <key>`.
 | `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                     |
 | `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI             |
 | `GET /api/projects/:p/audit?flag=&segment=&actor=&q=&from=&to=&cursor=`     | change history with diffs, searchable, keyset-paged           |
+| `GET /api/projects/:p/audit/:id/restore?to=before\|after`                   | what restoring an entry would change, against what is live    |
+| `POST /api/projects/:p/audit/:id/restore`                                   | restore it, or open a change request in a protected env       |
 | `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)   |
 | `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)               |
 | `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`     |

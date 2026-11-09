@@ -27,6 +27,7 @@ import {
   type Scope,
 } from '../services/flags.js';
 import { getEnvironment, getProject } from '../services/projects.js';
+import { planRestore, restoreEntry } from '../services/restore.js';
 import { loadRuleset } from '../services/rulesets.js';
 import {
   cancelSchedule,
@@ -116,7 +117,20 @@ const auditQuery = z
     },
   );
 
+const restoreSide = z.enum(['before', 'after']);
+const restoreQuery = z.object({ to: restoreSide.default('after') });
+const restoreInput = z.strictObject({
+  to: restoreSide,
+  baseVersion: version,
+  title: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(4000).optional(),
+});
+
 const projectParams = z.object({ project: keySchema });
+const entryParams = z.object({
+  project: keySchema,
+  id: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+});
 const flagParams = z.object({ project: keySchema, flag: keySchema });
 const envParams = z.object({ project: keySchema, environment: keySchema });
 const flagEnvParams = z.object({ project: keySchema, flag: keySchema, environment: keySchema });
@@ -341,5 +355,23 @@ export function flagRoutes(ctx: Context) {
         limit: q.limit,
       });
     });
+
+    api.get('/projects/:project/audit/:id/restore', async (request) => {
+      const p = parse(entryParams, request.params, 'path');
+      const q = parse(restoreQuery, request.query, 'query');
+      const project = await getProject(ctx.db, p.project);
+      return planRestore(ctx.db, project.id, p.id, q.to);
+    });
+
+    api.post(
+      '/projects/:project/audit/:id/restore',
+      { config: { role: 'editor' } },
+      async (request, reply) => {
+        const p = parse(entryParams, request.params, 'path');
+        const body = parse(restoreInput, request.body, 'restore');
+        const result = await restoreEntry(await scope(request, p.project), p.id, body);
+        return reply.status(result.outcome === 'proposed' ? 201 : 200).send(result);
+      },
+    );
   };
 }

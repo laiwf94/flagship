@@ -356,6 +356,7 @@ export async function createFlag(scope: Scope, input: FlagInput): Promise<FlagVi
         targetType: 'flag',
         targetKey: flag.key,
         after: { ...metadata(flag), type: flag.type },
+        snapshot: 'flag',
       });
     });
   } catch (err) {
@@ -375,7 +376,12 @@ function configColumnsView(c: EnvConfig) {
   };
 }
 
-export async function updateFlag(scope: Scope, key: string, patch: FlagPatch): Promise<FlagView> {
+export async function updateFlag(
+  scope: Scope,
+  key: string,
+  patch: FlagPatch,
+  action = 'flag.update',
+): Promise<FlagView> {
   await scope.db.transaction().execute(async (trx) => {
     const envs = await environmentsOf(trx, scope.project.id);
     await lockEnvironments(
@@ -417,11 +423,12 @@ export async function updateFlag(scope: Scope, key: string, patch: FlagPatch): P
     await recordAudit(trx, {
       projectId: scope.project.id,
       actor: scope.actor,
-      action: 'flag.update',
+      action,
       targetType: 'flag',
       targetKey: key,
       before: metadata(before),
       after: metadata(after),
+      snapshot: 'flag',
     });
   });
   return getFlag(scope.db, scope.project.id, key);
@@ -481,6 +488,7 @@ export async function writeConfig(
     targetKey: key,
     before,
     after,
+    snapshot: 'targeting',
   });
 }
 

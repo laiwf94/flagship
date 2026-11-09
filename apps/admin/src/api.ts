@@ -89,7 +89,31 @@ export interface AuditEntry {
   /** A ticket or incident link the author gave. */
   link?: string | null;
   diff: DiffEntry[];
+  /** True when the state before or after this change can be put back. */
+  restorable?: boolean;
 }
+
+export type RestoreSide = 'before' | 'after';
+
+/** What restoring a history entry would change, computed against the live state. */
+export interface RestorePlan {
+  entry: number;
+  kind: 'flag' | 'targeting' | 'segment';
+  target: string;
+  environment: string | null;
+  to: RestoreSide;
+  baseVersion: number;
+  current: unknown;
+  /** Null when the restore deletes a segment. */
+  restored: unknown;
+  diff: DiffEntry[];
+  /** Above zero, restoring opens a change request that needs this many approvals. */
+  requiredApprovals: number;
+  unchanged: boolean;
+}
+
+export type RestoreOutcome =
+  { outcome: 'applied'; plan: RestorePlan } | { outcome: 'proposed'; changeRequest: ChangeRequest };
 
 export interface Schedule {
   id: string;
@@ -410,6 +434,21 @@ export const api = {
       `/api/projects/${enc(project)}/audit?${q.toString()}`,
     );
   },
+
+  restorePlan: (project: string, id: number, to: RestoreSide) =>
+    request<RestorePlan>('GET', `/api/projects/${enc(project)}/audit/${id}/restore?to=${to}`),
+  restoreEntry: (
+    project: string,
+    id: number,
+    input: { to: RestoreSide; baseVersion: number; title?: string },
+    note?: ChangeNote,
+  ) =>
+    request<RestoreOutcome>(
+      'POST',
+      `/api/projects/${enc(project)}/audit/${id}/restore`,
+      input,
+      note,
+    ),
 
   segments: (project: string, env: string) =>
     request<{ segments: SegmentView[] }>(

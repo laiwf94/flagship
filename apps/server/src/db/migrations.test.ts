@@ -32,6 +32,7 @@ describe('migrations', () => {
       '005_change_requests',
       '006_segment_change_requests',
       '007_audit_search',
+      '008_audit_snapshots',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -220,6 +221,61 @@ describe('migrations', () => {
         { flag: 'fresh', env: 'prod', version: 1 },
       ]);
       await expect(sql`UPDATE flag_configs SET version = 0`.execute(old)).rejects.toThrow(
+        /check constraint/,
+      );
+    } finally {
+      await old.destroy();
+      await fresh.drop();
+    }
+  });
+
+  it('mark earlier entries that changed live state as restorable snapshots', async () => {
+    const fresh = await createTestDatabase();
+    const { db: old } = createDatabase({ url: fresh.url });
+    try {
+      const migrator = new Migrator({
+        db: old,
+        provider: { getMigrations: () => Promise.resolve(migrations) },
+      });
+      expect((await migrator.migrateTo('007_audit_search')).error).toBeUndefined();
+      const actions = [
+        ['flag.create', 'flag'],
+        ['flag.update', 'flag'],
+        ['flag.archive', 'flag'],
+        ['flag.config.update', 'flag'],
+        ['flag.kill_switch', 'flag'],
+        ['flag.schedule.apply', 'flag'],
+        ['flag.change_request.open', 'flag'],
+        ['flag.change_request.apply', 'flag'],
+        ['segment.create', 'segment'],
+        ['segment.delete', 'segment'],
+        ['segment.change_request.approve', 'segment'],
+        ['segment.change_request.apply', 'segment'],
+        ['api_key.create', 'api_key'],
+      ];
+      for (const [action, type] of actions) {
+        await sql`INSERT INTO audit_log (actor_name, action, target_type, target_key)
+          VALUES ('x', ${action}, ${type}, 'k')`.execute(old);
+      }
+      await migrate(old);
+      const rows = await sql<{ action: string; snapshot: string | null }>`
+        SELECT action, snapshot FROM audit_log ORDER BY id`.execute(old);
+      expect(Object.fromEntries(rows.rows.map((r) => [r.action, r.snapshot]))).toEqual({
+        'flag.create': 'flag',
+        'flag.update': 'flag',
+        'flag.archive': null,
+        'flag.config.update': 'targeting',
+        'flag.kill_switch': 'targeting',
+        'flag.schedule.apply': 'targeting',
+        'flag.change_request.open': null,
+        'flag.change_request.apply': 'targeting',
+        'segment.create': 'segment',
+        'segment.delete': 'segment',
+        'segment.change_request.approve': null,
+        'segment.change_request.apply': 'segment',
+        'api_key.create': null,
+      });
+      await expect(sql`UPDATE audit_log SET snapshot = 'project'`.execute(old)).rejects.toThrow(
         /check constraint/,
       );
     } finally {

@@ -1253,6 +1253,37 @@ input[type='range'] {
   flex: 1 1 280px;
 }
 
+.choice {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: 0;
+}
+
+.choice legend {
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+
+.choice label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.choice input {
+  margin-top: 0.2em;
+  accent-color: var(--accent);
+}
+
+.restore-heading {
+  margin: var(--space-2) 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
 .history-note {
   display: flex;
   flex-wrap: wrap;

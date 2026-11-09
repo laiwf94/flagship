@@ -268,4 +268,23 @@ export const migrations: Record<string, Migration> = {
       ADD COLUMN reason text CHECK (length(reason) BETWEEN 1 AND 1000),
       ADD COLUMN link text CHECK (length(link) <= 2000 AND link ~ '^https?://')`,
   ]),
+  // Entries that changed something live say what their before and after
+  // hold in full, so History can put it back: a flag's settings ('flag'), its
+  // targeting in one environment ('targeting') or a segment ('segment'). A
+  // null side means the target did not exist. Change request openings and
+  // reviews carry a proposal rather than live state and stay null. Earlier
+  // entries of these actions already stored full state, so they are marked too.
+  '008_audit_snapshots': statements([
+    `ALTER TABLE audit_log
+      ADD COLUMN snapshot text CHECK (snapshot IN ('flag', 'targeting', 'segment'))`,
+    `UPDATE audit_log SET snapshot = CASE
+        WHEN action IN ('flag.create', 'flag.update') THEN 'flag'
+        WHEN action IN ('segment.create', 'segment.update', 'segment.delete',
+          'segment.change_request.apply') THEN 'segment'
+        ELSE 'targeting'
+      END
+      WHERE action IN ('flag.create', 'flag.update', 'flag.config.update', 'flag.kill_switch',
+        'flag.schedule.apply', 'flag.change_request.apply', 'segment.create', 'segment.update',
+        'segment.delete', 'segment.change_request.apply')`,
+  ]),
 };
