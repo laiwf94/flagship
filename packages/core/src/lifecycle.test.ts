@@ -226,3 +226,93 @@ describe('describeReason', () => {
     );
   });
 });
+
+describe('lifecycle transitions', () => {
+  /** A flag in any state: created, changed and maybe evaluated some days before `now`. */
+  const anyFlag = fc
+    .record({
+      createdDaysAgo: fc.integer({ min: 0, max: 200 }),
+      changedDaysAgo: fc.integer({ min: 0, max: 200 }),
+      evaluatedDaysAgo: fc.option(fc.integer({ min: 0, max: 200 }), { nil: null }),
+      single: fc.boolean(),
+      enabled: fc.boolean(),
+    })
+    .map(({ createdDaysAgo, changedDaysAgo, evaluatedDaysAgo, single, enabled }) => {
+      const createdAt = now - createdDaysAgo * DAY;
+      return base({
+        createdAt,
+        targetingChangedAt: Math.max(createdAt, now - changedDaysAgo * DAY),
+        lastEvaluatedAt: evaluatedDaysAgo === null ? null : now - evaluatedDaysAgo * DAY,
+        config: {
+          ...base().config,
+          enabled,
+          ...(single ? { fallthrough: { variant: 'on' } } : {}),
+        },
+      });
+    });
+
+  // Where a flag can go when only the clock moves: staleness never wears off by itself.
+  const byTimeAlone: Record<string, string[]> = {
+    new: ['new', 'inactive'],
+    active: ['active', 'launched', 'inactive'],
+    launched: ['launched', 'inactive'],
+    inactive: ['inactive'],
+  };
+
+  it('only moves towards stale as time passes with nothing else happening', () => {
+    fc.assert(
+      fc.property(
+        anyFlag,
+        fc.array(fc.integer({ min: 0, max: 100 * DAY }), { minLength: 1, maxLength: 8 }),
+        (flag, steps) => {
+          let at = now;
+          let stage = lifecycleOf(flag).stage;
+          for (const step of steps) {
+            at += step;
+            const next = lifecycleOf({ ...flag, now: at }).stage;
+            expect(byTimeAlone[stage], `${stage} -> ${next}`).toContain(next);
+            stage = next;
+          }
+        },
+      ),
+    );
+  });
+
+  it('leaves inactive on an evaluation and launched on a targeting change, and both make it active', () => {
+    fc.assert(
+      fc.property(anyFlag, (flag) => {
+        const evaluated = lifecycleOf({ ...flag, lastEvaluatedAt: now });
+        expect(evaluated.stage).not.toBe('inactive');
+        expect(evaluated.stage).not.toBe('new');
+        expect(evaluated.reasons.map((r) => r.kind)).not.toContain('unevaluated');
+
+        const changed = lifecycleOf({ ...flag, targetingChangedAt: now });
+        expect(changed.reasons.map((r) => r.kind)).not.toContain('launched');
+        // A change alone doesn't make an unused flag used.
+        expect(changed.stage === 'inactive').toBe(
+          lifecycleOf(flag).reasons.some((r) => r.kind === 'unevaluated'),
+        );
+
+        expect(lifecycleOf({ ...flag, lastEvaluatedAt: now, targetingChangedAt: now })).toEqual({
+          stage: 'active',
+          stale: false,
+          reasons: [],
+        });
+      }),
+    );
+  });
+
+  it('takes any stage to archived and back to the stage the clock gives it', () => {
+    fc.assert(
+      fc.property(anyFlag, (flag) => {
+        expect(lifecycleOf({ ...flag, archived: true })).toEqual({
+          stage: 'archived',
+          stale: false,
+          reasons: [],
+        });
+        // Unarchiving keeps the history: the flag is exactly as stale as it would have been.
+        expect(lifecycleOf({ ...flag, archived: false })).toEqual(lifecycleOf(flag));
+      }),
+    );
+  });
+});

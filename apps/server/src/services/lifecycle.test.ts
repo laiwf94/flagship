@@ -263,6 +263,65 @@ describe('flag lifecycle', () => {
     expect((await lifecycleEntries(c)).length).toBe(before);
   });
 
+  it('counts a restore as a targeting change, so a launched flag goes back to active', async () => {
+    let c = await client();
+    const res = await c.request('POST', `${P}/flags`, {
+      key: 'undone',
+      name: 'u',
+      type: 'boolean',
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    await target(c, 'undone', {
+      enabled: true,
+      fallthrough: {
+        rollout: {
+          variants: [
+            { variant: 'on', weight: 50_000 },
+            { variant: 'off', weight: 50_000 },
+          ],
+        },
+      },
+    });
+    await target(c, 'undone', { fallthrough: { variant: 'on' } });
+    const history = (await c.request('GET', `${P}/audit?flag=undone`)).json().entries as {
+      id: number;
+      action: string;
+    }[];
+    const finished = history.find((e) => e.action === 'flag.config.update');
+    expect(finished).toBeDefined();
+
+    offset += 31 * DAY;
+    c = await client();
+    await evaluate(['undone']);
+    expect((await stages(c)).undone).toBe('launched');
+    const run = check();
+    await run(now());
+    const mine = async () => (await lifecycleEntries(c)).filter((e) => e.targetKey === 'undone');
+    expect(
+      (await mine()).map((e) => [e.environment, e.before.stage, e.after.stage]),
+    ).toContainEqual(['production', null, 'launched']);
+
+    // Going back to the 50/50 rollout is a change made today, whatever the entry's age.
+    const id = (finished as { id: number }).id;
+    const plan = (await c.request('GET', `${P}/audit/${id}/restore?to=before`)).json();
+    const restored = await c.request('POST', `${P}/audit/${id}/restore`, {
+      to: 'before',
+      baseVersion: plan.baseVersion,
+    });
+    expect(restored.statusCode, restored.body).toBe(200);
+    expect((await stages(c)).undone).toBe('active');
+
+    offset += DAY + 60_000;
+    c = await client();
+    await evaluate(['undone']);
+    await run(now());
+    expect((await mine())[0]).toMatchObject({
+      environment: 'production',
+      before: { stage: 'launched' },
+      after: { stage: 'active', reasons: [] },
+    });
+  });
+
   it('refuses unknown environments and anonymous callers', async () => {
     const c = await client();
     expect((await c.request('GET', `${P}/environments/nope/stale-flags`)).statusCode).toBe(404);
