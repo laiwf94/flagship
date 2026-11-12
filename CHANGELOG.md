@@ -4,6 +4,62 @@ Notable changes to flagship. Each entry links the roadmap issue it belongs to.
 
 ## Unreleased
 
+### Safe changes ([#27](https://github.com/laiwf94/flagship/issues/27), 2026-11-09 to 2026-11-15)
+
+Upgrading runs five migrations (`005_change_requests`, `006_segment_change_requests`,
+`007_audit_search`, `008_audit_snapshots`, `009_flag_lifecycle`) on start. Clients paging the
+audit log with `before=<id>` need to send the `cursor` from the previous page instead (see
+Changed).
+
+#### Added
+
+- Protected environments and change requests: `PUT .../environments/:env/approvals` (admins,
+  0 to 5). Above zero, targeting edits, segment writes and new scheduled changes there are
+  refused with `403` and go through change requests instead; the kill switch still works
+  directly, for incidents. A request proposes a flag's whole targeting
+  (`POST .../flags/:flag/environments/:env/change-requests`) or a segment create, edit or
+  delete (`POST .../environments/:env/segments/:segment/change-requests`) against a live base
+  version. Reviews (comment, approve, request changes) count for the revision they saw, and
+  authors can't approve or reject their own request. Apply needs `max(1, required)` approvers
+  and no standing request for changes, and of concurrent applies only one lands. A stale
+  request shows a three-way merge of base, proposal and live; rebase writes it as a new
+  revision that needs approving again. Routes for list, read, reviews, apply, rebase and close,
+  and a new error code `failed_precondition` (`409`).
+- The console's Changes list and review page (diff, rollout preview, discussion by revision,
+  apply, rebase and close), and proposing from the targeting and segment editors in a
+  protected environment.
+- Change reasons and links: every write takes `Flagship-Reason` (percent-encoded UTF-8) and
+  `Flagship-Link` headers, recorded on its audit entry. `PUT .../environments/:env/change-notes`
+  makes either mandatory per environment, and the console asks for them in every dialog that
+  writes there, with the rule set in Settings.
+- Audit search: `GET .../audit` takes `flag`, `segment`, `actor`, `q` (web-search syntax over
+  action, target, actor, reason and link, on a GIN-indexed `tsvector`), `from`, `to`, `cursor`
+  and `limit`, with keyset paging on `(created_at, id)`. History has the same filters, kept in
+  the URL. `pnpm bench:audit` seeds 1,000,000 entries and fails if any query's p95 reaches
+  50 ms; on 4 vCPUs every p95 is between 0.9 and 2.8 ms.
+- Rollback: every entry that changed a flag, its targeting or a segment holds the whole state
+  before and after (`snapshot`). `GET .../audit/:id/restore?to=before|after` reviews a restore
+  as a diff against live, and `POST` applies it against that live version, or opens a change
+  request in a protected environment. History has a Restore action.
+- Flag lifecycle: `@flagship/core` `lifecycleOf` gives each flag `new`, `active`, `launched`
+  (one variant for everyone and untouched for 30 days), `inactive` (not evaluated for 30
+  days) or `archived`, with the reasons. Last evaluation is tracked from exposures in
+  `flag_evaluations`; an hourly job, shared between instances, records `flag.lifecycle`
+  entries when a flag becomes stale or stops being stale and exports
+  `flagship_flags_lifecycle` and `flagship_lifecycle_transitions_total`. The flag list returns
+  `lifecycle` and `lastEvaluatedAt`, `GET .../environments/:env/stale-flags` lists stale flags,
+  and the console shows lifecycle chips and a Cleanup view.
+- `examples/demo.sh` ends with an incident drill on a protected production: a bad change goes
+  out through an approved change request, History search finds it, and a restore puts it back
+  through a second change request, with self-approvals refused and checksums compared on the
+  app and both instances.
+
+#### Changed
+
+- `GET .../audit` pages with an opaque `cursor` (the previous page's `next`) instead of
+  `before=<id>`, so entries with the same timestamp are neither skipped nor repeated.
+- Entries in the audit listing carry `reason`, `link` and `restorable`.
+
 ### Correctness under many instances ([#26](https://github.com/laiwf94/flagship/issues/26), 2026-11-02 to 2026-11-08)
 
 Upgrading runs three migrations (`002_login_attempts`, `003_flag_config_versions`,

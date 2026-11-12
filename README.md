@@ -95,7 +95,15 @@ each step's evidence as it checks it:
 - the app, the first instance and the second report the same ruleset checksum;
 - the second instance is SIGKILLed, the kill switch is saved on the first, and when the
   second starts again the app reconnects, resumes and serves 0/1000, on the same checksum;
-- the project is exported, imported under a new key, and the copy's checksums match.
+- the project is exported, imported under a new key, and the copy's checksums match;
+- an incident drill on a protected production (one approval, a reason and a ticket link
+  required): a direct edit gets `403`; a second user's change request turns the flag on for
+  everyone, its author's own approval gets `403` and an unapproved apply `409`, and once an
+  admin approves and it is applied the app serves 1000/1000; History search by text, actor
+  and time finds the applied change; restoring it opens a change request the restorer can't
+  approve, and once the other user approves it the app is back at 0/1000 on the same checksum
+  as both instances. Production is unprotected again at the end, and a run that stopped
+  half-way through the drill is cleaned up by the next one.
 
 It fails if any check doesn't hold or the app doesn't print a step in time (15 seconds, 60
 for the restart). Stop the stack with `docker compose --profile multi down -v`.
@@ -171,7 +179,7 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 | Faults       | Two real server processes behind a TCP load balancer with 40 SDK clients evaluating through it: pooled Postgres connections killed, LISTEN sessions killed and an instance SIGKILLed, each followed at once by a kill-switch change. Every SDK serves the change within about a second, no evaluation falls back to a default, and every SDK ends on the server's checksum.                                                                                            |
 | SDKs         | The Node SDK against a stub server that dies mid-stream and comes back, loses a patch or sends a bad checksum; against the real server for a 10% → 50% rollout, the kill switch and a corrupted stored patch it resyncs past; the OpenFeature provider through the OpenFeature SDK; the browser SDK in jsdom.                                                                                                                                                          |
 | Admin UI     | Component tests with Testing Library; Playwright against the built server for the main journeys, a two-editor conflict, a keyboard-only run, and axe (no serious or critical WCAG 2.1 AA findings) on every page at 1440 and 390 px and in dark mode.                                                                                                                                                                                                                  |
-| Whole stack  | `examples/demo.sh` against two containers of the Docker image: the shared sign-in budget, per-environment versions, checksums on both instances, an instance killed and restarted, and an export imported as a copy.                                                                                                                                                                                                                                                   |
+| Whole stack  | `examples/demo.sh` against two containers of the Docker image: the shared sign-in budget, per-environment versions, checksums on both instances, an instance killed and restarted, an export imported as a copy, and an incident drill: a bad change through a change request, found by search, restored through another.                                                                                                                                              |
 
 925 Vitest tests at 97.1% line coverage (the gate requires 90%), plus 7 Playwright tests.
 

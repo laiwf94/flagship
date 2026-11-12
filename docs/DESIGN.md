@@ -508,6 +508,29 @@ matches. `POST` with `{"to", "baseVersion", "title"?, "description"?}` (editors)
 - Restoring the state before a flag was created is refused; archive the flag instead.
   Restoring what is already live is refused too, so a double click records nothing.
 
+### Incident drill
+
+`examples/demo.sh` ends by running the whole loop against the Docker stack, with the app on
+the second instance watching the flag. Production is protected with one approval and a
+required reason and ticket link, and a second user (an editor) is created.
+
+1. **Break**: the editor proposes targeting that serves `on` to everyone. Their own approval
+   gets `403` and applying it unapproved gets `409`; the admin approves, the editor applies,
+   and the app serves 1000/1000.
+2. **Find**: one History query, `?flag=new-checkout&q=launch&actor=<editor>&from=<start>`,
+   returns the request's `open` and `apply` entries with the reason and ticket; the
+   `apply` entry is the restorable one. On the demo's small log it answers in about 5 ms; the
+   audit benchmark covers the same filters on a million entries.
+3. **Restore**: the restore review shows the diff back to the targeting before that entry and
+   that one approval is needed. The admin's restore opens a change request (`201`) that the
+   admin then can't approve (`403`); the editor approves, the admin applies, and the app
+   serves 0/1000 about 100 ms later on the same checksum as both instances.
+
+The drill's History, oldest first, reads as the incident did: open, approve and apply of the
+launch under its reason, then open, approve and apply of the rollback under its own. Finally
+the demo lifts production's protection, and since the earlier steps edit production
+directly, a run that stopped during the drill is cleaned up when the next one starts.
+
 ## Scheduled changes
 
 A scheduled change sets `enabled`, the default rule or the rule list of one flag in one

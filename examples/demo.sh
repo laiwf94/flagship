@@ -5,7 +5,9 @@
 # that the instances share one sign-in budget, that development and production
 # edits from one load don't conflict, that the app, A and B agree on the
 # ruleset checksum, that the app recovers when B is killed, and that a project
-# survives export and import with the same checksums.
+# survives export and import with the same checksums. It ends with an incident
+# drill on a protected production: a reviewed change breaks the rollout, History
+# search finds it, and a restore puts it back through a second change request.
 # Needs Docker, Node 22 and pnpm. Leaves the stack running; stop it with
 #   docker compose --profile multi down -v
 set -euo pipefail
@@ -51,6 +53,16 @@ status() {
   curl -sS -o /dev/null -w '%{http_code}' -b "$JAR" -H 'content-type: application/json' \
     -H "x-csrf-token: $CSRF" -X "$1" "$A$2" ${3:+-d "$3"}
 }
+
+# A run that stopped during the incident drill leaves production protected;
+# the steps before the drill edit it directly, so lift that first.
+if api GET /api/projects | json ".projects.find(p => p.key === 'default').environments
+    .some(e => e.key === 'production' && (e.requiredApprovals > 0 || e.requireReason || e.requireLink))" |
+  grep -q true; then
+  api PUT "$P/environments/production/approvals" '{"requiredApprovals":0}' >/dev/null
+  api PUT "$P/environments/production/change-notes" '{"requireReason":false,"requireLink":false}' >/dev/null
+  echo "production was left protected by an earlier run; protection lifted"
+fi
 
 step "Sign-in budget: ten wrong passwords split across A and B lock the email on both"
 GUESS="guess-$RANDOM$RANDOM@example.com"
@@ -183,5 +195,101 @@ const same = JSON.stringify(a.checksums) === JSON.stringify(b.checksums);
 console.log(same ? "the copy serves identical rulesets" : "checksums differ");
 process.exit(same ? 0 : 1);
 ' "$WORK/default.flagship.json" "$WORK/copy.flagship.json" || fail "the imported copy differs"
+
+step "Incident drill: protect production (one approval, a reason and a ticket link)"
+REVIEWER=riley@example.com
+REVIEWER_NAME="Riley Reviewer"
+REVIEWER_PASSWORD=reviewer-password-change-me
+code=$(status POST /api/users \
+  "{\"email\":\"$REVIEWER\",\"name\":\"$REVIEWER_NAME\",\"role\":\"editor\",\"password\":\"$REVIEWER_PASSWORD\"}")
+[[ $code == 201 || $code == 409 ]] || fail "creating the reviewer gave $code"
+echo "reviewer $REVIEWER_NAME ($REVIEWER, editor)"
+RJAR=$WORK/reviewer-cookies
+RCSRF=$(curl -fsS -c "$RJAR" -H 'content-type: application/json' \
+  -d "{\"email\":\"$REVIEWER\",\"password\":\"$REVIEWER_PASSWORD\"}" "$A/api/session" | json '.csrfToken')
+TICKET=https://tickets.example.com/INC-2041
+# call_as WHO METHOD PATH [BODY]: a call as admin (the default user) or reviewer on A,
+# with the drill's reason in $REASON and its ticket link; prints the body and
+# the status on the last line.
+call_as() {
+  local jar=$JAR csrf=$CSRF
+  [[ $1 == reviewer ]] && { jar=$RJAR; csrf=$RCSRF; }
+  curl -sS -w '\n%{http_code}' -b "$jar" -H 'content-type: application/json' -H "x-csrf-token: $csrf" \
+    -H "flagship-reason: $(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$REASON")" \
+    -H "flagship-link: $TICKET" -X "$2" "$A$3" ${4:+-d "$4"}
+}
+# want CODE RESPONSE: the response's status must be CODE; prints its body.
+want() {
+  local code=${2##*$'\n'} body=${2%$'\n'*}
+  [[ $code == "$1" ]] || fail "expected $1, got $code: $body"
+  echo "$body"
+}
+api PUT "$P/environments/production/approvals" '{"requiredApprovals":1}' >/dev/null
+api PUT "$P/environments/production/change-notes" '{"requireReason":true,"requireLink":true}' >/dev/null
+REASON="direct edit during the drill"
+code=$(call_as admin PUT "$P/flags/new-checkout/environments/production" \
+  "$(targeting "$(envVersion production)" '{"variant":"on"}')" | tail -1)
+echo "a direct targeting edit in production now gets $code"
+[[ $code == 403 ]] || fail "expected 403 for a direct edit to protected production, got $code"
+DRILL_FROM=$(node -e 'console.log(new Date(Date.now() - 1000).toISOString())')
+
+step "Break it: a reviewed change request turns new-checkout on for everyone"
+mark
+REASON="launch new checkout to all users"
+CR=$(want 201 "$(call_as reviewer POST "$P/flags/new-checkout/environments/production/change-requests" \
+  "{\"baseVersion\":$(envVersion production),\"title\":\"Launch new checkout\",\"enabled\":true,\"offVariant\":\"off\",\"prerequisites\":[],\"rules\":[],\"fallthrough\":{\"variant\":\"on\"}}")")
+CR_ID=$(echo "$CR" | json '.id')
+echo "$REVIEWER_NAME proposed change request ${CR_ID:0:8}…: $(echo "$CR" | json '.diff.length') difference(s)"
+own=$(call_as reviewer POST "$P/change-requests/$CR_ID/reviews" '{"revision":1,"decision":"approve"}' | tail -1)
+echo "the author approving their own request: $own"
+[[ $own == 403 ]] || fail "expected 403 for a self-approval, got $own"
+early=$(call_as reviewer POST "$P/change-requests/$CR_ID/apply" '{"revision":1}' | tail -1)
+echo "applying it without an approval: $early"
+[[ $early == 409 ]] || fail "expected 409 for an unapproved apply, got $early"
+want 201 "$(call_as admin POST "$P/change-requests/$CR_ID/reviews" '{"revision":1,"decision":"approve","body":"ship it"}')" >/dev/null
+echo "admin approved it"
+want 200 "$(call_as reviewer POST "$P/change-requests/$CR_ID/apply" '{"revision":1}')" | json '.status' | sed 's/^/change request /'
+wait_for 'change: new-checkout is on for 1000/1000'
+echo "every user is on the new checkout, and checkout errors start coming in"
+
+step "Find it: History search by text, actor and time"
+QUERY="$P/audit?flag=new-checkout&q=launch&actor=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$REVIEWER_NAME")&from=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$DRILL_FROM")"
+curl -fsS -o "$WORK/search.json" -w 'search answered in %{time_total}s\n' -b "$JAR" "$A$QUERY"
+json ".entries.map(e => e.id + '  ' + e.at.slice(11,19) + '  ' + e.action + '  \"' + e.reason + '\"  ' + e.link).join('\n')" <"$WORK/search.json"
+ENTRY=$(json ".entries.find(e => e.action === 'flag.change_request.apply' && e.restorable)?.id ?? ''" <"$WORK/search.json")
+[[ -n $ENTRY ]] || fail "the search did not find the applied change"
+echo "the change that broke it is History entry $ENTRY"
+
+step "Restore it through a change request"
+PLAN=$(api GET "$P/audit/$ENTRY/restore?to=before")
+echo "$PLAN" | json ".diff.map(d => 'review: ' + d.path + ' ' + JSON.stringify(d.before) + ' -> ' + JSON.stringify(d.after)).join('\n')"
+echo "restoring needs $(echo "$PLAN" | json '.requiredApprovals') approval(s)"
+BASE=$(echo "$PLAN" | json '.baseVersion')
+mark
+REASON="roll back the checkout launch"
+RESTORE=$(want 201 "$(call_as admin POST "$P/audit/$ENTRY/restore" "{\"to\":\"before\",\"baseVersion\":$BASE}")")
+[[ $(echo "$RESTORE" | json '.outcome') == proposed ]] || fail "the restore did not open a change request"
+RC_ID=$(echo "$RESTORE" | json '.changeRequest.id')
+echo "restore opened change request ${RC_ID:0:8}…: $(echo "$RESTORE" | json '.changeRequest.title')"
+own=$(call_as admin POST "$P/change-requests/$RC_ID/reviews" '{"revision":1,"decision":"approve"}' | tail -1)
+echo "admin approving their own restore: $own"
+[[ $own == 403 ]] || fail "expected 403 for a self-approval, got $own"
+want 201 "$(call_as reviewer POST "$P/change-requests/$RC_ID/reviews" '{"revision":1,"decision":"approve","body":"confirmed against INC-2041"}')" >/dev/null
+echo "$REVIEWER_NAME approved it"
+T0=$(ms)
+want 200 "$(call_as admin POST "$P/change-requests/$RC_ID/apply" '{"revision":1}')" | json '.status' | sed 's/^/change request /'
+wait_for 'change: new-checkout is on for 0/1000'
+echo "the app served the restored targeting $(($(ms) - T0)) ms after the apply"
+SUM_A=$(curl -fsS -H "authorization: Bearer $KEY" "$A/sdk/v1/ruleset" | json '.checksum')
+SUM_B=$(curl -fsS -H "authorization: Bearer $KEY" "$B/sdk/v1/ruleset" | json '.checksum')
+[[ $(app_checksum) == "$SUM_A" && $SUM_A == "$SUM_B" ]] || fail "checksums differ after the restore"
+echo "the app, A and B agree on checksum ${SUM_A:0:16}…"
+api GET "$P/audit?flag=new-checkout&from=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$DRILL_FROM")&limit=20" |
+  json ".entries.reverse().map(e => e.at.slice(11,19) + '  ' + e.actor.padEnd(15) + '  ' + e.action.padEnd(31) + '  ' + (e.reason ?? '')).join('\n')"
+
+step "Lift production's protection again"
+api PUT "$P/environments/production/approvals" '{"requiredApprovals":0}' >/dev/null
+api PUT "$P/environments/production/change-notes" '{"requireReason":false,"requireLink":false}' >/dev/null
+echo "production takes direct edits again"
 
 step "Done. Admin UI: $A or $B (admin@example.com / $PASSWORD)"
