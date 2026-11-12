@@ -145,7 +145,14 @@ export async function loadRuleset(db: Db, environmentId: string): Promise<Rulese
   };
 }
 
-/** Locks environment rows in a fixed order so concurrent writers can't deadlock. */
+/**
+ * Locks environment rows in a fixed order so concurrent writers can't deadlock.
+ * FOR NO KEY UPDATE serialises the writers just as FOR UPDATE would, but does
+ * not block the FOR KEY SHARE lock a foreign key check takes. A transaction
+ * that holds other rows and then inserts an audit entry or ruleset change for
+ * the environment (the lifecycle check does) would otherwise wait on a writer
+ * that is itself waiting on those rows.
+ */
 export async function lockEnvironments(trx: Db, ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
   await trx
@@ -153,7 +160,7 @@ export async function lockEnvironments(trx: Db, ids: readonly string[]): Promise
     .select('id')
     .where('id', 'in', [...ids])
     .orderBy('id')
-    .forUpdate()
+    .forNoKeyUpdate()
     .execute();
 }
 
