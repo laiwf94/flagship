@@ -2,6 +2,7 @@ import {
   FLAG_TYPES,
   keySchema,
   prerequisiteSchema,
+  rolloutPlanSchema,
   ruleSchema,
   segmentRuleSchema,
   serveSchema,
@@ -30,6 +31,7 @@ import {
 import { staleFlags } from '../services/lifecycle.js';
 import { getEnvironment, getProject } from '../services/projects.js';
 import { planRestore, restoreEntry } from '../services/restore.js';
+import { changeRolloutPlan, listRolloutPlans, startRolloutPlan } from '../services/rolloutPlans.js';
 import { loadRuleset } from '../services/rulesets.js';
 import {
   cancelSchedule,
@@ -138,6 +140,10 @@ const envParams = z.object({ project: keySchema, environment: keySchema });
 const flagEnvParams = z.object({ project: keySchema, flag: keySchema, environment: keySchema });
 const segmentParams = z.object({ project: keySchema, environment: keySchema, segment: keySchema });
 const scheduleParams = flagEnvParams.extend({ id: z.uuid() });
+const planParams = flagEnvParams.extend({
+  id: z.uuid(),
+  action: z.enum(['pause', 'resume', 'cancel']),
+});
 const scheduleInput = z.strictObject({
   runAt: z.iso.datetime({ offset: true }),
   change: changeSchema,
@@ -271,6 +277,51 @@ export function flagRoutes(ctx: Context) {
         const p = parse(scheduleParams, request.params, 'path');
         const s = await scope(request, p.project);
         return cancelSchedule(s, await env(s.project.id, p.environment), p.flag, p.id, ctx.now());
+      },
+    );
+
+    api.get(
+      '/projects/:project/flags/:flag/environments/:environment/rollout-plans',
+      async (request) => {
+        const p = parse(flagEnvParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        const e = await env(project.id, p.environment);
+        return { plans: await listRolloutPlans(ctx.db, project.id, e.id, p.flag) };
+      },
+    );
+
+    api.post(
+      '/projects/:project/flags/:flag/environments/:environment/rollout-plans',
+      { config: { role: 'editor' } },
+      async (request, reply) => {
+        const p = parse(flagEnvParams, request.params, 'path');
+        const body = parse(rolloutPlanSchema, request.body, 'rollout plan');
+        const s = await scope(request, p.project);
+        const started = await startRolloutPlan(
+          s,
+          await env(s.project.id, p.environment),
+          p.flag,
+          body,
+          ctx.now(),
+        );
+        return reply.status(201).send(started);
+      },
+    );
+
+    api.post(
+      '/projects/:project/flags/:flag/environments/:environment/rollout-plans/:id/:action',
+      { config: { role: 'editor' } },
+      async (request) => {
+        const p = parse(planParams, request.params, 'path');
+        const s = await scope(request, p.project);
+        return changeRolloutPlan(
+          s,
+          await env(s.project.id, p.environment),
+          p.flag,
+          p.id,
+          p.action,
+          ctx.now(),
+        );
       },
     );
 

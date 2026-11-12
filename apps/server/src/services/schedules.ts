@@ -6,6 +6,7 @@ import type { ScheduleStatus } from '../db/schema.js';
 import { AppError, notFound } from '../errors.js';
 import type { Metrics } from '../metrics.js';
 import { recordAudit, type Actor } from './audit.js';
+import { advanceRolloutPlan } from './rolloutPlans.js';
 import {
   requireNote,
   requireUnprotected,
@@ -284,15 +285,74 @@ export class Scheduler {
     await this.running;
   }
 
-  /** Applies due changes until none are left; returns how many it processed. */
+  /**
+   * Applies due scheduled changes, then due rollout steps, until none are left
+   * (at most `batch` of each); returns how many it processed.
+   */
   async runOnce(): Promise<number> {
     let processed = 0;
     for (let i = 0; i < (this.o.batch ?? 100); i++) {
       if (!(await this.applyNext())) break;
       processed++;
     }
+    for (let i = 0; i < (this.o.batch ?? 100); i++) {
+      if (!(await this.stepNextPlan())) break;
+      processed++;
+    }
     await this.housekeep();
     return processed;
+  }
+
+  /**
+   * Claims one due rollout plan with FOR UPDATE SKIP LOCKED and applies its
+   * next step in the same transaction. A second instance skips the claimed
+   * row, and once this commits the row is no longer due, so each step is
+   * applied exactly once however many instances run the loop.
+   */
+  private async stepNextPlan(): Promise<boolean> {
+    const trx = await this.o.db.startTransaction().execute();
+    try {
+      const now = this.o.now();
+      const due = await trx
+        .selectFrom('rollout_plans')
+        .innerJoin('flags', 'flags.id', 'rollout_plans.flag_id')
+        .innerJoin('environments', 'environments.id', 'rollout_plans.environment_id')
+        .innerJoin('projects', 'projects.id', 'flags.project_id')
+        .select([
+          'rollout_plans.id',
+          'rollout_plans.plan',
+          'rollout_plans.step',
+          'rollout_plans.created_by_name',
+          'flags.key as flag_key',
+          'environments.id as environment_id',
+          'environments.key as environment_key',
+          'projects.id as project_id',
+          'projects.key as project_key',
+          'projects.name as project_name',
+        ])
+        .where('rollout_plans.status', '=', 'active')
+        .where('rollout_plans.next_at', '<=', now)
+        .orderBy('rollout_plans.next_at')
+        .limit(1)
+        .forUpdate('rollout_plans')
+        .skipLocked()
+        .executeTakeFirst();
+      if (due === undefined) {
+        await trx.rollback().execute();
+        return false;
+      }
+      const result = await advanceRolloutPlan(trx, due, this.o.retention, now);
+      await trx.commit().execute();
+      this.o.metrics.rolloutSteps.inc({ result });
+      this.o.logger.info(
+        { plan: due.id, flag: due.flag_key, environment: due.environment_key, result },
+        'rollout step processed',
+      );
+      return true;
+    } catch (err) {
+      await trx.rollback().execute();
+      throw err;
+    }
   }
 
   /**

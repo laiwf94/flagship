@@ -208,6 +208,11 @@ export function createMetrics() {
     schedules: registry.register(
       new Counter('flagship_scheduled_changes_total', 'Scheduled changes processed.', ['result']),
     ),
+    rolloutSteps: registry.register(
+      new Counter('flagship_rollout_steps_total', 'Due rollout plan steps processed, by outcome.', [
+        'result',
+      ]),
+    ),
     flagsByLifecycle: registry.register(
       new Gauge(
         'flagship_flags_lifecycle',

@@ -44,7 +44,10 @@ Percentage rollouts use consistent hashing. The same user gets the same variant 
 server, and raising the percentage never moves anyone out. You can bucket by user, or by any
 attribute such as an organisation. Each flag also has a kill switch, prerequisites on other
 flags (cycles are rejected), and scheduled changes that apply on time and exactly once, however
-many server instances are running.
+many server instances are running. A progressive rollout steps a variant from a small share to
+everyone on its own (1%, 5%, 10%, 25%, 50%, 100% by default, each held as long as you choose),
+each step exactly once across instances; turning the flag off pauses it, and nobody who has the
+new variant loses it at a later step.
 
 Server SDKs evaluate locally from a ruleset snapshot, kept current over SSE with resume
 (`Last-Event-ID`) and ETag polling as a fallback. Every snapshot and every patch carries a
@@ -147,6 +150,8 @@ SDK routes take `Authorization: Bearer <key>`.
 | `POST /api/projects/:p/flags/:f/environments/:e/kill-switch`                | `{"enabled": false}`, no version needed                       |
 | `POST /api/projects/:p/flags/:f/archive`, `/restore`                        | archive and restore                                           |
 | `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                             |
+| `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step            |
+| `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout  |
 | `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                            |
 | `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                     |
 | `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI             |

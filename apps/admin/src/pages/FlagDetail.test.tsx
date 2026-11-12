@@ -490,3 +490,199 @@ describe('schedules tab', () => {
     expect(await screen.findByText('flag "new-checkout" is archived')).toBeTruthy();
   });
 });
+
+describe('rollout tab', () => {
+  const R = '/api/projects/default/flags/new-checkout/environments/production/rollout-plans';
+  const view = (patch: Record<string, unknown> = {}) => ({
+    id: 'plan1',
+    plan: {
+      target: 'fallthrough',
+      variant: 'on',
+      baseline: 'off',
+      steps: [
+        { weight: 2_000, holdMinutes: 60 },
+        { weight: 10_000, holdMinutes: 120 },
+        { weight: 100_000 },
+      ],
+    },
+    status: 'active',
+    step: 0,
+    weight: 2_000,
+    nextAt: '2099-01-01T10:00:00Z',
+    pausedReason: null,
+    error: null,
+    createdBy: 'Eddie',
+    createdAt: '2030-01-01T00:00:00Z',
+    updatedAt: '2030-01-01T00:00:00Z',
+    finishedAt: null,
+    ...patch,
+  });
+
+  it('starts, pauses, resumes and cancels a rollout', async () => {
+    const { api } = setup();
+    let plans: unknown[] = [];
+    api.set(`GET ${R}`, () => ({ plans }));
+    api.set(`POST ${R}`, (body: unknown) => {
+      plans = [view({ plan: body })];
+      return plans[0];
+    });
+    for (const [action, status, pausedReason] of [
+      ['pause', 'paused', 'manual'],
+      ['resume', 'active', null],
+      ['cancel', 'cancelled', null],
+    ] as const) {
+      api.set(`POST ${R}/plan1/${action}`, () => {
+        plans = [
+          view({
+            plan: (plans[0] as { plan: unknown }).plan,
+            status,
+            pausedReason,
+            nextAt: status === 'active' ? '2099-01-01T10:00:00Z' : null,
+            ...(status === 'cancelled' ? { finishedAt: '2030-01-02T00:00:00Z' } : {}),
+          }),
+        ];
+        return plans[0];
+      });
+    }
+    const { user } = renderAt(`${URL}?tab=rollout`);
+    expect(await screen.findByText('No rollout running')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Start a rollout' }));
+    const dialog = screen.getByRole('dialog', { name: 'Start a rollout' });
+    const first = within(dialog).getByLabelText('Step 1 percentage');
+    await user.clear(first);
+    await user.type(first, '200');
+    await user.click(within(dialog).getByRole('button', { name: 'Start rollout' }));
+    expect(within(dialog).getByText('Enter a percentage above 0 and below 100')).toBeTruthy();
+    expect(api.calls.some((c) => c.method === 'POST')).toBe(false);
+    await user.clear(first);
+    await user.type(first, '2');
+    for (const n of [5, 4, 3]) {
+      await user.click(within(dialog).getByRole('button', { name: `Remove step ${n}` }));
+    }
+    await user.click(within(dialog).getByRole('button', { name: 'Add a step' }));
+    expect(within(dialog).getByLabelText<HTMLInputElement>('Step 3 percentage').value).toBe('10');
+    await user.click(within(dialog).getByRole('button', { name: 'Remove step 3' }));
+    await user.clear(within(dialog).getByLabelText('Step 2 hold in minutes'));
+    await user.type(within(dialog).getByLabelText('Step 2 hold in minutes'), '120');
+    await user.type(within(dialog).getByLabelText('Keep together by'), 'org');
+    await user.click(within(dialog).getByRole('button', { name: 'Start rollout' }));
+
+    expect(await screen.findByText('Rollout started at 2%.')).toBeTruthy();
+    expect(api.calls.find((c) => c.method === 'POST')?.body).toEqual({
+      target: 'fallthrough',
+      variant: 'on',
+      baseline: 'off',
+      bucketBy: 'org',
+      steps: [
+        { weight: 2_000, holdMinutes: 60 },
+        { weight: 5_000, holdMinutes: 120 },
+        { weight: 100_000 },
+      ],
+    });
+    const steps = within(await screen.findByRole('list', { name: 'Steps' })).getAllByRole(
+      'listitem',
+    );
+    expect(steps.map((s) => s.textContent)).toEqual(['2%hold 1 h', '5%hold 2 h', '100%everyone']);
+    expect(steps[0]?.getAttribute('aria-current')).toBe('step');
+    expect(screen.getByText('Rolling out')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(await screen.findByText('Rollout paused.')).toBeTruthy();
+    expect(await screen.findByText('Paused by hand.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Resume' }));
+    expect(await screen.findByText('Rollout resumed.')).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: 'Cancel rollout' }));
+    const confirm = screen.getByRole('dialog', { name: 'Cancel this rollout?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Cancel rollout' }));
+    expect(await screen.findByText('Rollout cancelled.')).toBeTruthy();
+    const past = await screen.findByRole('list', { name: 'Earlier rollouts' });
+    expect(within(past).getByText('Cancelled')).toBeTruthy();
+    expect(within(past).getByText('on over off, reached 2%')).toBeTruthy();
+    expect(await screen.findByText('No rollout running')).toBeTruthy();
+  });
+
+  it('explains a pause from the kill switch and keeps Resume off until the flag is on', async () => {
+    const { api } = setup(makeFlag({ enabled: false }));
+    api.set(`GET ${R}`, {
+      plans: [
+        view({ status: 'paused', pausedReason: 'kill_switch', nextAt: null }),
+        view({ id: 'plan0', status: 'failed', error: 'rule "beta" no longer exists' }),
+      ],
+    });
+    renderAt(`${URL}?tab=rollout`);
+    expect(await screen.findByText(/Paused because the flag was turned off/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Resume' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Start a rollout' })).toBeNull();
+    expect(screen.getByText('rule "beta" no longer exists')).toBeTruthy();
+  });
+
+  it('keeps Resume off after a hand edit and reports action errors', async () => {
+    const { api } = setup(
+      makeFlag({
+        rules: [{ id: 'beta', description: 'Beta', clauses: [], serve: { variant: 'on' } }],
+      }),
+    );
+    api.set(`GET ${R}`, {
+      plans: [view({ plan: { ...view().plan, target: { rule: 'beta' } } })],
+    });
+    api.set(
+      `POST ${R}/plan1/pause`,
+      apiError(409, 'failed_precondition', 'cannot pause a rollout that is completed'),
+    );
+    const { user } = renderAt(`${URL}?tab=rollout`);
+    expect(await screen.findByText(/rule 1 \(Beta\)/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(await screen.findByText('cannot pause a rollout that is completed')).toBeTruthy();
+
+    api.set(`GET ${R}`, {
+      plans: [view({ status: 'paused', pausedReason: 'edited', nextAt: null })],
+    });
+    await user.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(await screen.findByText(/edited outside the plan/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Resume' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('shows server errors in the dialog and refuses one variant over itself', async () => {
+    const { api } = setup(
+      makeFlag({ rules: [{ id: 'beta', clauses: [], serve: { variant: 'on' } }] }),
+    );
+    api.set(`GET ${R}`, { plans: [] });
+    api.set(
+      `POST ${R}`,
+      apiError(400, 'invalid_argument', 'invalid rollout plan', [
+        { path: 'target.rule', message: 'unknown rule "beta"' },
+      ]),
+    );
+    const { user } = renderAt(`${URL}?tab=rollout`);
+    await user.click(await screen.findByRole('button', { name: 'Start a rollout' }));
+    const dialog = screen.getByRole('dialog', { name: 'Start a rollout' });
+    await user.selectOptions(within(dialog).getByLabelText('Roll out on'), 'beta');
+    await user.click(within(dialog).getByRole('button', { name: 'Start rollout' }));
+    expect(
+      await within(dialog).findByText('invalid rollout plan: target.rule: unknown rule "beta"'),
+    ).toBeTruthy();
+    await user.selectOptions(within(dialog).getByLabelText('Everyone else gets'), 'on');
+    await user.click(within(dialog).getByRole('button', { name: 'Start rollout' }));
+    expect(within(dialog).getByText('Pick a different variant')).toBeTruthy();
+  });
+
+  it('disables starting while the flag is off, and shows nothing to edit for viewers', async () => {
+    const off = setup(makeFlag({ enabled: false }));
+    off.api.set(`GET ${R}`, { plans: [] });
+    const { user, unmount } = renderAt(`${URL}?tab=rollout`);
+    await user.click(await screen.findByRole('button', { name: 'Start a rollout' }));
+    expect(screen.getByText(/Turn it on before starting a rollout/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start rollout' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+    unmount();
+
+    const viewer = setup(makeFlag(), 'viewer');
+    viewer.api.set(`GET ${R}`, { plans: [view()] });
+    renderAt(`${URL}?tab=rollout`);
+    expect(await screen.findByText('Rolling out')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start a rollout' })).toBeNull();
+  });
+});

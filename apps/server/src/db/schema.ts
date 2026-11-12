@@ -8,6 +8,9 @@ type Json<T> = ColumnType<T, string, string>;
 export type Role = 'viewer' | 'editor' | 'admin';
 export type KeyKind = 'server' | 'client';
 export type ScheduleStatus = 'pending' | 'applied' | 'failed' | 'cancelled';
+export type RolloutStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
+/** Who paused a plan: a person, the kill switch, or an edit to the targeted serve. */
+export type PausedReason = 'manual' | 'kill_switch' | 'edited';
 
 export interface UsersTable {
   id: Generated<string>;
@@ -159,6 +162,26 @@ export interface ScheduledChangesTable {
   finished_at: Date | null;
 }
 
+export interface RolloutPlansTable {
+  id: Generated<string>;
+  flag_id: string;
+  environment_id: string;
+  plan: Json<unknown>;
+  status: Generated<RolloutStatus>;
+  /** Index of the step applied last. */
+  step: Generated<number>;
+  /** When the next step is due; set exactly when the plan is active. */
+  next_at: Date | null;
+  paused_reason: PausedReason | null;
+  error: string | null;
+  created_by: string | null;
+  created_by_name: string;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  /** Written from the app clock, like next_at, so holds are measured against one time source. */
+  updated_at: ColumnType<Date, Date, Date>;
+  finished_at: Date | null;
+}
+
 export interface ExposureCountsTable {
   environment_id: string;
   flag_key: string;
@@ -237,6 +260,7 @@ export interface Database {
   audit_log: AuditLogTable;
   ruleset_changes: RulesetChangesTable;
   scheduled_changes: ScheduledChangesTable;
+  rollout_plans: RolloutPlansTable;
   exposure_counts: ExposureCountsTable;
   flag_evaluations: FlagEvaluationsTable;
   login_attempts: LoginAttemptsTable;

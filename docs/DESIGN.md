@@ -546,6 +546,47 @@ audit entry (actor "Scheduled by alice"), inside a savepoint. If the change no l
 with the reason. A failure isn't retried forever, and the UI shows it. Archiving a flag
 cancels its pending changes.
 
+## Progressive rollouts
+
+A rollout plan steps one serve of a flag in one environment (the default rule or one rule, by
+id) from a small share to everyone: a variant to roll out, the baseline everyone else keeps,
+an optional `bucketBy`, and up to 20 steps whose weights strictly grow and end at 100%. Each
+step but the last has a hold of 1 minute to 30 days. A step writes
+`[variant: w, baseline: 100% - w]`, variant first, so with the sticky bucketing above a
+context gets the variant exactly when its bucket is below `w`, and raising `w` only adds
+contexts. The last step serves the variant outright, so a finished rollout leaves the flag
+plainly on. A property test checks over random step lists, salts and keys that nobody who had
+the variant at one step loses it at a later one, and a server test checks the same over
+3,000 contexts bucketed by `org`, with every company kept together.
+
+Starting a plan applies its first step in the same transaction, so the response shows it
+live; starting needs the flag on, and like scheduled changes it is refused in a protected
+environment. `rollout_plans` keeps the step applied last and, while active, `next_at`.
+The scheduler loop claims a due plan with `FOR UPDATE SKIP LOCKED`, takes the environment
+lock, re-reads the flag and applies the next step through the normal write path (validation,
+version bump, stream patch, audit entry by "Rollout by alice") in a savepoint, then moves
+`step` and `next_at` in the same transaction. Another instance skips the claimed row, and
+once it commits the row is no longer due, so each step happens once (the test races two
+instances through a whole plan and counts one audit entry per step).
+
+Before stepping, the loop checks what it is about to build on. If the flag is off the plan
+pauses (`kill_switch`); turning the flag off also pauses it at once, inside the write that
+turned it off, and turning it back on does not resume it, because whoever turned it off had
+a reason. If the targeted serve no longer matches the step the plan applied, someone edited
+it by hand: the plan pauses (`edited`) rather than overwrite the edit, and won't resume over
+it. A targeted rule that was deleted, or a step that no longer validates, fails the plan with
+the reason. Resuming restarts the current step's hold. Cancelling leaves the targeting where
+the plan reached, and archiving the flag cancels its plans. One plan per flag and environment
+can be live (active or paused), held by a partial unique index as well as the check under
+the environment lock.
+
+Lock order keeps this free of deadlocks: the scheduler and pause, resume and cancel take the
+plan row, then the environment; a write that holds the environment and pauses or cancels
+plans (the kill switch, archiving) skips plan rows that are locked rather than waiting, since
+the holder re-reads the flag after it gets the environment. Environments are locked
+`FOR NO KEY UPDATE`, which serialises writers but doesn't block the foreign key checks of
+audit entries written by other transactions.
+
 ## Exposure events
 
 Exposures (which variant was served) let the UI show a per-variant count. SDKs aggregate in

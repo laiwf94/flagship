@@ -502,6 +502,50 @@ export async function writeConfig(
     after,
     snapshot: 'targeting',
   });
+  if (before.enabled && !after.enabled) {
+    await pauseForKillSwitch(trx, scope, env, { id: flag.id, key }, new Date());
+  }
+}
+
+/**
+ * Pauses the active plans of a flag whose kill switch was just turned off.
+ * Called inside the write that turned it off, with the environment locked; a
+ * plan the scheduler holds is skipped rather than waited for, because the
+ * scheduler reads the flag after taking the same lock and pauses it itself.
+ */
+export async function pauseForKillSwitch(
+  trx: Db,
+  scope: Scope,
+  env: { id: string },
+  flag: { id: string; key: string },
+  now: Date,
+): Promise<void> {
+  const paused = await trx
+    .updateTable('rollout_plans')
+    .set({ status: 'paused', paused_reason: 'kill_switch', next_at: null, updated_at: now })
+    .where('id', 'in', (qb) =>
+      qb
+        .selectFrom('rollout_plans')
+        .select('id')
+        .where('flag_id', '=', flag.id)
+        .where('environment_id', '=', env.id)
+        .where('status', '=', 'active')
+        .forUpdate()
+        .skipLocked(),
+    )
+    .returning(['id', 'step'])
+    .execute();
+  for (const p of paused) {
+    await recordAudit(trx, {
+      projectId: scope.project.id,
+      environmentId: env.id,
+      actor: scope.actor,
+      action: 'flag.rollout.pause',
+      targetType: 'flag',
+      targetKey: flag.key,
+      after: { plan: p.id, step: p.step, reason: 'kill_switch' },
+    });
+  }
 }
 
 /**
@@ -653,6 +697,28 @@ async function setArchived(
         .set({ status: 'cancelled', finished_at: new Date(), error: 'flag was archived' })
         .where('flag_id', '=', after.id)
         .where('status', '=', 'pending')
+        .execute();
+      // A plan the scheduler holds is skipped, not waited for: the scheduler
+      // takes the environment lock next, sees the archive and cancels it.
+      await trx
+        .updateTable('rollout_plans')
+        .set({
+          status: 'cancelled',
+          next_at: null,
+          paused_reason: null,
+          error: 'flag was archived',
+          finished_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where('id', 'in', (qb) =>
+          qb
+            .selectFrom('rollout_plans')
+            .select('id')
+            .where('flag_id', '=', after.id)
+            .where('status', 'in', ['active', 'paused'])
+            .forUpdate()
+            .skipLocked(),
+        )
         .execute();
     }
     await recordAudit(trx, {

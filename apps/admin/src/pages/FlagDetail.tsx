@@ -5,6 +5,7 @@ import { ErrorState, Loading } from '../components/ui';
 import { Exposures } from '../flags/Exposures';
 import { FlagSettings } from '../flags/FlagSettings';
 import { History } from '../flags/History';
+import { RolloutPlan } from '../flags/RolloutPlan';
 import { Schedules } from '../flags/Schedules';
 import { StatusBadge, TYPE_LABEL } from '../flags/status';
 import { Targeting } from '../flags/Targeting';
@@ -15,6 +16,7 @@ import { useScope } from './Layout';
 const TABS = [
   { key: 'targeting', label: 'Targeting' },
   { key: 'schedules', label: 'Schedules' },
+  { key: 'rollout', label: 'Rollout' },
   { key: 'exposures', label: 'Evaluations' },
   { key: 'history', label: 'History' },
   { key: 'settings', label: 'Settings' },
@@ -152,6 +154,19 @@ export function FlagDetail() {
           ))}
         {tab === 'schedules' && (
           <Schedules project={project.key} flag={f} env={env} envName={envName} canEdit={canEdit} />
+        )}
+        {tab === 'rollout' && (
+          <RolloutPlan
+            project={project.key}
+            flag={f}
+            env={env}
+            envName={envName}
+            canEdit={canEdit}
+            onChanged={() => {
+              flag.reload();
+              ruleset.reload();
+            }}
+          />
         )}
         {tab === 'exposures' && (
           <Exposures project={project.key} flag={f} env={env} envName={envName} />

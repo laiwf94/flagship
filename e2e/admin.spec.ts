@@ -284,6 +284,11 @@ const PAGES: { name: string; path: string; ready: (page: Page) => Promise<void> 
     ready: async (p) => expect(p.getByText('Scheduled', { exact: true })).toBeVisible(),
   },
   {
+    name: 'flag-rollout',
+    path: `${P}/flags/new-checkout?tab=rollout`,
+    ready: async (p) => expect(p.getByText('No rollout running')).toBeVisible(),
+  },
+  {
     name: 'flag-evaluations',
     path: `${P}/flags/new-checkout?tab=exposures`,
     ready: async (p) =>
@@ -358,6 +363,13 @@ for (const width of [1440, 390] as const) {
     await expect(page.getByRole('dialog')).toBeVisible();
     await expectAccessible(page, 'create flag dialog');
     await expectNoHorizontalScroll(page, 'create flag dialog');
+    await page.keyboard.press('Escape');
+
+    await page.goto(`${base()}${P}/flags/new-checkout?tab=rollout`);
+    await page.getByRole('button', { name: 'Start a rollout' }).click();
+    await expect(page.getByRole('dialog', { name: 'Start a rollout' })).toBeVisible();
+    await expectAccessible(page, 'start rollout dialog');
+    await expectNoHorizontalScroll(page, 'start rollout dialog');
     await page.keyboard.press('Escape');
 
     await page.goto(`${base()}${P}/flags?q=nothing-matches-this`);

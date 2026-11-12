@@ -9,3 +9,4 @@ export * from './operators.js';
 export * from './evaluate.js';
 export * from './diff.js';
 export * from './lifecycle.js';
+export * from './plan.js';

@@ -3,6 +3,7 @@ import type {
   Flag,
   Lifecycle,
   LifecycleStage,
+  RolloutPlan,
   Rule,
   Ruleset,
   Segment,
@@ -146,6 +147,25 @@ export interface Schedule {
   status: 'pending' | 'applied' | 'failed' | 'cancelled';
   error: string | null;
   createdBy: string;
+}
+
+export type RolloutStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
+export type RolloutAction = 'pause' | 'resume' | 'cancel';
+
+export interface RolloutPlanView {
+  id: string;
+  plan: RolloutPlan;
+  status: RolloutStatus;
+  /** Index of the step applied last. */
+  step: number;
+  weight: number;
+  nextAt: string | null;
+  pausedReason: 'manual' | 'kill_switch' | 'edited' | null;
+  error: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
 }
 
 export interface ApiKey {
@@ -432,6 +452,38 @@ export const api = {
     request<Schedule>(
       'DELETE',
       `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/schedules/${enc(id)}`,
+    ),
+  rolloutPlans: (project: string, key: string, env: string) =>
+    request<{ plans: RolloutPlanView[] }>(
+      'GET',
+      `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/rollout-plans`,
+    ),
+  startRolloutPlan: (
+    project: string,
+    key: string,
+    env: string,
+    plan: RolloutPlan,
+    note?: ChangeNote,
+  ) =>
+    request<RolloutPlanView>(
+      'POST',
+      `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/rollout-plans`,
+      plan,
+      note,
+    ),
+  changeRolloutPlan: (
+    project: string,
+    key: string,
+    env: string,
+    id: string,
+    action: RolloutAction,
+    note?: ChangeNote,
+  ) =>
+    request<RolloutPlanView>(
+      'POST',
+      `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/rollout-plans/${enc(id)}/${action}`,
+      {},
+      note,
     ),
   exposures: (project: string, key: string, env: string, hours: number) =>
     request<ExposureSummary>(

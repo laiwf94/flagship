@@ -29,6 +29,9 @@ export const LIMITS = {
   contextArrayLength: 100,
   flagsPerRuleset: 5000,
   segmentsPerRuleset: 1000,
+  rolloutSteps: 20,
+  /** Longest hold on one rollout step: 30 days. */
+  rolloutHoldMinutes: 43_200,
 } as const;
 
 /** Rollout weights are integers out of this total, so 1 unit is 0.001%. */
@@ -119,6 +122,69 @@ export const ruleSchema = z.strictObject({
   serve: serveSchema,
 });
 export type Rule = z.infer<typeof ruleSchema>;
+
+/** Where a rollout plan writes its split: the default rule or one rule, by id. */
+export const rolloutTargetSchema = z.union([
+  z.literal('fallthrough'),
+  z.strictObject({ rule: ruleIdSchema }),
+]);
+export type RolloutTarget = z.infer<typeof rolloutTargetSchema>;
+
+export const rolloutStepSchema = z.strictObject({
+  /** Share of contexts on the rolled-out variant, out of ROLLOUT_TOTAL. */
+  weight: z.int().min(1).max(ROLLOUT_TOTAL),
+  /** Minutes to stay on this step before the next one; not used on the last step. */
+  holdMinutes: z.int().min(1).max(LIMITS.rolloutHoldMinutes).optional(),
+});
+export type RolloutStep = z.infer<typeof rolloutStepSchema>;
+
+/**
+ * A progressive rollout of one variant over another on one serve of a flag.
+ * Steps only grow, so with the sticky bucketing in bucket.ts nobody who got
+ * `variant` at one step loses it at the next; the last step is 100%.
+ */
+export const rolloutPlanSchema = z
+  .strictObject({
+    target: rolloutTargetSchema,
+    variant: keySchema,
+    baseline: keySchema,
+    bucketBy: attributeNameSchema.optional(),
+    steps: z.array(rolloutStepSchema).min(1).max(LIMITS.rolloutSteps),
+  })
+  .superRefine((plan, ctx) => {
+    if (plan.variant === plan.baseline) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseline'],
+        message: 'must differ from the rolled-out variant',
+      });
+    }
+    plan.steps.forEach((step, i) => {
+      const prev = plan.steps[i - 1];
+      if (prev !== undefined && step.weight <= prev.weight) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['steps', i, 'weight'],
+          message: 'must be larger than the step before',
+        });
+      }
+      if (i < plan.steps.length - 1 && step.holdMinutes === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['steps', i, 'holdMinutes'],
+          message: 'is required on every step but the last',
+        });
+      }
+    });
+    if (plan.steps.at(-1)?.weight !== ROLLOUT_TOTAL) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['steps', plan.steps.length - 1, 'weight'],
+        message: `the last step must be ${ROLLOUT_TOTAL} (100%)`,
+      });
+    }
+  });
+export type RolloutPlan = z.infer<typeof rolloutPlanSchema>;
 
 export const prerequisiteSchema = z.strictObject({
   flag: keySchema,

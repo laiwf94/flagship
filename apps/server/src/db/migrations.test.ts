@@ -34,6 +34,7 @@ describe('migrations', () => {
       '007_audit_search',
       '008_audit_snapshots',
       '009_flag_lifecycle',
+      '010_rollout_plans',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -59,6 +60,7 @@ describe('migrations', () => {
       'flags',
       'login_attempts',
       'projects',
+      'rollout_plans',
       'ruleset_changes',
       'scheduled_changes',
       'segments',
@@ -80,6 +82,9 @@ describe('migrations', () => {
         'flag_configs_lifecycle_due_idx',
         'flag_evaluations_pkey',
         'login_attempts_last_at_idx',
+        'rollout_plans_due_idx',
+        'rollout_plans_flag_idx',
+        'rollout_plans_live_idx',
         'scheduled_changes_due_idx',
         'sessions_expires_idx',
         'api_keys_key_hash_key',

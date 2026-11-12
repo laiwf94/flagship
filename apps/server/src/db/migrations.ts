@@ -307,4 +307,35 @@ export const migrations: Record<string, Migration> = {
       ADD COLUMN lifecycle_checked_at timestamptz`,
     `CREATE INDEX flag_configs_lifecycle_due_idx ON flag_configs (lifecycle_checked_at NULLS FIRST)`,
   ]),
+  // Progressive rollouts: a plan steps one serve of a flag in one environment
+  // from a small share to everyone. `step` is the index of the step applied
+  // last (the first is applied when the plan starts) and `next_at` is when the
+  // scheduler loop applies the next one; only an active plan has one, so the
+  // due index stays small. One live (active or paused) plan per flag and
+  // environment, enforced here as well as under the environment lock.
+  '010_rollout_plans': statements([
+    `CREATE TABLE rollout_plans (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      flag_id uuid NOT NULL REFERENCES flags (id) ON DELETE CASCADE,
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      plan jsonb NOT NULL,
+      status text NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'paused', 'completed', 'cancelled', 'failed')),
+      step integer NOT NULL DEFAULT 0 CHECK (step >= 0),
+      next_at timestamptz,
+      paused_reason text CHECK (paused_reason IN ('manual', 'kill_switch', 'edited')),
+      error text CHECK (length(error) <= 1000),
+      created_by uuid REFERENCES users (id) ON DELETE SET NULL,
+      created_by_name text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      finished_at timestamptz,
+      CHECK ((status = 'active') = (next_at IS NOT NULL)),
+      CHECK ((status = 'paused') = (paused_reason IS NOT NULL))
+    )`,
+    `CREATE UNIQUE INDEX rollout_plans_live_idx ON rollout_plans (flag_id, environment_id)
+      WHERE status IN ('active', 'paused')`,
+    `CREATE INDEX rollout_plans_due_idx ON rollout_plans (next_at) WHERE status = 'active'`,
+    `CREATE INDEX rollout_plans_flag_idx ON rollout_plans (flag_id, environment_id, created_at DESC)`,
+  ]),
 };

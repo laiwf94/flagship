@@ -4,6 +4,26 @@ Notable changes to flagship. Each entry links the roadmap issue it belongs to.
 
 ## Unreleased
 
+### Experiments ([#28](https://github.com/laiwf94/flagship/issues/28), 2026-11-16 to 2026-11-22)
+
+Upgrading runs one migration (`010_rollout_plans`) on start.
+
+#### Added
+
+- Progressive rollouts: `POST .../flags/:flag/environments/:env/rollout-plans` starts a plan
+  that steps a variant over a baseline on the default rule or one rule, through growing
+  weights to 100%, holding each step for 1 minute to 30 days. The first step applies at once
+  and the scheduler applies each later one exactly once across instances. Turning the flag
+  off pauses the plan, a hand edit to the targeted serve pauses it rather than being
+  overwritten, and `.../rollout-plans/:id/pause`, `/resume` and `/cancel` control it by hand.
+  Stickiness holds across steps. The flag page has a Rollout tab to start, follow and control
+  one, and `flagship_rollout_steps_total` counts steps by outcome.
+
+#### Fixed
+
+- A targeting write and the lifecycle check running at once could deadlock, failing one of
+  them ([#81](https://github.com/laiwf94/flagship/issues/81)).
+
 ### Safe changes ([#27](https://github.com/laiwf94/flagship/issues/27), 2026-11-09 to 2026-11-15)
 
 Upgrading runs five migrations (`005_change_requests`, `006_segment_change_requests`,
