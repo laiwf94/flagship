@@ -11,8 +11,8 @@ they commit, previewed before they are saved, and recorded with who made them. E
 has a size limit, and no rule can make an SDK do unbounded work, regular expressions
 included.
 
-This version leaves out experimentation statistics (we count exposures, we don't compute
-significance), per-user overrides beyond segments, and multi-region replication. See
+This version records first exposures and conversions for experiments but doesn't yet compute
+significance, per-user overrides beyond segments, and multi-region replication. See
 [Larger deployments](#larger-deployments).
 
 ## Data model
@@ -159,6 +159,7 @@ interesting ones:
 | `audit_log`                                                                         | actor, action, before and after JSON                                   |
 | `login_attempts`                                                                    | recent sign-in attempts per email and per address, shared by instances |
 | `change_requests`, `change_request_reviews`                                         | proposed targeting or segment with its base, and each review           |
+| `experiment_exposures`, `conversion_events`                                         | first exposure per context and flag; raw conversions, one per SDK id   |
 | `scheduled_changes`, `exposure_counts`, `sessions`, `api_keys`, `users`, `projects` |                                                                        |
 
 Every write follows the same shape inside one transaction:
@@ -608,6 +609,81 @@ hidden, posting `text/plain` (no CORS preflight) with the client key in the quer
 
 Counts are per instance until flushed, so a crash loses at most one flush interval. For a
 feature count that is the right trade against a write per request.
+
+## Conversion events and first exposures
+
+Experiments need two more things than counts: which variant each context saw **first**, and
+what it did afterwards. Both travel on `POST /sdk/v1/events`, next to the counts, as two more
+optional lists. One request carries up to 1,000 items in all.
+
+```json
+{
+  "events": [{ "flag": "checkout", "variant": "b", "count": 40, "at": 1794537600000 }],
+  "exposures": [{ "flag": "checkout", "variant": "b", "key": "user-17", "at": 1794537601234 }],
+  "conversions": [
+    {
+      "id": "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+      "event": "purchase",
+      "key": "user-17",
+      "value": 25.5,
+      "at": 1794537659000
+    }
+  ]
+}
+```
+
+**First exposures.** An SDK reports a context's exposure to a flag once, and only when a
+percentage split bucketed it (reason `SPLIT`). Contexts served a fixed variant by a rule or
+the kill switch aren't part of any experiment, and leaving them out is what keeps this cheap:
+one row per bucketed context and flag, not one per evaluation. The SDK remembers the pairs
+it has reported in a set of `maxSeenContexts` (10,000 on servers, 1,000 in browsers), oldest
+forgotten first. Forgetting one only means it may be reported again, which costs one row
+update.
+
+The server keeps the **earliest** report per (environment, flag, context): pending reports
+are merged in memory, and the upsert into `experiment_exposures` replaces a row only when
+`(first_at, variant)` sorts before the stored one. So the result doesn't depend on which
+instance or which retry reports first, and two reports at the same millisecond agree on the
+smaller variant key. A context first bucketed into `off` at 10% that a later step moves to
+`on` still counts for `off`, which is what an experiment needs: its conversions belong to the
+variant it was assigned when it entered.
+
+**Conversions.** `track(event, context, value?)` in the Node SDK and `track(event, value?)` in
+the browser SDK (for the current user) queue a conversion with a random id, the event key, the
+context key, an optional value (a price, a duration; finite, at most 10^15) and the time.
+Rows go into `conversion_events` with `ON CONFLICT (environment_id, id) DO NOTHING`, and
+pending conversions are keyed by id too, so a batch whose answer was lost and is sent again
+is stored once. They are stored raw because attribution depends on when each context was
+first exposed, which may be reported later than the conversion.
+
+**Attribution.** `attributedConversions` joins the two tables: a conversion counts for the
+variant a context was first served, if it happened at or after that exposure and inside the
+window (`occurred_at >= first_at` and `< first_at + window`). Conversions before the first
+exposure, outside the window, or from contexts never exposed count for no one. The result per
+variant is exposed contexts, converted contexts, conversions and the sum of values. The
+`conversion_events (environment_id, event_key, context_key, occurred_at)` index serves the
+join.
+
+**Backpressure** works as for counts. First exposures and conversions share one bounded
+queue of `FLAGSHIP_EVENTS_QUEUE_LIMIT` pending records (a report already pending takes no
+more room), flushed on the same interval. A request is checked against both queues before
+anything is added, and is refused whole with `429` and `Retry-After` if either is full, so
+the counts in it aren't taken without its conversions. A failed flush puts records back, and
+since both writes are idempotent, a flush that failed half way is safe to repeat.
+Timestamps more than a week old or five minutes ahead are dropped, as for counts.
+`flagship_experiment_events_total{kind,result}` and `flagship_experiment_queue_entries`
+expose both sides.
+
+The SDKs bound their buffers at `maxEvents` first exposures plus conversions (10,000 on
+servers, 1,000 in browsers) and count what they drop (`droppedEvents`); `track()` returns
+false then, and for an invalid event key or value. A batch waiting to be retried keeps its
+place, so newer events are the ones dropped. Requests are packed to at most 1,000 items and
+about 200 KB, under the server's 256 KiB body limit even with 1,024-character context keys.
+In browsers, `sendBeacon` batches are packed to 60 KB (browsers cap a beacon at about 64 KB).
+`sendExposures: false` turns off counts and first exposures but not `track()`.
+
+A client key can report exposures and conversions for any context key, as any client-side
+analytics can; results should be read with that in mind for client-side flags.
 
 ## Flag lifecycle and stale flags
 

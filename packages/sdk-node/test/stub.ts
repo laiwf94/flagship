@@ -11,6 +11,8 @@ export class StubServer {
   ruleset: Ruleset;
   readonly streams = new Set<http.ServerResponse>();
   readonly events: unknown[] = [];
+  /** Every accepted events request body, whole. */
+  readonly bodies: { events?: unknown[]; exposures?: unknown[]; conversions?: unknown[] }[] = [];
   readonly lastEventIds: (string | undefined)[] = [];
   eventsStatus = 202;
   streamStatus = 200;
@@ -83,8 +85,11 @@ export class StubServer {
     if (req.url === '/sdk/v1/events' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) body += String(chunk);
-      if (this.eventsStatus === 202)
-        this.events.push(...(JSON.parse(body) as { events: unknown[] }).events);
+      if (this.eventsStatus === 202) {
+        const parsed = JSON.parse(body) as StubServer['bodies'][number];
+        this.bodies.push(parsed);
+        this.events.push(...(parsed.events ?? []));
+      }
       res
         .writeHead(this.eventsStatus, this.eventsStatus === 429 ? { 'retry-after': '1' } : {})
         .end('{}');

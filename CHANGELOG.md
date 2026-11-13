@@ -6,7 +6,7 @@ Notable changes to flagship. Each entry links the roadmap issue it belongs to.
 
 ### Experiments ([#28](https://github.com/laiwf94/flagship/issues/28), 2026-11-16 to 2026-11-22)
 
-Upgrading runs one migration (`010_rollout_plans`) on start.
+Upgrading runs two migrations (`010_rollout_plans`, `011_experiment_events`) on start.
 
 #### Added
 
@@ -18,6 +18,16 @@ Upgrading runs one migration (`010_rollout_plans`) on start.
   overwritten, and `.../rollout-plans/:id/pause`, `/resume` and `/cancel` control it by hand.
   Stickiness holds across steps. The flag page has a Rollout tab to start, follow and control
   one, and `flagship_rollout_steps_total` counts steps by outcome.
+- Conversion events: `track(event, context, value?)` in `@flagship/node` and
+  `track(event, value?)` in `@flagship/browser` queue conversions with an id, so a retried
+  batch is stored once. SDKs also report each context's first exposure to a percentage split,
+  once per context and flag. `POST /sdk/v1/events` takes both as new `exposures` and
+  `conversions` lists next to the counts (1,000 items in all) and refuses a request whole
+  with `429` when its queue is full. The server keeps the earliest exposure per context in
+  `experiment_exposures`, whatever order reports arrive in, and attributes conversions to
+  it inside a window. SDK buffers are bounded by `maxEvents` (`droppedEvents` counts what
+  didn't fit), and `flagship_experiment_events_total` and
+  `flagship_experiment_queue_entries` are new metrics.
 
 #### Fixed
 

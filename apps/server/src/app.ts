@@ -20,6 +20,7 @@ import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
 import { KeyAuthenticator } from './services/apikeys.js';
 import { RulesetCache } from './services/cache.js';
+import { ExperimentEventQueue, experimentWriter } from './services/experimentEvents.js';
 import { ExposureQueue, exposureWriter } from './services/exposures.js';
 import { lifecycleCheck } from './services/lifecycle.js';
 import { Scheduler } from './services/schedules.js';
@@ -51,6 +52,7 @@ export interface App {
   cache: RulesetCache;
   scheduler: Scheduler;
   exposures: ExposureQueue;
+  experiments: ExperimentEventQueue;
   /** Stops accepting work, drains streams and background jobs, closes the server. */
   close: () => Promise<void>;
 }
@@ -193,7 +195,18 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     now,
   });
   exposures.start();
-  await server.register(sdkRoutes(ctx, { cache, hub, exposures }), { prefix: '/sdk/v1' });
+  const experiments = new ExperimentEventQueue({
+    write: experimentWriter(db),
+    limit: config.eventsQueueLimit,
+    flushMs: config.eventsFlushMs,
+    metrics,
+    logger,
+    now,
+  });
+  experiments.start();
+  await server.register(sdkRoutes(ctx, { cache, hub, exposures, experiments }), {
+    prefix: '/sdk/v1',
+  });
 
   const admin = await bootstrapAdmin(db, config.bootstrapAdmin);
   if (admin !== undefined) await bootstrapProject(db, { id: admin.id, name: admin.name });
@@ -217,6 +230,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     () => scheduler.stop(),
     () => hub.close(),
     () => exposures.stop(),
+    () => experiments.stop(),
   ];
 
   await server.ready();
@@ -229,6 +243,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     cache,
     scheduler,
     exposures,
+    experiments,
     close: async () => {
       draining = true;
       for (const close of closers) await close();

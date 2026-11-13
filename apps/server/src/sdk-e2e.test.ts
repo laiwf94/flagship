@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net';
 import { FlagshipClient } from '@flagship/node';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { testApp, type TestApp } from '../test/app.js';
+import { attributedConversions } from './services/experimentEvents.js';
 import { PASSWORD, signIn, type Client } from '../test/session.js';
 
 let t: TestApp;
@@ -19,6 +20,9 @@ async function until(check: () => boolean, ms = 5000): Promise<void> {
     await new Promise((r) => setTimeout(r, 10));
   }
 }
+
+let ten = new Set<string>();
+let fifty = new Set<string>();
 
 async function rollout(percent: number): Promise<void> {
   const flag = (await admin.request('GET', `${P}/flags/new-checkout`)).json();
@@ -82,13 +86,13 @@ describe('Node SDK against the real server', () => {
 
     await rollout(10);
     await until(() => enabledUsers().size > 0);
-    const ten = enabledUsers();
+    ten = enabledUsers();
     expect(ten.size / users.length).toBeGreaterThan(0.08);
     expect(ten.size / users.length).toBeLessThan(0.12);
 
     await rollout(50);
     await until(() => enabledUsers().size > ten.size);
-    const fifty = enabledUsers();
+    fifty = enabledUsers();
     expect(fifty.size / users.length).toBeGreaterThan(0.47);
     expect(fifty.size / users.length).toBeLessThan(0.53);
     for (const u of ten) expect(fifty.has(u)).toBe(true);
@@ -108,5 +112,44 @@ describe('Node SDK against the real server', () => {
     const total = summary.totals.reduce((n: number, v: { count: number }) => n + v.count, 0);
     expect(total).toBeGreaterThan(users.length);
     expect(summary.totals.map((v: { variant: string }) => v.variant).sort()).toEqual(['off', 'on']);
+  });
+
+  it('attributes tracked conversions to the variant each user was first served', async () => {
+    // Every user was first bucketed at 10%; those who joined at 50% still count for "off".
+    const converters = enabledUsers();
+    expect(converters).toEqual(fifty);
+    for (const u of users)
+      if (converters.has(u.key)) expect(sdk.track('purchase', u, 1)).toBe(true);
+    await sdk.flush();
+    await t.app.experiments.flush();
+    const env = await t.db
+      .selectFrom('environments')
+      .innerJoin('projects', 'projects.id', 'environments.project_id')
+      .select('environments.id')
+      .where('projects.key', '=', 'default')
+      .where('environments.key', '=', 'production')
+      .executeTakeFirstOrThrow();
+    const results = await attributedConversions(t.db, {
+      environmentId: env.id,
+      flag: 'new-checkout',
+      event: 'purchase',
+      windowMs: 3_600_000,
+    });
+    expect(results).toEqual([
+      {
+        variant: 'off',
+        exposed: users.length - ten.size,
+        converted: fifty.size - ten.size,
+        conversions: fifty.size - ten.size,
+        value: fifty.size - ten.size,
+      },
+      {
+        variant: 'on',
+        exposed: ten.size,
+        converted: ten.size,
+        conversions: ten.size,
+        value: ten.size,
+      },
+    ]);
   });
 });

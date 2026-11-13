@@ -67,7 +67,9 @@ server and client keys, stored hashed. Failed sign-ins are limited per email and
 from one budget in Postgres, so adding instances doesn't add guesses, and if that budget
 can't be checked, sign-in answers `503` rather than letting the attempt through. SDKs also
 report which variants they served, batched and with backpressure, and the UI shows the counts
-per variant.
+per variant. For experiments, `track('purchase', context, 25)` records a conversion, and
+SDKs report each context's first exposure to a percentage split once, so a conversion counts
+for the variant that context saw first.
 
 A whole project exports to one JSON document (flags, targeting in every environment and
 segments, with each environment's checksum) and imports back into a new project, or a copy
@@ -124,7 +126,7 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 
 | Package                      | For         | How it works                                                                                                                                |
 | ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@flagship/node`             | servers     | holds the ruleset, evaluates locally, SSE with resume, ETag polling fallback, exposure batching                                             |
+| `@flagship/node`             | servers     | holds the ruleset, evaluates locally, SSE with resume, ETag polling fallback, exposure and `track()` batching                               |
 | `@flagship/node/openfeature` | OpenFeature | `OpenFeature.setProvider(new FlagshipProvider({ sdkKey, baseUrl }))`                                                                        |
 | `@flagship/browser`          | web apps    | client key; the server evaluates the user's context and the SDK caches the values for synchronous reads; refetches when the version changes |
 | `@flagship/core`             | everything  | model, validation, evaluator; also used by the admin UI's preview                                                                           |
@@ -135,36 +137,36 @@ Admin routes use the session cookie and need `X-CSRF-Token` on writes. Any write
 `Flagship-Reason` (percent-encoded) and `Flagship-Link` headers, recorded on its audit entry.
 SDK routes take `Authorization: Bearer <key>`.
 
-| Endpoint                                                                    | Purpose                                                       |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `POST /api/session`, `GET /api/session`, `DELETE /api/session`              | sign in (returns the CSRF token), current user, sign out      |
-| `PUT /api/session/password`                                                 | change password, ending other sessions                        |
-| `GET/POST /api/users`, `PATCH /api/users/:id`                               | people and roles (admin)                                      |
-| `GET/POST /api/projects`, `POST /api/projects/:p/environments`              | projects and environments                                     |
-| `GET/POST/DELETE /api/projects/:p/environments/:e/api-keys[/:id]`           | SDK keys; the secret is returned once (admin)                 |
-| `GET /api/projects/:p/export`                                               | the whole project as one JSON document, streamed (admin)      |
-| `POST /api/projects/import?key=&name=`                                      | create a project from an export, validated first (admin)      |
-| `GET/POST /api/projects/:p/flags`                                           | list with `q`, `status`, `type` filters; create               |
-| `GET/PUT /api/projects/:p/flags/:f`                                         | read; edit name, description, variants (with `version`)       |
-| `PUT /api/projects/:p/flags/:f/environments/:e`                             | replace targeting (with that environment's `version`)         |
-| `POST /api/projects/:p/flags/:f/environments/:e/kill-switch`                | `{"enabled": false}`, no version needed                       |
-| `POST /api/projects/:p/flags/:f/archive`, `/restore`                        | archive and restore                                           |
-| `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                             |
-| `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step            |
-| `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout  |
-| `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                            |
-| `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                     |
-| `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI             |
-| `GET /api/projects/:p/audit?flag=&segment=&actor=&q=&from=&to=&cursor=`     | change history with diffs, searchable, keyset-paged           |
-| `GET /api/projects/:p/audit/:id/restore?to=before\|after`                   | what restoring an entry would change, against what is live    |
-| `POST /api/projects/:p/audit/:id/restore`                                   | restore it, or open a change request in a protected env       |
-| `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)   |
-| `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)               |
-| `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`     |
-| `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only) |
-| `GET /sdk/v1/client-stream?key=`                                            | SSE of version numbers for browsers                           |
-| `POST /sdk/v1/events`                                                       | exposure counts; `429` + `Retry-After` when the queue is full |
-| `GET /healthz`, `GET /readyz`, `GET /metrics`                               | liveness, readiness (checks Postgres), Prometheus             |
+| Endpoint                                                                    | Purpose                                                                                      |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `POST /api/session`, `GET /api/session`, `DELETE /api/session`              | sign in (returns the CSRF token), current user, sign out                                     |
+| `PUT /api/session/password`                                                 | change password, ending other sessions                                                       |
+| `GET/POST /api/users`, `PATCH /api/users/:id`                               | people and roles (admin)                                                                     |
+| `GET/POST /api/projects`, `POST /api/projects/:p/environments`              | projects and environments                                                                    |
+| `GET/POST/DELETE /api/projects/:p/environments/:e/api-keys[/:id]`           | SDK keys; the secret is returned once (admin)                                                |
+| `GET /api/projects/:p/export`                                               | the whole project as one JSON document, streamed (admin)                                     |
+| `POST /api/projects/import?key=&name=`                                      | create a project from an export, validated first (admin)                                     |
+| `GET/POST /api/projects/:p/flags`                                           | list with `q`, `status`, `type` filters; create                                              |
+| `GET/PUT /api/projects/:p/flags/:f`                                         | read; edit name, description, variants (with `version`)                                      |
+| `PUT /api/projects/:p/flags/:f/environments/:e`                             | replace targeting (with that environment's `version`)                                        |
+| `POST /api/projects/:p/flags/:f/environments/:e/kill-switch`                | `{"enabled": false}`, no version needed                                                      |
+| `POST /api/projects/:p/flags/:f/archive`, `/restore`                        | archive and restore                                                                          |
+| `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                                                            |
+| `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step                                           |
+| `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout                                 |
+| `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                                                           |
+| `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                                                    |
+| `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI                                            |
+| `GET /api/projects/:p/audit?flag=&segment=&actor=&q=&from=&to=&cursor=`     | change history with diffs, searchable, keyset-paged                                          |
+| `GET /api/projects/:p/audit/:id/restore?to=before\|after`                   | what restoring an entry would change, against what is live                                   |
+| `POST /api/projects/:p/audit/:id/restore`                                   | restore it, or open a change request in a protected env                                      |
+| `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)                                  |
+| `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)                                              |
+| `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`                                    |
+| `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only)                                |
+| `GET /sdk/v1/client-stream?key=`                                            | SSE of version numbers for browsers                                                          |
+| `POST /sdk/v1/events`                                                       | exposure counts, first exposures and conversions; `429` + `Retry-After` when a queue is full |
+| `GET /healthz`, `GET /readyz`, `GET /metrics`                               | liveness, readiness (checks Postgres), Prometheus                                            |
 
 Errors look like `{"error":{"code":"version_conflict","message":"...","request_id":"...","details":{...}}}`
 with stable codes: `invalid_argument` 400 (with field paths in `details`), `unauthenticated` 401,

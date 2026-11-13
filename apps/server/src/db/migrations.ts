@@ -338,4 +338,32 @@ export const migrations: Record<string, Migration> = {
     `CREATE INDEX rollout_plans_due_idx ON rollout_plans (next_at) WHERE status = 'active'`,
     `CREATE INDEX rollout_plans_flag_idx ON rollout_plans (flag_id, environment_id, created_at DESC)`,
   ]),
+  // Experiment events. `experiment_exposures` keeps the first exposure of each
+  // context to each flag (only contexts bucketed by a percentage split are
+  // reported), so a conversion is attributed to the variant the context saw
+  // first. The earliest report wins whatever order they arrive in, with the
+  // variant key breaking a tie. `conversion_events` holds raw conversions; the
+  // SDK gives each an id, so a retried batch doesn't count one twice.
+  '011_experiment_events': statements([
+    `CREATE TABLE experiment_exposures (
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      flag_key text NOT NULL,
+      context_key text NOT NULL CHECK (length(context_key) <= 1024),
+      variant text NOT NULL,
+      first_at timestamptz NOT NULL,
+      PRIMARY KEY (environment_id, flag_key, context_key)
+    )`,
+    `CREATE TABLE conversion_events (
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      id text NOT NULL CHECK (length(id) <= 64),
+      event_key text NOT NULL,
+      context_key text NOT NULL CHECK (length(context_key) <= 1024),
+      value double precision,
+      occurred_at timestamptz NOT NULL,
+      received_at timestamptz NOT NULL,
+      PRIMARY KEY (environment_id, id)
+    )`,
+    `CREATE INDEX conversion_events_context_idx
+      ON conversion_events (environment_id, event_key, context_key, occurred_at)`,
+  ]),
 };

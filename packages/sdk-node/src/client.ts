@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
   RulesetDigest,
   evaluate,
+  keySchema,
   own,
   validateFlag,
   validateRuleset,
@@ -43,6 +44,15 @@ export interface ClientOptions {
   exposureFlushMs?: number;
   /** Distinct flag/variant pairs held between flushes before new ones are dropped (10,000). */
   maxExposureKeys?: number;
+  /**
+   * First exposures and conversions held between flushes before new ones are
+   * dropped (10,000). A first exposure is sent once per context and flag, and
+   * only for contexts a percentage split bucketed, so experiment results can
+   * attribute conversions to the variant each context saw first.
+   */
+  maxEvents?: number;
+  /** Context and flag pairs remembered as already reported; the oldest are forgotten first (10,000). */
+  maxSeenContexts?: number;
   logger?: Logger;
   fetch?: typeof fetch;
 }
@@ -131,6 +141,11 @@ export class FlagshipClient extends EventEmitter<Events> {
   private exposureWindow = Date.now();
   private exposureRetryAt = 0;
   private exposureFailures = 0;
+  /** First exposures waiting to be sent, by flag and context key. */
+  private firstExposures = new Map<string, FirstExposure>();
+  /** Flag and context pairs already reported, oldest first. */
+  private seen = new Set<string>();
+  private conversions: Conversion[] = [];
   private flushing: Promise<void> | null = null;
   private readonly o: Required<Omit<ClientOptions, 'logger' | 'fetch'>> & {
     logger: Logger;
@@ -138,6 +153,8 @@ export class FlagshipClient extends EventEmitter<Events> {
   };
   /** Exposure counts discarded because the buffer was full. */
   droppedExposures = 0;
+  /** First exposures and conversions discarded because the buffer was full. */
+  droppedEvents = 0;
   /**
    * Full resyncs forced because a snapshot or patch did not match its
    * checksum, or a patch could not be applied. Non-zero means the stream lost
@@ -159,6 +176,8 @@ export class FlagshipClient extends EventEmitter<Events> {
       sendExposures: true,
       exposureFlushMs: 10_000,
       maxExposureKeys: 10_000,
+      maxEvents: 10_000,
+      maxSeenContexts: 10_000,
       ...options,
       baseUrl: options.baseUrl.replace(/\/+$/, ''),
       logger: options.logger ?? silent,
@@ -168,12 +187,11 @@ export class FlagshipClient extends EventEmitter<Events> {
     this.on('error', () => undefined);
     if (this.o.streaming) void this.streamLoop();
     else this.schedulePoll(0);
-    if (this.o.sendExposures) {
-      this.flushTimer = setInterval(() => {
-        void this.flush();
-      }, this.o.exposureFlushMs);
-      this.flushTimer.unref();
-    }
+    // Conversions are sent even with sendExposures off, so the timer always runs.
+    this.flushTimer = setInterval(() => {
+      void this.flush();
+    }, this.o.exposureFlushMs);
+    this.flushTimer.unref();
   }
 
   get status(): Status {
@@ -219,6 +237,7 @@ export class FlagshipClient extends EventEmitter<Events> {
     const e = evaluate(this.ruleset, flagKey, context);
     if (e.reason === 'ERROR') return { value: fallback, reason: 'ERROR', errorCode: e.errorCode };
     this.recordExposure(flagKey, e.variant);
+    if (e.reason === 'SPLIT') this.recordFirstExposure(flagKey, e.variant, context.key);
     const d: Detail<T> = { value: e.value as T, variant: e.variant, reason: e.reason };
     if (e.ruleId !== undefined) d.ruleId = e.ruleId;
     return d;
@@ -269,6 +288,33 @@ export class FlagshipClient extends EventEmitter<Events> {
     return this.jsonDetail(flagKey, context, fallback).value;
   }
 
+  /**
+   * Records a conversion for `context`, such as a purchase, to be sent with
+   * the next flush. Experiment results count it for the variant of each flag
+   * the context was first served. `value` (a price, a duration) is optional.
+   * Returns false, and records nothing, if the event key or value is invalid,
+   * the buffer is full, or the client is closed.
+   */
+  track(event: string, context: Context, value?: number): boolean {
+    if (this.state === 'closed') return false;
+    if (!keySchema.safeParse(event).success || !validContextKey(context.key)) {
+      this.o.logger.warn('track() ignored an invalid event', { event });
+      return false;
+    }
+    if (value !== undefined && !validValue(value)) {
+      this.o.logger.warn('track() ignored an invalid value', { event });
+      return false;
+    }
+    if (this.pendingEvents() >= this.o.maxEvents) {
+      this.droppedEvents++;
+      return false;
+    }
+    const c: Conversion = { id: randomUUID(), event, key: context.key, at: Date.now() };
+    if (value !== undefined) c.value = value;
+    this.conversions.push(c);
+    return true;
+  }
+
   /** Keys of the flags in the current ruleset. */
   flagKeys(): string[] {
     return Object.keys(this.ruleset?.flags ?? {});
@@ -284,6 +330,10 @@ export class FlagshipClient extends EventEmitter<Events> {
     if (this.flushTimer !== null) clearInterval(this.flushTimer);
     this.exposureRetryAt = 0;
     await this.flush();
+  }
+
+  private pendingEvents(): number {
+    return this.firstExposures.size + this.conversions.length;
   }
 
   private isClosed(): boolean {
@@ -562,7 +612,24 @@ export class FlagshipClient extends EventEmitter<Events> {
     else this.droppedExposures++;
   }
 
-  /** Sends pending exposure counts now. Normally runs on a timer and at close. */
+  private recordFirstExposure(flag: string, variant: string, contextKey: string): void {
+    if (!this.o.sendExposures || this.state === 'closed') return;
+    const key = `${flag}\u0000${contextKey}`;
+    if (this.seen.has(key) || !validContextKey(contextKey)) return;
+    if (this.pendingEvents() >= this.o.maxEvents) {
+      this.droppedEvents++;
+      return;
+    }
+    // Forgetting the oldest only means a context may be reported twice; the server keeps the first.
+    if (this.seen.size >= this.o.maxSeenContexts) {
+      const oldest = this.seen.values().next();
+      if (oldest.done !== true) this.seen.delete(oldest.value);
+    }
+    this.seen.add(key);
+    this.firstExposures.set(key, { flag, variant, key: contextKey, at: Date.now() });
+  }
+
+  /** Sends pending exposure counts, first exposures and conversions now. Normally runs on a timer and at close. */
   flush(): Promise<void> {
     this.flushing ??= this.doFlush().finally(() => {
       this.flushing = null;
@@ -571,23 +638,30 @@ export class FlagshipClient extends EventEmitter<Events> {
   }
 
   private async doFlush(): Promise<void> {
-    if (this.exposures.size === 0 || Date.now() < this.exposureRetryAt) return;
-    const batch = this.exposures;
+    if (this.exposures.size === 0 && this.pendingEvents() === 0) return;
+    if (Date.now() < this.exposureRetryAt) return;
     const at = this.exposureWindow;
-    this.exposures = new Map();
-    this.exposureWindow = Date.now();
-    const events = [...batch].map(([k, count]) => {
+    const counts: CountEvent[] = [...this.exposures].map(([k, count]) => {
       const [flag = '', variant = ''] = k.split('\u0000');
       return { flag, variant, count, at };
     });
-    for (let i = 0; i < events.length; i += 1000) {
-      const chunk = events.slice(i, i + 1000);
+    const batch: EventBatch = {
+      events: counts,
+      exposures: [...this.firstExposures.values()],
+      conversions: this.conversions,
+    };
+    this.exposures = new Map();
+    this.firstExposures = new Map();
+    this.conversions = [];
+    this.exposureWindow = Date.now();
+    const requests = packEvents(batch);
+    for (let i = 0; i < requests.length; i++) {
       let retryAfterMs: number | undefined;
       try {
         const res = await this.o.fetch(`${this.o.baseUrl}/sdk/v1/events`, {
           method: 'POST',
           headers: this.headers({ 'content-type': 'application/json' }),
-          body: JSON.stringify({ events: chunk }),
+          body: JSON.stringify(requests[i]),
           signal: AbortSignal.timeout(this.o.requestTimeoutMs),
         });
         if (res.status === 429 || res.status >= 500) {
@@ -602,19 +676,112 @@ export class FlagshipClient extends EventEmitter<Events> {
         this.exposureFailures++;
         const backoff = Math.min(60_000, 1000 * 2 ** this.exposureFailures);
         this.exposureRetryAt = Date.now() + (retryAfterMs ?? backoff);
-        this.o.logger.warn('could not send exposure counts; keeping them', { error: String(err) });
-        for (const e of events.slice(i)) {
-          const key = `${e.flag}\u0000${e.variant}`;
-          const n = this.exposures.get(key);
-          if (n !== undefined) this.exposures.set(key, n + e.count);
-          else if (this.exposures.size < this.o.maxExposureKeys) this.exposures.set(key, e.count);
-          else this.droppedExposures += e.count;
-        }
+        this.o.logger.warn('could not send events; keeping them', { error: String(err) });
+        for (const r of requests.slice(i)) this.putBack(r);
         this.exposureWindow = Math.min(this.exposureWindow, at);
         return;
       }
     }
   }
+
+  /** Returns unsent events to the buffers, within their bounds. */
+  private putBack(r: Partial<EventBatch>): void {
+    for (const e of r.events ?? []) {
+      const key = `${e.flag}\u0000${e.variant}`;
+      const n = this.exposures.get(key);
+      if (n !== undefined) this.exposures.set(key, n + e.count);
+      else if (this.exposures.size < this.o.maxExposureKeys) this.exposures.set(key, e.count);
+      else this.droppedExposures += e.count;
+    }
+    for (const e of r.exposures ?? []) {
+      const key = `${e.flag}\u0000${e.key}`;
+      const pending = this.firstExposures.get(key);
+      if (pending !== undefined) {
+        if (e.at < pending.at) this.firstExposures.set(key, e);
+      } else if (this.pendingEvents() < this.o.maxEvents) this.firstExposures.set(key, e);
+      else this.droppedEvents++;
+    }
+    for (const c of r.conversions ?? []) {
+      if (this.pendingEvents() < this.o.maxEvents) this.conversions.push(c);
+      else this.droppedEvents++;
+    }
+  }
+}
+
+interface CountEvent {
+  flag: string;
+  variant: string;
+  count: number;
+  at: number;
+}
+
+interface FirstExposure {
+  flag: string;
+  variant: string;
+  key: string;
+  at: number;
+}
+
+interface Conversion {
+  id: string;
+  event: string;
+  key: string;
+  value?: number;
+  at: number;
+}
+
+export interface EventBatch {
+  events: CountEvent[];
+  exposures: FirstExposure[];
+  conversions: Conversion[];
+}
+
+/** The server's limits on one events request: 1,000 items and a 256 KiB body. */
+const MAX_ITEMS = 1000;
+const MAX_BYTES = 200_000;
+
+/**
+ * Splits pending events into request bodies the server accepts: at most
+ * 1,000 items in all, and well under its body limit even when every context
+ * key is long. Empty lists are left out.
+ */
+export function packEvents(batch: EventBatch): Partial<EventBatch>[] {
+  const out: Partial<EventBatch>[] = [];
+  let current: EventBatch = { events: [], exposures: [], conversions: [] };
+  let items = 0;
+  let bytes = 0;
+  const finish = () => {
+    if (items === 0) return;
+    const body: Partial<EventBatch> = {};
+    if (current.events.length > 0) body.events = current.events;
+    if (current.exposures.length > 0) body.exposures = current.exposures;
+    if (current.conversions.length > 0) body.conversions = current.conversions;
+    out.push(body);
+    current = { events: [], exposures: [], conversions: [] };
+    items = 0;
+    bytes = 0;
+  };
+  const add = <K extends keyof EventBatch>(list: K, item: EventBatch[K][number]) => {
+    const size = JSON.stringify(item).length + 1;
+    if (items >= MAX_ITEMS || bytes + size > MAX_BYTES) finish();
+    (current[list] as EventBatch[K][number][]).push(item);
+    items++;
+    bytes += size;
+  };
+  for (const e of batch.events) add('events', e);
+  for (const e of batch.exposures) add('exposures', e);
+  for (const c of batch.conversions) add('conversions', c);
+  finish();
+  return out;
+}
+
+/** The server takes context keys of 1 to 1,024 characters. */
+function validContextKey(key: unknown): key is string {
+  return typeof key === 'string' && key.length > 0 && key.length <= 1024;
+}
+
+function validValue(value: number): boolean {
+  return Number.isFinite(value) && Math.abs(value) <= 1e15;
 }
 
 export type { Context, ContextValue };

@@ -34,13 +34,17 @@ function fakeServer(
   answer: (ctx: Context) => { version: number; flags: Flags; checksum?: string } | 'fail' | number,
 ) {
   const events: unknown[] = [];
+  const bodies: Record<string, unknown[]>[] = [];
+  const state = { eventsStatus: 202 };
   const pending: (() => void)[] = [];
   let hold = false;
   const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
     const u = url;
     const body = JSON.parse(init?.body as string) as { context?: Context; events?: unknown[] };
     if (u.endsWith('/sdk/v1/events')) {
+      if (state.eventsStatus !== 202) return new Response('{}', { status: state.eventsStatus });
       events.push(...(body.events ?? []));
+      bodies.push(body as Record<string, unknown[]>);
       return new Response('{}', { status: 202 });
     }
     if (hold) await new Promise<void>((r) => pending.push(r));
@@ -52,6 +56,8 @@ function fakeServer(
   return {
     fetch: fetchFn as unknown as typeof fetch,
     events,
+    bodies,
+    state,
     hold: () => {
       hold = true;
     },
@@ -228,6 +234,153 @@ describe('BrowserClient', () => {
     expect(FakeEventSource.last?.closed).toBe(true);
     c.boolVariation('checkout', false);
     expect(sent).toHaveLength(2);
+  });
+
+  const splitFlags = (variant: string): Flags => ({
+    exp: { value: variant === 'on', variant, reason: 'SPLIT' },
+    checkout: { value: true, variant: 'on', reason: 'DEFAULT' },
+  });
+
+  it('reports a first exposure once per user, only for split flags, and tracks conversions', async () => {
+    const server = fakeServer((ctx) => ({
+      version: 1,
+      flags: splitFlags(ctx.key === 'alice' ? 'on' : 'off'),
+    }));
+    const c = make(server);
+    await c.ready();
+    for (let i = 0; i < 3; i++) {
+      c.boolVariation('exp', false);
+      c.boolVariation('checkout', false);
+    }
+    expect(c.track('purchase', 30)).toBe(true);
+    await c.identify({ key: 'bob' });
+    c.boolVariation('exp', false);
+    expect(c.track('signup')).toBe(true);
+    await c.flush();
+    expect(server.bodies).toHaveLength(1);
+    const body = server.bodies[0] ?? {};
+    expect(body.exposures).toEqual([
+      { flag: 'exp', variant: 'on', key: 'alice', at: expect.any(Number) },
+      { flag: 'exp', variant: 'off', key: 'bob', at: expect.any(Number) },
+    ]);
+    expect(body.conversions).toEqual([
+      {
+        id: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
+        event: 'purchase',
+        key: 'alice',
+        value: 30,
+        at: expect.any(Number),
+      },
+      {
+        id: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
+        event: 'signup',
+        key: 'bob',
+        at: expect.any(Number),
+      },
+    ]);
+    // Alice again: already reported.
+    await c.identify({ key: 'alice' });
+    c.boolVariation('exp', false);
+    await c.flush();
+    expect(server.bodies.slice(1).flatMap((b) => b.exposures ?? [])).toEqual([]);
+  });
+
+  it('keeps events through a 429, refuses invalid conversions and bounds the buffer', async () => {
+    const server = fakeServer(() => ({ version: 1, flags: splitFlags('on') }));
+    const c = make(server, { maxEvents: 2, sendExposures: false });
+    await c.ready();
+    c.boolVariation('exp', false); // sendExposures: false reports no exposures
+    expect(c.track('../bad')).toBe(false);
+    expect(c.track('purchase', Number.POSITIVE_INFINITY)).toBe(false);
+    expect(c.track('purchase', 1)).toBe(true);
+    expect(c.track('purchase', 2)).toBe(true);
+    expect(c.track('purchase', 3)).toBe(false);
+    expect(c.droppedEvents).toBe(1);
+    server.state.eventsStatus = 429;
+    await c.flush();
+    expect(server.bodies).toEqual([]);
+    server.state.eventsStatus = 202;
+    await c.flush();
+    expect(server.bodies).toEqual([
+      {
+        conversions: [
+          expect.objectContaining({ event: 'purchase', value: 1 }),
+          expect.objectContaining({ event: 'purchase', value: 2 }),
+        ],
+      },
+    ]);
+    c.close();
+    expect(c.track('purchase')).toBe(false);
+  });
+
+  it('splits a large beacon into several under the browser limit', async () => {
+    const sent: string[] = [];
+    const server = fakeServer((ctx) => ({ version: 1, flags: splitFlags(ctx.key.slice(0, 1)) }));
+    const c = make(server, {
+      maxEvents: 500,
+      sendBeacon: (_url, blob) => {
+        void blob.text().then((body) => sent.push(body));
+        return sent.length < 100;
+      },
+    });
+    await c.ready();
+    const long = 'k'.repeat(1000);
+    for (let i = 0; i < 200; i++) {
+      await c.identify({ key: `${long}${String(i).padStart(3, '0')}` });
+      c.boolVariation('exp', false);
+    }
+    c.close();
+    await vi.waitFor(() => {
+      expect(sent.length).toBeGreaterThan(1);
+    });
+    const parsed = sent.map((b) => JSON.parse(b) as { exposures?: { key: string }[] });
+    for (const b of sent) expect(b.length).toBeLessThan(64 * 1024);
+    expect(parsed.flatMap((b) => b.exposures ?? [])).toHaveLength(200);
+  });
+
+  it('puts back unsent requests when a beacon is refused or the network fails', async () => {
+    const server = fakeServer(() => ({ version: 1, flags: splitFlags('on') }));
+    let accept = false;
+    const c = make(server, { sendBeacon: () => accept });
+    await c.ready();
+    c.boolVariation('exp', false);
+    c.track('purchase');
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    accept = true;
+    (c as unknown as { o: { fetch: typeof fetch } }).o.fetch = vi.fn(async () => {
+      throw new TypeError('offline');
+    });
+    await c.flush();
+    (c as unknown as { o: { fetch: typeof fetch } }).o.fetch = server.fetch;
+    await c.flush();
+    expect(server.bodies).toEqual([
+      {
+        events: [expect.objectContaining({ flag: 'exp' })],
+        exposures: [expect.objectContaining({ key: 'alice' })],
+        conversions: [expect.objectContaining({ event: 'purchase' })],
+      },
+    ]);
+  });
+
+  it('makes conversion ids without crypto.randomUUID', async () => {
+    const server = fakeServer(() => ({ version: 1, flags: splitFlags('on') }));
+    const c = make(server);
+    await c.ready();
+    const real = globalThis.crypto;
+    vi.stubGlobal('crypto', {
+      getRandomValues: real.getRandomValues.bind(real),
+      subtle: real.subtle,
+    });
+    c.track('a');
+    vi.stubGlobal('crypto', undefined);
+    c.track('b');
+    vi.unstubAllGlobals();
+    await c.flush();
+    const ids = (server.bodies[0]?.conversions as { id: string }[]).map((x) => x.id);
+    expect(ids).toHaveLength(2);
+    for (const id of ids) expect(id).toMatch(/^[0-9a-f]{32}$/);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 
   it('refuses server keys', () => {

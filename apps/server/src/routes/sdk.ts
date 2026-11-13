@@ -1,4 +1,4 @@
-import { contextSchema, evaluateAll, evaluationChecksum, keySchema } from '@flagship/core';
+import { LIMITS, contextSchema, evaluateAll, evaluationChecksum, keySchema } from '@flagship/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { authenticateSdk } from '../auth/sdk.js';
@@ -7,6 +7,7 @@ import type { KeyKind } from '../db/schema.js';
 import { AppError, parse } from '../errors.js';
 import type { RulesetCache } from '../services/cache.js';
 import { nativeSha256 } from '../services/rulesets.js';
+import type { ExperimentEventQueue } from '../services/experimentEvents.js';
 import type { ExposureQueue } from '../services/exposures.js';
 import type { Hub } from '../streaming/hub.js';
 
@@ -14,25 +15,64 @@ export interface SdkDeps {
   cache: RulesetCache;
   hub: Hub;
   exposures: ExposureQueue;
+  experiments: ExperimentEventQueue;
 }
 
 const LAST_EVENT_ID = /^\d{1,15}$/;
 
 const evaluateBody = z.strictObject({ context: contextSchema });
 
-const eventsBody = z.strictObject({
-  events: z
-    .array(
-      z.strictObject({
-        flag: keySchema,
-        variant: keySchema,
-        count: z.int().min(1).max(1_000_000),
-        at: z.int().min(0).optional(),
-      }),
-    )
-    .min(1)
-    .max(1000),
-});
+/** Items in one events request, counted across all three lists. */
+const MAX_EVENTS = 1000;
+
+const contextKey = z.string().min(1).max(LIMITS.contextStringLength);
+const timestamp = z.int().min(0);
+
+/**
+ * `events` are exposure counts per flag and variant (every SDK sends these).
+ * `exposures` are first exposures per context, which SDKs send only for
+ * contexts bucketed by a percentage split, and `conversions` come from
+ * `track()`. A request may carry any mix, up to 1,000 items in all.
+ */
+const eventsBody = z
+  .strictObject({
+    events: z
+      .array(
+        z.strictObject({
+          flag: keySchema,
+          variant: keySchema,
+          count: z.int().min(1).max(1_000_000),
+          at: timestamp.optional(),
+        }),
+      )
+      .max(MAX_EVENTS)
+      .optional(),
+    exposures: z
+      .array(
+        z.strictObject({ flag: keySchema, variant: keySchema, key: contextKey, at: timestamp }),
+      )
+      .max(MAX_EVENTS)
+      .optional(),
+    conversions: z
+      .array(
+        z.strictObject({
+          id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/, 'must be 8 to 64 letters, digits, - or _'),
+          event: keySchema,
+          key: contextKey,
+          value: z.number().min(-1e15).max(1e15).optional(),
+          at: timestamp,
+        }),
+      )
+      .max(MAX_EVENTS)
+      .optional(),
+  })
+  .refine(
+    (b) => {
+      const n = (b.events?.length ?? 0) + (b.exposures?.length ?? 0) + (b.conversions?.length ?? 0);
+      return n >= 1 && n <= MAX_EVENTS;
+    },
+    { message: `between 1 and ${MAX_EVENTS} items in all` },
+  );
 
 function lastEventId(request: FastifyRequest): number | undefined {
   const raw = request.headers['last-event-id'];
@@ -168,14 +208,26 @@ export function sdkRoutes(ctx: Context, deps: SdkDeps) {
 
     sdk.post('/events', { bodyLimit: 256 * 1024 }, async (request, reply) => {
       const id = await authenticateSdk(ctx.keys, request, ['client', 'server'], true);
-      const { events } = parse(eventsBody, request.body, 'events');
-      const result = deps.exposures.offer(id.environmentId, events);
-      if (result === undefined) {
+      const body = parse(eventsBody, request.body, 'events');
+      const events = body.events ?? [];
+      const exposures = body.exposures ?? [];
+      const conversions = body.conversions ?? [];
+      // All or nothing: the SDK keeps a refused request and sends it again.
+      const counts = deps.exposures.prepare(id.environmentId, events);
+      const experiment = deps.experiments.prepare(id.environmentId, exposures, conversions);
+      if (!counts.fits || !experiment.fits) {
+        counts.reject();
+        experiment.reject();
         throw new AppError('resource_exhausted', 'event queue is full, retry later', undefined, {
           'retry-after': '5',
         });
       }
-      return reply.status(202).send({ accepted: events.length, dropped: result.dropped });
+      counts.commit();
+      experiment.commit();
+      return reply.status(202).send({
+        accepted: events.length + exposures.length + conversions.length,
+        dropped: counts.dropped + experiment.dropped,
+      });
     });
 
     sdk.get('/stream', { config: { stream: true } }, (request, reply) =>

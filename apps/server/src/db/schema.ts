@@ -190,6 +190,26 @@ export interface ExposureCountsTable {
   count: number;
 }
 
+export interface ExperimentExposuresTable {
+  environment_id: string;
+  flag_key: string;
+  context_key: string;
+  /** The variant the context was first served, which its conversions count towards. */
+  variant: string;
+  first_at: Date;
+}
+
+export interface ConversionEventsTable {
+  environment_id: string;
+  /** Chosen by the SDK, so a retried batch is stored once. */
+  id: string;
+  event_key: string;
+  context_key: string;
+  value: number | null;
+  occurred_at: Date;
+  received_at: Date;
+}
+
 export interface FlagEvaluationsTable {
   environment_id: string;
   flag_key: string;
@@ -263,6 +283,8 @@ export interface Database {
   rollout_plans: RolloutPlansTable;
   exposure_counts: ExposureCountsTable;
   flag_evaluations: FlagEvaluationsTable;
+  experiment_exposures: ExperimentExposuresTable;
+  conversion_events: ConversionEventsTable;
   login_attempts: LoginAttemptsTable;
   change_requests: ChangeRequestsTable;
   change_request_reviews: ChangeRequestReviewsTable;

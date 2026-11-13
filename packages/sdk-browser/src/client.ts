@@ -37,6 +37,12 @@ export interface BrowserClientOptions {
   exposureFlushMs?: number;
   /** Distinct flag/variant pairs held between flushes (1,000). */
   maxExposureKeys?: number;
+  /**
+   * First exposures and conversions held between flushes (1,000). A first
+   * exposure is sent once per user and flag, only when a percentage split
+   * bucketed the user, so experiment results can attribute conversions.
+   */
+  maxEvents?: number;
   /** First and largest delay before refetching an answer that failed its checksum (1 s, 30 s). */
   retryMs?: { initial: number; max: number };
   fetch?: typeof fetch;
@@ -67,6 +73,10 @@ export class BrowserClient {
   private readonly listeners = new Set<Listener>();
   private readonly readyWaiters: (() => void)[] = [];
   private exposures = new Map<string, number>();
+  private firstExposures = new Map<string, FirstExposure>();
+  /** Flag and user pairs already reported, oldest first. */
+  private seen = new Set<string>();
+  private conversions: Conversion[] = [];
   private closed = false;
   private readonly o: Required<
     Omit<BrowserClientOptions, 'EventSource' | 'sendBeacon' | 'context' | 'subtle'>
@@ -80,6 +90,8 @@ export class BrowserClient {
    * sent. The values from before stay in use until a verified answer arrives.
    */
   resyncs = 0;
+  /** First exposures and conversions discarded because the buffer was full. */
+  droppedEvents = 0;
   private readonly onHide = () => {
     if (document.visibilityState === 'hidden') this.beacon();
   };
@@ -96,6 +108,7 @@ export class BrowserClient {
       sendExposures: true,
       exposureFlushMs: 10_000,
       maxExposureKeys: 1000,
+      maxEvents: 1000,
       retryMs: { initial: 1000, max: 30_000 },
       fetch: globalThis.fetch.bind(globalThis),
       ...options,
@@ -110,13 +123,11 @@ export class BrowserClient {
     };
     void this.refresh();
     if (this.o.streaming && this.o.EventSource !== undefined) this.listen(this.o.EventSource);
-    if (this.o.sendExposures) {
-      this.timer = setInterval(() => {
-        void this.flush();
-      }, this.o.exposureFlushMs);
-      if (typeof document !== 'undefined')
-        document.addEventListener('visibilitychange', this.onHide);
-    }
+    // Conversions are sent even with sendExposures off, so the timer always runs.
+    this.timer = setInterval(() => {
+      void this.flush();
+    }, this.o.exposureFlushMs);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onHide);
   }
 
   /** Resolves true once values for the current context have loaded. */
@@ -156,7 +167,10 @@ export class BrowserClient {
       return { value: fallback, reason: 'ERROR', errorCode: e.errorCode ?? 'GENERAL' };
     }
     if (!check(e.value)) return { value: fallback, reason: 'ERROR', errorCode: 'TYPE_MISMATCH' };
-    if (e.variant !== undefined) this.record(key, e.variant);
+    if (e.variant !== undefined) {
+      this.record(key, e.variant);
+      if (e.reason === 'SPLIT') this.recordFirst(key, e.variant);
+    }
     const d: Detail<T> = { value: e.value as T, reason: e.reason };
     if (e.variant !== undefined) d.variant = e.variant;
     return d;
@@ -176,6 +190,25 @@ export class BrowserClient {
 
   jsonVariation<T extends Value>(key: string, fallback: T): T {
     return this.detail(key, fallback).value;
+  }
+
+  /**
+   * Records a conversion for the current user, such as a purchase. Experiment
+   * results count it for the variant of each flag the user was first served.
+   * Returns false, and records nothing, if the event key or value is invalid,
+   * the buffer is full, or the client is closed.
+   */
+  track(event: string, value?: number): boolean {
+    if (this.closed || !EVENT_KEY.test(event) || !validContextKey(this.context.key)) return false;
+    if (value !== undefined && !(Number.isFinite(value) && Math.abs(value) <= 1e15)) return false;
+    if (this.firstExposures.size + this.conversions.length >= this.o.maxEvents) {
+      this.droppedEvents++;
+      return false;
+    }
+    const c: Conversion = { id: eventId(), event, key: this.context.key, at: Date.now() };
+    if (value !== undefined) c.value = value;
+    this.conversions.push(c);
+    return true;
   }
 
   /** Every flag value for the current context, for debugging panels. */
@@ -262,59 +295,103 @@ export class BrowserClient {
     else if (this.exposures.size < this.o.maxExposureKeys) this.exposures.set(key, 1);
   }
 
-  private take(): { flag: string; variant: string; count: number }[] {
-    const events = [...this.exposures].map(([k, count]) => {
-      const [flag = '', variant = ''] = k.split('\u0000');
-      return { flag, variant, count };
-    });
-    this.exposures = new Map();
-    return events;
+  private recordFirst(flag: string, variant: string): void {
+    const contextKey = this.context.key;
+    if (!this.o.sendExposures || this.closed || !validContextKey(contextKey)) return;
+    const key = `${flag}\u0000${contextKey}`;
+    if (this.seen.has(key)) return;
+    if (this.firstExposures.size + this.conversions.length >= this.o.maxEvents) {
+      this.droppedEvents++;
+      return;
+    }
+    // Forgetting the oldest only means a user may be reported twice; the server keeps the first.
+    if (this.seen.size >= SEEN_LIMIT) {
+      const oldest = this.seen.values().next();
+      if (oldest.done !== true) this.seen.delete(oldest.value);
+    }
+    this.seen.add(key);
+    this.firstExposures.set(key, { flag, variant, key: contextKey, at: Date.now() });
   }
 
-  private putBack(events: { flag: string; variant: string; count: number }[]): void {
-    for (const e of events) {
+  private take(): EventBatch {
+    const batch: EventBatch = {
+      events: [...this.exposures].map(([k, count]) => {
+        const [flag = '', variant = ''] = k.split('\u0000');
+        return { flag, variant, count };
+      }),
+      exposures: [...this.firstExposures.values()],
+      conversions: this.conversions,
+    };
+    this.exposures = new Map();
+    this.firstExposures = new Map();
+    this.conversions = [];
+    return batch;
+  }
+
+  private putBack(r: Partial<EventBatch>): void {
+    for (const e of r.events ?? []) {
       const key = `${e.flag}\u0000${e.variant}`;
       const n = this.exposures.get(key);
       if (n !== undefined) this.exposures.set(key, n + e.count);
       else if (this.exposures.size < this.o.maxExposureKeys) this.exposures.set(key, e.count);
     }
+    const room = () => this.firstExposures.size + this.conversions.length < this.o.maxEvents;
+    for (const e of r.exposures ?? []) {
+      const key = `${e.flag}\u0000${e.key}`;
+      const pending = this.firstExposures.get(key);
+      if (pending !== undefined) {
+        if (e.at < pending.at) this.firstExposures.set(key, e);
+      } else if (room()) this.firstExposures.set(key, e);
+      else this.droppedEvents++;
+    }
+    for (const c of r.conversions ?? []) {
+      if (room()) this.conversions.push(c);
+      else this.droppedEvents++;
+    }
   }
 
-  /** Sends pending exposure counts. */
+  /** Sends pending exposure counts, first exposures and conversions. */
   async flush(): Promise<void> {
-    const events = this.take();
-    if (events.length === 0) return;
-    try {
-      const res = await this.o.fetch(`${this.o.baseUrl}/sdk/v1/events`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${this.o.clientKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ events }),
-        keepalive: true,
-      });
-      if (res.status === 429 || res.status >= 500) this.putBack(events);
-    } catch {
-      this.putBack(events);
+    const requests = packEvents(this.take(), 200_000);
+    for (let i = 0; i < requests.length; i++) {
+      try {
+        const res = await this.o.fetch(`${this.o.baseUrl}/sdk/v1/events`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.o.clientKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(requests[i]),
+          keepalive: true,
+        });
+        if (res.status === 429 || res.status >= 500) {
+          for (const r of requests.slice(i)) this.putBack(r);
+          return;
+        }
+      } catch {
+        for (const r of requests.slice(i)) this.putBack(r);
+        return;
+      }
     }
   }
 
   /**
    * Last-chance delivery when the page is hidden. sendBeacon can't set
    * headers, so the (public) client key goes in the query string and the
-   * body is sent as text/plain, which needs no CORS preflight.
+   * body is sent as text/plain, which needs no CORS preflight. Browsers cap a
+   * beacon at about 64 KB, so large batches go as several.
    */
   private beacon(): void {
     if (this.o.sendBeacon === undefined) return;
-    const events = this.take();
-    if (events.length === 0) return;
+    const requests = packEvents(this.take(), 60_000);
     const url = `${this.o.baseUrl}/sdk/v1/events?key=${encodeURIComponent(this.o.clientKey)}`;
-    const ok = this.o.sendBeacon(
-      url,
-      new Blob([JSON.stringify({ events })], { type: 'text/plain' }),
-    );
-    if (!ok) this.putBack(events);
+    for (let i = 0; i < requests.length; i++) {
+      const body = new Blob([JSON.stringify(requests[i])], { type: 'text/plain' });
+      if (!this.o.sendBeacon(url, body)) {
+        for (const r of requests.slice(i)) this.putBack(r);
+        return;
+      }
+    }
   }
 
   close(): void {
@@ -327,6 +404,85 @@ export class BrowserClient {
     if (typeof document !== 'undefined')
       document.removeEventListener('visibilitychange', this.onHide);
   }
+}
+
+interface CountEvent {
+  flag: string;
+  variant: string;
+  count: number;
+}
+
+interface FirstExposure {
+  flag: string;
+  variant: string;
+  key: string;
+  at: number;
+}
+
+interface Conversion {
+  id: string;
+  event: string;
+  key: string;
+  value?: number;
+  at: number;
+}
+
+interface EventBatch {
+  events: CountEvent[];
+  exposures: FirstExposure[];
+  conversions: Conversion[];
+}
+
+const EVENT_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const SEEN_LIMIT = 1000;
+
+/** The server takes context keys of 1 to 1,024 characters. */
+function validContextKey(key: unknown): boolean {
+  return typeof key === 'string' && key.length > 0 && key.length <= 1024;
+}
+
+/** A random id for a conversion, so a retried request is stored once. */
+function eventId(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (typeof c?.randomUUID === 'function') return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof c?.getRandomValues === 'function') c.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Splits pending events into request bodies of at most 1,000 items and about
+ * `maxBytes` of JSON. Empty lists are left out.
+ */
+export function packEvents(batch: EventBatch, maxBytes: number): Partial<EventBatch>[] {
+  const out: Partial<EventBatch>[] = [];
+  let current: EventBatch = { events: [], exposures: [], conversions: [] };
+  let items = 0;
+  let bytes = 0;
+  const finish = () => {
+    if (items === 0) return;
+    const body: Partial<EventBatch> = {};
+    if (current.events.length > 0) body.events = current.events;
+    if (current.exposures.length > 0) body.exposures = current.exposures;
+    if (current.conversions.length > 0) body.conversions = current.conversions;
+    out.push(body);
+    current = { events: [], exposures: [], conversions: [] };
+    items = 0;
+    bytes = 0;
+  };
+  const add = <K extends keyof EventBatch>(list: K, item: EventBatch[K][number]) => {
+    const size = JSON.stringify(item).length + 1;
+    if (items >= 1000 || (items > 0 && bytes + size > maxBytes)) finish();
+    (current[list] as EventBatch[K][number][]).push(item);
+    items++;
+    bytes += size;
+  };
+  for (const e of batch.events) add('events', e);
+  for (const e of batch.exposures) add('exposures', e);
+  for (const c of batch.conversions) add('conversions', c);
+  finish();
+  return out;
 }
 
 export function createClient(options: BrowserClientOptions): BrowserClient {

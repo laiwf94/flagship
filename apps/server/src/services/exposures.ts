@@ -2,6 +2,7 @@ import { sql } from 'kysely';
 import type { Logger } from 'pino';
 import type { Db } from '../db/database.js';
 import type { Metrics } from '../metrics.js';
+import type { Prepared } from './experimentEvents.js';
 
 export interface ExposureEvent {
   flag: string;
@@ -25,6 +26,11 @@ const MAX_SKEW = 5 * 60_000;
 
 function hourOf(ms: number): number {
   return Math.floor(ms / HOUR) * HOUR;
+}
+
+/** SDK timestamps older than a week, or more than five minutes ahead, are dropped. */
+export function inReportingWindow(at: number, now: number): boolean {
+  return at >= now - MAX_AGE && at <= now + MAX_SKEW;
 }
 
 /**
@@ -59,12 +65,27 @@ export class ExposureQueue {
 
   /** Returns the number of events dropped for bad timestamps, or undefined if the queue is full. */
   offer(environmentId: string, events: readonly ExposureEvent[]): { dropped: number } | undefined {
+    const prepared = this.prepare(environmentId, events);
+    if (!prepared.fits) {
+      prepared.reject();
+      return undefined;
+    }
+    prepared.commit();
+    return { dropped: prepared.dropped };
+  }
+
+  /**
+   * Checks a batch against the bound without adding it, so the events route
+   * can refuse a request whole when any of its queues is full. Nothing may
+   * touch the queue between this and `commit`.
+   */
+  prepare(environmentId: string, events: readonly ExposureEvent[]): Prepared {
     const now = this.o.now().getTime();
     const rows: ExposureRow[] = [];
     let dropped = 0;
     for (const e of events) {
       const at = e.at ?? now;
-      if (at < now - MAX_AGE || at > now + MAX_SKEW) {
+      if (!inReportingWindow(at, now)) {
         dropped += e.count;
         continue;
       }
@@ -81,20 +102,25 @@ export class ExposureQueue {
       const key = this.key(r);
       if (!this.pending.has(key)) fresh.add(key);
     }
-    if (this.pending.size + fresh.size > this.o.limit) {
-      this.o.metrics.exposures.inc(
-        { result: 'rejected' },
-        events.reduce((n, e) => n + e.count, 0),
-      );
-      return undefined;
-    }
-    for (const r of rows) this.add(r);
-    this.o.metrics.exposures.inc(
-      { result: 'accepted' },
-      rows.reduce((n, r) => n + r.count, 0),
-    );
-    if (dropped > 0) this.o.metrics.exposures.inc({ result: 'dropped' }, dropped);
-    return { dropped };
+    const m = this.o.metrics.exposures;
+    return {
+      fits: this.pending.size + fresh.size <= this.o.limit,
+      dropped,
+      commit: () => {
+        for (const r of rows) this.add(r);
+        m.inc(
+          { result: 'accepted' },
+          rows.reduce((n, r) => n + r.count, 0),
+        );
+        if (dropped > 0) m.inc({ result: 'dropped' }, dropped);
+      },
+      reject: () => {
+        m.inc(
+          { result: 'rejected' },
+          events.reduce((n, e) => n + e.count, 0),
+        );
+      },
+    };
   }
 
   private key(r: ExposureRow): string {

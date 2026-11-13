@@ -35,6 +35,7 @@ describe('migrations', () => {
       '008_audit_snapshots',
       '009_flag_lifecycle',
       '010_rollout_plans',
+      '011_experiment_events',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -53,7 +54,9 @@ describe('migrations', () => {
       'audit_log',
       'change_request_reviews',
       'change_requests',
+      'conversion_events',
       'environments',
+      'experiment_exposures',
       'exposure_counts',
       'flag_configs',
       'flag_evaluations',
@@ -79,6 +82,9 @@ describe('migrations', () => {
         'change_requests_project_idx',
         'change_requests_segment_idx',
         'change_requests_target_idx',
+        'conversion_events_context_idx',
+        'conversion_events_pkey',
+        'experiment_exposures_pkey',
         'flag_configs_lifecycle_due_idx',
         'flag_evaluations_pkey',
         'login_attempts_last_at_idx',

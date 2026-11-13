@@ -1,7 +1,14 @@
 import { rulesetChecksum, type Flag, type Ruleset } from '@flagship/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { StubServer, until } from '../test/stub.js';
-import { ChecksumError, FlagshipClient, type ChangeEvent, type Status } from './client.js';
+import {
+  ChecksumError,
+  FlagshipClient,
+  packEvents,
+  type ChangeEvent,
+  type EventBatch,
+  type Status,
+} from './client.js';
 
 function flag(key: string, extra: Partial<Flag> = {}): Flag {
   return {
@@ -412,6 +419,174 @@ describe('FlagshipClient connections', () => {
     await new Promise((r) => setTimeout(r, 2100));
     await client.flush();
     expect(stub.events).toEqual([]);
+  });
+
+  const split = (key: string) =>
+    flag(key, {
+      fallthrough: {
+        rollout: {
+          variants: [
+            { variant: 'on', weight: 50_000 },
+            { variant: 'off', weight: 50_000 },
+          ],
+        },
+      },
+    });
+
+  it('reports a first exposure once per context, only for contexts a split bucketed', async () => {
+    const { stub, client } = await setup(ruleset(split('exp'), flag('fixed')));
+    await client.ready();
+    const served = new Map<string, string | undefined>();
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 200; i++) {
+        const d = client.boolDetail('exp', { key: `u${i}` }, false);
+        expect(d.reason).toBe('SPLIT');
+        served.set(`u${i}`, d.variant);
+        client.boolVariation('fixed', { key: `u${i}` }, false);
+      }
+    }
+    await client.flush();
+    const exposures = stub.bodies.flatMap((b) => b.exposures ?? []) as {
+      flag: string;
+      variant: string;
+      key: string;
+      at: number;
+    }[];
+    expect(exposures).toHaveLength(200);
+    for (const e of exposures) {
+      expect(e.flag).toBe('exp');
+      expect(e.variant).toBe(served.get(e.key));
+      expect(typeof e.at).toBe('number');
+    }
+    expect(new Set(served.values())).toEqual(new Set(['on', 'off']));
+    // Counts still cover every evaluation, of both flags.
+    expect(stub.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ flag: 'fixed', variant: 'on', count: 600 }),
+      ]),
+    );
+    // Already reported: evaluating again sends nothing new.
+    client.boolVariation('exp', { key: 'u1' }, false);
+    await client.flush();
+    expect(stub.bodies.flatMap((b) => b.exposures ?? [])).toHaveLength(200);
+  });
+
+  it('forgets the oldest reported contexts past maxSeenContexts and reports them again', async () => {
+    const { stub, client } = await setup(ruleset(split('exp')), { maxSeenContexts: 2 });
+    await client.ready();
+    for (const key of ['a', 'b', 'c']) client.boolVariation('exp', { key }, false);
+    await client.flush();
+    client.boolVariation('exp', { key: 'c' }, false); // still remembered
+    client.boolVariation('exp', { key: 'a' }, false); // forgotten when c came in
+    await client.flush();
+    expect(
+      stub.bodies.flatMap((b) => (b.exposures ?? []) as { key: string }[]).map((e) => e.key),
+    ).toEqual(['a', 'b', 'c', 'a']);
+  });
+
+  it('tracks conversions with ids and values, and keeps them through a 429', async () => {
+    const { stub, client } = await setup(ruleset(split('exp')), { sendExposures: false });
+    await client.ready();
+    client.boolVariation('exp', alice, false);
+    expect(client.track('purchase', alice, 25.5)).toBe(true);
+    expect(client.track('signup', { key: 'bob' })).toBe(true);
+    stub.eventsStatus = 429;
+    await client.flush();
+    expect(stub.bodies).toEqual([]);
+    stub.eventsStatus = 202;
+    await new Promise((r) => setTimeout(r, 1100));
+    await client.flush();
+    // sendExposures: false turns off exposure reporting, not conversions.
+    expect(stub.bodies).toEqual([
+      {
+        conversions: [
+          {
+            id: expect.any(String),
+            event: 'purchase',
+            key: 'alice',
+            value: 25.5,
+            at: expect.any(Number),
+          },
+          { id: expect.any(String), event: 'signup', key: 'bob', at: expect.any(Number) },
+        ],
+      },
+    ]);
+    const [a, b] = stub.bodies[0]?.conversions as { id: string }[];
+    expect(a?.id).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+    expect(a?.id).not.toBe(b?.id);
+  });
+
+  it('refuses invalid conversions and bounds the event buffer', async () => {
+    const { stub, client } = await setup(ruleset(split('exp')), { maxEvents: 2 });
+    await client.ready();
+    expect(client.track('../bad', alice)).toBe(false);
+    expect(client.track('purchase', { key: '' })).toBe(false);
+    expect(client.track('purchase', { key: 'k'.repeat(1025) })).toBe(false);
+    expect(client.track('purchase', alice, Number.NaN)).toBe(false);
+    expect(client.track('purchase', alice, 1e16)).toBe(false);
+    expect(client.droppedEvents).toBe(0);
+    client.boolVariation('exp', alice, false); // one first exposure
+    expect(client.track('purchase', alice)).toBe(true);
+    expect(client.track('purchase', alice)).toBe(false);
+    client.boolVariation('exp', { key: 'bob' }, false);
+    expect(client.droppedEvents).toBe(2);
+    stub.eventsStatus = 500;
+    await client.flush();
+    // While the batch waits to be retried, newer events can't push it out.
+    expect(client.track('purchase', alice)).toBe(false);
+    expect(client.droppedEvents).toBe(3);
+    stub.eventsStatus = 202;
+    await client.close();
+    expect(client.track('purchase', alice)).toBe(false);
+    expect(stub.events.reduce((n: number, e) => n + (e as { count: number }).count, 0)).toBe(2);
+    expect(stub.bodies).toEqual([
+      {
+        events: expect.any(Array),
+        exposures: [expect.objectContaining({ key: 'alice' })],
+        conversions: [expect.objectContaining({ key: 'alice' })],
+      },
+    ]);
+  });
+
+  it('splits large batches into requests the server accepts', () => {
+    const long = 'k'.repeat(1024);
+    const batch: EventBatch = {
+      events: Array.from({ length: 700 }, (_, i) => ({
+        flag: `f${i}`,
+        variant: 'on',
+        count: 1,
+        at: 0,
+      })),
+      exposures: Array.from({ length: 700 }, (_, i) => ({
+        flag: 'exp',
+        variant: 'on',
+        key: `${long.slice(4)}${String(i).padStart(4, '0')}`,
+        at: 0,
+      })),
+      conversions: Array.from({ length: 10 }, (_, i) => ({
+        id: `id-${String(i).padStart(8, '0')}`,
+        event: 'purchase',
+        key: 'u',
+        at: 0,
+      })),
+    };
+    const requests = packEvents(batch);
+    let total = 0;
+    for (const r of requests) {
+      const n = (r.events?.length ?? 0) + (r.exposures?.length ?? 0) + (r.conversions?.length ?? 0);
+      expect(n).toBeGreaterThan(0);
+      expect(n).toBeLessThanOrEqual(1000);
+      expect(JSON.stringify(r).length).toBeLessThan(256 * 1024);
+      for (const list of [r.events, r.exposures, r.conversions]) {
+        if (list !== undefined) expect(list.length).toBeGreaterThan(0);
+      }
+      total += n;
+    }
+    expect(total).toBe(1410);
+    expect(requests.flatMap((r) => r.exposures ?? []).map((e) => e.key)).toEqual(
+      batch.exposures.map((e) => e.key),
+    );
+    expect(packEvents({ events: [], exposures: [], conversions: [] })).toEqual([]);
   });
 
   it('reconnects when the stream goes silent', async () => {

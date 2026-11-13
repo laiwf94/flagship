@@ -205,6 +205,19 @@ export function createMetrics() {
     exposureQueue: registry.register(
       new Gauge('flagship_exposure_queue_entries', 'Distinct exposure rows waiting to be flushed.'),
     ),
+    experimentEvents: registry.register(
+      new Counter(
+        'flagship_experiment_events_total',
+        'First exposures and conversions reported by SDKs, by kind and outcome.',
+        ['kind', 'result'],
+      ),
+    ),
+    experimentQueue: registry.register(
+      new Gauge(
+        'flagship_experiment_queue_entries',
+        'First exposures and conversions waiting to be flushed.',
+      ),
+    ),
     schedules: registry.register(
       new Counter('flagship_scheduled_changes_total', 'Scheduled changes processed.', ['result']),
     ),
