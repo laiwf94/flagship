@@ -73,6 +73,7 @@ export class ExperimentEventQueue {
   private conversions = new Map<string, ConversionRecord>();
   private timer: NodeJS.Timeout | null = null;
   private flushing: Promise<void> | null = null;
+  private followUp: Promise<void> | null = null;
 
   constructor(
     private readonly o: {
@@ -174,10 +175,19 @@ export class ExperimentEventQueue {
 
   /** Writes everything pending. On failure the records go back for the next try. */
   flush(): Promise<void> {
-    this.flushing ??= this.doFlush().finally(() => {
-      this.flushing = null;
+    if (this.flushing === null) {
+      this.flushing = this.doFlush().finally(() => {
+        this.flushing = null;
+      });
+      return this.flushing;
+    }
+    // The running flush took only what was pending when it started; one more
+    // after it writes what came since. Callers arriving meanwhile share it.
+    this.followUp ??= this.flushing.then(() => {
+      this.followUp = null;
+      return this.flush();
     });
-    return this.flushing;
+    return this.followUp;
   }
 
   private async doFlush(): Promise<void> {

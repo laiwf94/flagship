@@ -149,4 +149,32 @@ describe('ExposureQueue', () => {
     ]);
     expect(q.size).toBe(0);
   });
+
+  it('writes rows offered during a running flush before a later flush resolves', async () => {
+    const written: ExposureRow[][] = [];
+    let release = () => {};
+    const q = new ExposureQueue({
+      write: async (rows) => {
+        if (written.length === 0) await new Promise<void>((r) => (release = r));
+        written.push(rows);
+      },
+      limit: 10,
+      flushMs: 10,
+      metrics: createMetrics(),
+      logger: createLogger('silent'),
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    });
+    q.offer('env', [{ flag: 'f', variant: 'on', count: 1 }]);
+    const running = q.flush(); // say, the timer's, now held up in the database
+    await Promise.resolve();
+    q.offer('env', [{ flag: 'g', variant: 'on', count: 1 }]);
+    const mine = q.flush();
+    const meToo = q.flush();
+    expect(meToo).toBe(mine);
+    release();
+    await running;
+    await mine;
+    expect(written.map((b) => b.map((r) => r.flag))).toEqual([['f'], ['g']]);
+    expect(q.size).toBe(0);
+  });
 });

@@ -42,6 +42,9 @@ Upgrading runs three migrations (`010_rollout_plans`, `011_experiment_events`,
 
 - A targeting write and the lifecycle check running at once could deadlock, failing one of
   them ([#81](https://github.com/laiwf94/flagship/issues/81)).
+- Flushing the exposure or experiment event queue while a timer flush was running returned
+  before records added since that flush started were written, so shutdown could lose them
+  ([#82](https://github.com/laiwf94/flagship/issues/82)).
 
 ### Safe changes ([#27](https://github.com/laiwf94/flagship/issues/27), 2026-11-09 to 2026-11-15)
 

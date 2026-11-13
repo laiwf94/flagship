@@ -365,4 +365,33 @@ describe('ExperimentEventQueue', () => {
     expect(written.flatMap((b) => b.conversions.map((c) => c.id))).toEqual(['queued-01']);
     expect(q.size).toBe(0);
   });
+
+  it('writes records added during a running flush before a later flush resolves', async () => {
+    const written: ExperimentBatch[] = [];
+    let release = () => {};
+    const q = new ExperimentEventQueue({
+      write: async (b) => {
+        if (written.length === 0) await new Promise<void>((r) => (release = r));
+        written.push(b);
+      },
+      limit: 10,
+      flushMs: 10,
+      metrics: createMetrics(),
+      logger: createLogger('silent'),
+      now: () => new Date('2030-03-01T12:00:00Z'),
+    });
+    q.prepare('env', [{ flag: 'f', variant: 'a', key: 'u', at: at(1) }], []).commit();
+    const running = q.flush(); // say, the timer's, now held up in the database
+    await Promise.resolve();
+    q.prepare('env', [], [conversion('u', 2, { id: 'during-01' })]).commit();
+    const mine = q.flush();
+    release();
+    await mine;
+    await running;
+    expect(written.map((b) => [b.exposures.length, b.conversions.map((c) => c.id)])).toEqual([
+      [1, []],
+      [0, ['during-01']],
+    ]);
+    expect(q.size).toBe(0);
+  });
 });
