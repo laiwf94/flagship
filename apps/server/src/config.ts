@@ -33,6 +33,7 @@ const schema = z
     FLAGSHIP_SCHEDULER_INTERVAL_MS: int(100, 3_600_000, 5000),
     FLAGSHIP_EVENTS_FLUSH_MS: int(50, 60_000, 2000),
     FLAGSHIP_EVENTS_QUEUE_LIMIT: int(1, 10_000_000, 50_000),
+    FLAGSHIP_ROLLUP_INTERVAL_MS: int(1000, 3_600_000, 60_000),
     FLAGSHIP_CHANGE_RETENTION: int(10, 1_000_000, 1000),
     FLAGSHIP_IMPORT_MAX_MB: int(1, 1024, 32),
     FLAGSHIP_ADMIN_UI_DIR: z.string().min(1).optional(),
@@ -64,6 +65,8 @@ export interface Config {
   schedulerIntervalMs: number;
   eventsFlushMs: number;
   eventsQueueLimit: number;
+  /** How often experiment results are rolled up from new events. */
+  rollupIntervalMs: number;
   changeRetention: number;
   /** Largest project import accepted, in bytes. */
   importMaxBytes: number;
@@ -105,6 +108,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     schedulerIntervalMs: c.FLAGSHIP_SCHEDULER_INTERVAL_MS,
     eventsFlushMs: c.FLAGSHIP_EVENTS_FLUSH_MS,
     eventsQueueLimit: c.FLAGSHIP_EVENTS_QUEUE_LIMIT,
+    rollupIntervalMs: c.FLAGSHIP_ROLLUP_INTERVAL_MS,
     changeRetention: c.FLAGSHIP_CHANGE_RETENTION,
     importMaxBytes: c.FLAGSHIP_IMPORT_MAX_MB * 1024 * 1024,
     adminUiDir:

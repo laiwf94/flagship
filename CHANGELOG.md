@@ -6,7 +6,8 @@ Notable changes to flagship. Each entry links the roadmap issue it belongs to.
 
 ### Experiments ([#28](https://github.com/laiwf94/flagship/issues/28), 2026-11-16 to 2026-11-22)
 
-Upgrading runs two migrations (`010_rollout_plans`, `011_experiment_events`) on start.
+Upgrading runs three migrations (`010_rollout_plans`, `011_experiment_events`,
+`012_experiment_rollups`) on start.
 
 #### Added
 
@@ -28,6 +29,14 @@ Upgrading runs two migrations (`010_rollout_plans`, `011_experiment_events`) on 
   it inside a window. SDK buffers are bounded by `maxEvents` (`droppedEvents` counts what
   didn't fit), and `flagship_experiment_events_total` and
   `flagship_experiment_queue_entries` are new metrics.
+- Hourly experiment rollups: results per variant and cohort hour (the hour of each
+  context's first exposure), with exposed and converted contexts, conversions, value sums
+  and per-context sums of squares for variance, counting conversions within 7 days of the
+  first exposure. Writes mark the hours they touch from triggers in the same transaction,
+  and every instance's scheduler loop recomputes marked hours from the raw events, each
+  exactly from one snapshot, so any number of instances agree. Runs every
+  `FLAGSHIP_ROLLUP_INTERVAL_MS` (60000); `flagship_experiment_rollups_total` counts hours
+  rolled up and yielded.
 
 #### Fixed
 

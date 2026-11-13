@@ -27,6 +27,7 @@ import { createLogger } from './log.js';
  *   FLAGSHIP_EVENTS_FLUSH_MS       how often exposure counts and experiment events are written (2000)
  *   FLAGSHIP_EVENTS_QUEUE_LIMIT    distinct exposure rows held before answering 429, and the same
  *                                  bound again for first exposures plus conversions (50000)
+ *   FLAGSHIP_ROLLUP_INTERVAL_MS    how often experiment results are rolled up from new events (60000)
  *   FLAGSHIP_CHANGE_RETENTION      ruleset changes kept per environment for stream resume (1000)
  *   FLAGSHIP_IMPORT_MAX_MB         largest project import accepted, in MiB (32)
  *   FLAGSHIP_ADMIN_UI_DIR          directory of the built admin UI to serve at /

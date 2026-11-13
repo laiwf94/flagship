@@ -661,8 +661,7 @@ variant a context was first served, if it happened at or after that exposure and
 window (`occurred_at >= first_at` and `< first_at + window`). Conversions before the first
 exposure, outside the window, or from contexts never exposed count for no one. The result per
 variant is exposed contexts, converted contexts, conversions and the sum of values. The
-`conversion_events (environment_id, event_key, context_key, occurred_at)` index serves the
-join.
+`conversion_events (environment_id, context_key, occurred_at)` index serves the join.
 
 **Backpressure** works as for counts. First exposures and conversions share one bounded
 queue of `FLAGSHIP_EVENTS_QUEUE_LIMIT` pending records (a report already pending takes no
@@ -684,6 +683,58 @@ In browsers, `sendBeacon` batches are packed to 60 KB (browsers cap a beacon at 
 
 A client key can report exposures and conversions for any context key, as any client-side
 analytics can; results should be read with that in mind for client-side flags.
+
+## Hourly experiment rollups
+
+Reading results straight from the raw tables means joining every exposed context to its
+conversions on each request, which grows with the experiment. Instead each instance rolls
+results up as events arrive, and results read the rollup.
+
+**What a row holds.** Rows are keyed by **cohort hour**, the UTC hour of a context's first
+exposure, and variant: `experiment_rollup_exposures` counts the contexts first exposed in
+that hour, and `experiment_rollup_conversions` has, per event key, the contexts that
+converted, their conversions, the sum of their values, and the sums over contexts of the
+square of each context's value total and of its conversion count. Keying by the exposure
+hour rather than the conversion's puts every context in exactly one row, so those sums of
+squares add up across hours, which per-context variances (Welch's t-test, the delta method)
+need. A conversion counts if it happened at or after the first exposure and within 7 days
+(`ATTRIBUTION_WINDOW_MS`, half-open). The window is fixed, so rows written by any instance
+or release mean the same thing; summed over all hours, the rollup equals
+`attributedConversions` with that window.
+
+**What gets recomputed.** An hour is recomputed whole from the raw tables, never
+incremented, so redoing one is harmless. Writes say what they touch from statement-level
+triggers, in the same transaction as the data, one insert per statement:
+
+- inserting a first exposure marks its hour in `experiment_rollup_dirty`, and an earlier
+  report that moves one marks both the hour it leaves and the hour it enters;
+- inserting conversions queues each context, with the range of times, in
+  `experiment_rollup_pending`. A retried conversion inserts nothing and queues nothing.
+
+The worker turns pending contexts into marks in one statement: it deletes a batch of
+pending rows and marks every hour holding a first exposure of that context that a
+conversion in the range could count for. That statement has one snapshot. If the exposure
+it needs commits later, the exposure marked its own hour when it was written, and the
+conversion was committed before (its pending row was visible), so the hour's recompute
+sees both either way. Conversions that arrive before their exposure are picked up the same
+way.
+
+**Across instances.** The worker takes the oldest mark with `FOR UPDATE SKIP LOCKED` in a
+`REPEATABLE READ` transaction, takes a transaction-scoped advisory lock on that flag and
+hour (if another instance holds it, this one yields until its next turn), deletes the
+hour's marks, deletes its rollup rows and inserts them again from the raw tables. The marks
+it deletes are exactly those its snapshot sees, and the recompute sees everything they
+stood for; a mark committed after the snapshot stays for the next pass. Marks have no
+unique key, so a writer never waits on a worker that holds one. If a worker's snapshot
+predates another instance finishing the same hour, deleting the marks that instance
+already deleted fails with a serialization error; the worker rolls back, its marks stay,
+and `flagship_experiment_rollups_total{result="conflict"}` counts it. A test races two
+writers and two workers over 30 batches across 48 cohort hours and checks every row
+against the same numbers computed directly from the records.
+
+The worker runs from the scheduler loop every `FLAGSHIP_ROLLUP_INTERVAL_MS` (a minute by
+default), up to 200 hours per turn, so results lag events by about a minute plus the event
+flush. Exposures gain two indexes for this, by context and by flag and time.
 
 ## Flag lifecycle and stale flags
 

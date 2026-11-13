@@ -21,6 +21,7 @@ import { userRoutes } from './routes/users.js';
 import { KeyAuthenticator } from './services/apikeys.js';
 import { RulesetCache } from './services/cache.js';
 import { ExperimentEventQueue, experimentWriter } from './services/experimentEvents.js';
+import { experimentRollup } from './services/experimentRollup.js';
 import { ExposureQueue, exposureWriter } from './services/exposures.js';
 import { lifecycleCheck } from './services/lifecycle.js';
 import { Scheduler } from './services/schedules.js';
@@ -222,6 +223,12 @@ export async function buildApp(deps: AppDeps): Promise<App> {
       { name: 'login_attempts', everyMs: 60_000, run: (at) => limiter.prune(at) },
       // Hourly turns, each checking the rows not checked in the last day.
       { name: 'lifecycle', everyMs: 3_600_000, run: lifecycleCheck({ db, metrics, logger }) },
+      // Hourly cohorts, each recomputed after new events touch it.
+      {
+        name: 'experiment_rollup',
+        everyMs: config.rollupIntervalMs,
+        run: experimentRollup({ db, metrics, logger }),
+      },
     ],
   });
   scheduler.start();

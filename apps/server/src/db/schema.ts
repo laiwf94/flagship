@@ -210,6 +210,49 @@ export interface ConversionEventsTable {
   received_at: Date;
 }
 
+export interface ExperimentRollupDirtyTable {
+  id: Generated<number>;
+  environment_id: string;
+  flag_key: string;
+  /** A cohort hour to recompute: the UTC hour of first exposures. */
+  hour: Date;
+}
+
+export interface ExperimentRollupPendingTable {
+  id: Generated<number>;
+  environment_id: string;
+  /** A context with new conversions, not yet resolved to the cohort hours they count in. */
+  context_key: string;
+  first_occurred_at: Date;
+  last_occurred_at: Date;
+}
+
+export interface ExperimentRollupExposuresTable {
+  environment_id: string;
+  flag_key: string;
+  hour: Date;
+  variant: string;
+  /** Contexts first exposed to this variant in this hour. */
+  contexts: number;
+}
+
+export interface ExperimentRollupConversionsTable {
+  environment_id: string;
+  flag_key: string;
+  event_key: string;
+  hour: Date;
+  variant: string;
+  /** Of the hour's contexts on this variant, how many converted inside the window. */
+  converted: number;
+  conversions: number;
+  /** Sum over converted contexts of their summed values. */
+  value_sum: number;
+  /** Sum over converted contexts of the square of their summed values. */
+  value_squares: number;
+  /** Sum over converted contexts of the square of their conversion counts. */
+  conversion_squares: number;
+}
+
 export interface FlagEvaluationsTable {
   environment_id: string;
   flag_key: string;
@@ -285,6 +328,10 @@ export interface Database {
   flag_evaluations: FlagEvaluationsTable;
   experiment_exposures: ExperimentExposuresTable;
   conversion_events: ConversionEventsTable;
+  experiment_rollup_dirty: ExperimentRollupDirtyTable;
+  experiment_rollup_pending: ExperimentRollupPendingTable;
+  experiment_rollup_exposures: ExperimentRollupExposuresTable;
+  experiment_rollup_conversions: ExperimentRollupConversionsTable;
   login_attempts: LoginAttemptsTable;
   change_requests: ChangeRequestsTable;
   change_request_reviews: ChangeRequestReviewsTable;

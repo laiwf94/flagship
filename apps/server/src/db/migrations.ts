@@ -366,4 +366,93 @@ export const migrations: Record<string, Migration> = {
     `CREATE INDEX conversion_events_context_idx
       ON conversion_events (environment_id, event_key, context_key, occurred_at)`,
   ]),
+  // Hourly experiment rollups. Results are rolled up per cohort hour (the UTC
+  // hour of a context's first exposure) and variant, so every context sits in
+  // exactly one row and per-context sums of squares add up across hours.
+  //
+  // Writes mark what they touch from statement-level triggers, in the same
+  // transaction as the data: an exposure insert or move marks the hours it
+  // enters and leaves, and a conversion queues its context, which the worker
+  // turns into hours against the exposures it can see. Marks are insert-only
+  // (no unique key) so a writer never waits on a worker holding one, and the
+  // worker deletes only the marks its snapshot sees.
+  '012_experiment_rollups': statements([
+    `CREATE INDEX experiment_exposures_context_idx
+      ON experiment_exposures (environment_id, context_key, first_at)`,
+    `CREATE INDEX experiment_exposures_hour_idx
+      ON experiment_exposures (environment_id, flag_key, first_at)`,
+    // The rollup joins conversions by context whatever the event, which this
+    // serves as well as the per-event attribution query did with the old one.
+    `DROP INDEX conversion_events_context_idx`,
+    `CREATE INDEX conversion_events_context_idx
+      ON conversion_events (environment_id, context_key, occurred_at)`,
+    `CREATE TABLE experiment_rollup_dirty (
+      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      flag_key text NOT NULL,
+      hour timestamptz NOT NULL
+    )`,
+    `CREATE INDEX experiment_rollup_dirty_slice_idx
+      ON experiment_rollup_dirty (environment_id, flag_key, hour)`,
+    `CREATE TABLE experiment_rollup_pending (
+      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      context_key text NOT NULL,
+      first_occurred_at timestamptz NOT NULL,
+      last_occurred_at timestamptz NOT NULL
+    )`,
+    `CREATE TABLE experiment_rollup_exposures (
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      flag_key text NOT NULL,
+      hour timestamptz NOT NULL,
+      variant text NOT NULL,
+      contexts integer NOT NULL CHECK (contexts > 0),
+      PRIMARY KEY (environment_id, flag_key, hour, variant)
+    )`,
+    `CREATE TABLE experiment_rollup_conversions (
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      flag_key text NOT NULL,
+      event_key text NOT NULL,
+      hour timestamptz NOT NULL,
+      variant text NOT NULL,
+      converted integer NOT NULL CHECK (converted > 0),
+      conversions bigint NOT NULL,
+      value_sum double precision NOT NULL,
+      value_squares double precision NOT NULL,
+      conversion_squares bigint NOT NULL,
+      PRIMARY KEY (environment_id, flag_key, event_key, hour, variant)
+    )`,
+    `CREATE FUNCTION experiment_rollup_mark_inserted() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO experiment_rollup_dirty (environment_id, flag_key, hour)
+        SELECT DISTINCT environment_id, flag_key, date_trunc('hour', first_at, 'UTC')
+        FROM new_rows;
+      RETURN NULL;
+    END $$`,
+    `CREATE FUNCTION experiment_rollup_mark_updated() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO experiment_rollup_dirty (environment_id, flag_key, hour)
+        SELECT environment_id, flag_key, date_trunc('hour', first_at, 'UTC') FROM new_rows
+        UNION
+        SELECT environment_id, flag_key, date_trunc('hour', first_at, 'UTC') FROM old_rows;
+      RETURN NULL;
+    END $$`,
+    `CREATE FUNCTION experiment_rollup_queue_conversions() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO experiment_rollup_pending
+          (environment_id, context_key, first_occurred_at, last_occurred_at)
+        SELECT environment_id, context_key, min(occurred_at), max(occurred_at)
+        FROM new_rows GROUP BY environment_id, context_key;
+      RETURN NULL;
+    END $$`,
+    `CREATE TRIGGER experiment_exposures_rollup_insert AFTER INSERT ON experiment_exposures
+      REFERENCING NEW TABLE AS new_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION experiment_rollup_mark_inserted()`,
+    `CREATE TRIGGER experiment_exposures_rollup_update AFTER UPDATE ON experiment_exposures
+      REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION experiment_rollup_mark_updated()`,
+    `CREATE TRIGGER conversion_events_rollup_insert AFTER INSERT ON conversion_events
+      REFERENCING NEW TABLE AS new_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION experiment_rollup_queue_conversions()`,
+  ]),
 };

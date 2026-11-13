@@ -218,6 +218,13 @@ export function createMetrics() {
         'First exposures and conversions waiting to be flushed.',
       ),
     ),
+    experimentRollups: registry.register(
+      new Counter(
+        'flagship_experiment_rollups_total',
+        'Cohort hours of experiment results rolled up, by outcome.',
+        ['result'],
+      ),
+    ),
     schedules: registry.register(
       new Counter('flagship_scheduled_changes_total', 'Scheduled changes processed.', ['result']),
     ),

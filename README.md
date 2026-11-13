@@ -69,7 +69,9 @@ can't be checked, sign-in answers `503` rather than letting the attempt through.
 report which variants they served, batched and with backpressure, and the UI shows the counts
 per variant. For experiments, `track('purchase', context, 25)` records a conversion, and
 SDKs report each context's first exposure to a percentage split once, so a conversion counts
-for the variant that context saw first.
+for the variant that context saw first. Every instance rolls these up per variant and hour
+of first exposure within about a minute, recomputing each hour from the raw events so
+instances always agree.
 
 A whole project exports to one JSON document (flags, targeting in every environment and
 segments, with each environment's checksum) and imports back into a new project, or a copy
