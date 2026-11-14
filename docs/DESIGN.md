@@ -736,6 +736,41 @@ The worker runs from the scheduler loop every `FLAGSHIP_ROLLUP_INTERVAL_MS` (a m
 default), up to 200 hours per turn, so results lag events by about a minute plus the event
 flush. Exposures gain two indexes for this, by context and by flag and time.
 
+## Experiment statistics
+
+`packages/stats` holds the arithmetic behind experiment results, with no dependencies:
+
+- **Distributions.** Normal, chi-square and Student's t, each with density, lower and upper
+  tail, and quantile. The tails come from the regularized incomplete gamma and beta
+  functions (series and Lentz continued fractions), so a tail as small as 1e-300 keeps its
+  relative accuracy instead of rounding to 0 or 1. The normal quantile is Wichura's AS 241,
+  and the chi-square and t quantiles are a Newton solve kept inside a bisection bracket,
+  matched on whichever tail is smaller. The t distribution is accurate at fractional
+  degrees of freedom (Welch's) and at millions of them: ln B(a, b) for a large argument is
+  taken from Stirling's series rather than as a difference of three huge log gammas, which
+  would lose eight digits.
+- **Welch's t-test** compares two means without assuming equal variances, with
+  Welch–Satterthwaite degrees of freedom, a two-sided p-value and an interval for the
+  difference. `summarize(n, sum, sumOfSquares)` builds its input from exactly what the
+  hourly rollup stores per variant, so a conversion rate (sum = sum of squares = converted
+  contexts), conversions per context and value per context all go through the same test.
+- **Relative lift** (treatment over control minus 1) gets a delta-method standard error,
+  Var(T̄)/μc² + μt²·Var(C̄)/μc⁴, and a normal interval; `ratioOfMeans` is the same method for
+  a ratio inside one group, with the covariance term.
+- **Rates** get a Wilson score interval, which stays inside [0, 1] and is sensible at 0%
+  and 100%.
+- **Sample ratio mismatch** is a Pearson chi-square goodness-of-fit test of each variant's
+  exposed contexts against its configured weight. The default threshold is p < 0.001: the
+  check runs on every experiment, and a false alarm hides results, so it has to be strict.
+  With that threshold a fair split of 100,000 contexts passes, and a 50.6/49.4 one fails.
+
+Every function is checked against tabulated values: the normal, chi-square and t critical
+values printed in Abramowitz & Stegun and the NIST/SEMATECH handbook, to full double
+precision as SciPy computes them, and SciPy's own Welch test and chi-square results.
+Property tests check that each quantile inverts its distribution, and seeded simulations
+check that the Welch, lift and ratio intervals cover the true value about 95% of the time
+on skewed and 0/1 data.
+
 ## Flag lifecycle and stale flags
 
 Every flag has a stage in each environment, computed by `lifecycleOf` in
@@ -1069,7 +1104,9 @@ new packages they need, @isaacs/nonrecursive-glob-match and path-scurry.
 
 Not dependencies, on purpose: the MurmurHash, semver parser, regex engine, SSE parser and
 Prometheus exposition are each under 300 lines here, tested against references, and keep the
-SDKs free of transitive code.
+SDKs free of transitive code. The statistics in `packages/stats` (about 750 lines) are the
+same trade: a few special functions and tests, checked against published tables, instead of
+a numerics library many times the size.
 
 ## Larger deployments
 

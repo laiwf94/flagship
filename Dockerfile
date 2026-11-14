@@ -4,6 +4,7 @@ RUN npm install -g pnpm@10.22.0
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY packages/core/package.json packages/core/
+COPY packages/stats/package.json packages/stats/
 COPY packages/conformance/package.json packages/conformance/
 COPY packages/sdk-node/package.json packages/sdk-node/
 COPY packages/sdk-browser/package.json packages/sdk-browser/

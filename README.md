@@ -254,6 +254,7 @@ modes, limits and what would change to scale further. The code is laid out like 
 ```text
 packages/core          ruleset model, validation, evaluator, bucketing, semver, regex engine, diff
 packages/conformance   JSON cases every evaluator must pass, and the runner
+packages/stats         distributions, Welch's t-test, delta-method lift and the sample ratio check
 packages/sdk-node      Node SDK and OpenFeature provider
 packages/sdk-browser   browser SDK
 apps/server            Fastify server: admin API, SDK endpoints, streaming hub, scheduler, exposures

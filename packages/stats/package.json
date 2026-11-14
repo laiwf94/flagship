@@ -1,0 +1,22 @@
+{
+  "name": "@flagship/stats",
+  "version": "0.1.0",
+  "description": "Distributions and tests for experiment results: normal, chi-square and Student's t, Welch's t-test, delta-method lift and the sample ratio check.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "@flagship/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

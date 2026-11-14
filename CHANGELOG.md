@@ -37,6 +37,12 @@ Upgrading runs three migrations (`010_rollout_plans`, `011_experiment_events`,
   exactly from one snapshot, so any number of instances agree. Runs every
   `FLAGSHIP_ROLLUP_INTERVAL_MS` (60000); `flagship_experiment_rollups_total` counts hours
   rolled up and yielded.
+- `@flagship/stats`, a dependency-free statistics package for experiment results: normal,
+  chi-square and Student's t distributions (density, both tails, quantiles), Welch's t-test
+  with an interval for the difference, delta-method intervals for relative lift and ratio
+  metrics, Wilson intervals for rates, and a chi-square sample ratio mismatch check
+  (p < 0.001 by default). `summarize()` reads a variant straight from the hourly rollup's
+  sums. Checked against tabulated critical values and SciPy.
 
 #### Fixed
 
