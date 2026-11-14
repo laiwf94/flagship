@@ -112,6 +112,9 @@ importers:
       '@flagship/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@flagship/stats':
+        specifier: workspace:*
+        version: link:../../packages/stats
       fastify:
         specifier: 5.12.7
         version: 5.12.7

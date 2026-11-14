@@ -771,6 +771,47 @@ Property tests check that each quantile inverts its distribution, and seeded sim
 check that the Welch, lift and ratio intervals cover the true value about 95% of the time
 on skewed and 0/1 data.
 
+## Experiments
+
+An experiment (`apps/server/src/services/experiments.ts`, table `experiments`) names a flag,
+an environment, the serve it reads (the default rule or one rule), a control variant and up
+to ten metrics, the first being the primary one. Each metric is an event and a kind:
+`conversion` (whether a context converted at least once), `count` (its conversions) or
+`value` (the sum of their values), all per exposed context.
+
+- **Starting.** The targeted serve must be a percentage rollout that gives the control and at
+  least one other variant traffic. Its split is copied into the experiment as the
+  `allocation`, under the environment lock, so it is the split that was live at the start.
+  Starting changes no targeting, so it works in protected environments; the reason and link
+  rules apply and the start and stop are audited on the flag. A partial unique index allows
+  one running experiment per flag and environment, so two experiments never read the same
+  exposures with different allocations. Archiving the flag stops it.
+- **Window.** Results count contexts first exposed from the UTC hour the experiment started
+  in through the hour it stopped in, whole hours, because that is the rollup's grain. A
+  context first exposed in the start hour but before the start is included; contexts exposed
+  earlier, under whatever split was live then, are not. Conversions count within the 7-day
+  attribution window of each exposure, including after the stop.
+- **Sample ratio check first.** Exposed contexts per variant are tested against the allocation
+  with a chi-square goodness-of-fit test. A variant that was exposed without being in the
+  split gets weight 0, which makes the mismatch certain. Below p = 0.001 the results route
+  returns the counts and the check but `metrics: null` and a `sample_ratio_mismatch`
+  warning: a broken split (a redirect dropping one arm, a client that reports only one
+  variant, bots in one arm) biases every comparison, and a number on screen gets read.
+  `?showMismatched=true` returns them anyway, for debugging the cause.
+- **Per variant.** The mean per exposed context with a 95% interval: Wilson for a rate,
+  Student's t for counts and values. Variants are ordered control first, then the
+  allocation's order.
+- **Against the control.** The difference with Welch's interval and two-sided p-value, and
+  the relative lift with its delta-method interval (none when the control mean is 0).
+  `significant` is p < 0.05. Fewer than two contexts on either side gives no comparison.
+- **Drift.** `allocationChanged` says whether the live serve at the target still matches the
+  allocation. Changing the split mid-experiment changes who arrives in each arm from then
+  on, and the sample ratio check will usually catch it; the flag says why.
+
+Everything is read from the hourly rollup (one indexed range scan per metric event over at
+most one row per variant and hour), so a results request stays cheap however many events
+were sent. The arithmetic is a pure function, `analyze()`, tested without a database.
+
 ## Flag lifecycle and stale flags
 
 Every flag has a stage in each environment, computed by `lifecycleOf` in

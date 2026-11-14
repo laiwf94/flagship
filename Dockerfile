@@ -12,7 +12,7 @@ COPY apps/server/package.json apps/server/
 COPY apps/admin/package.json apps/admin/
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN pnpm --filter @flagship/core --filter @flagship/server --filter @flagship/admin build \
+RUN pnpm --filter @flagship/core --filter @flagship/stats --filter @flagship/server --filter @flagship/admin build \
  && pnpm --filter @flagship/server deploy --prod --legacy /out \
  && cp -r apps/admin/dist /out/admin
 

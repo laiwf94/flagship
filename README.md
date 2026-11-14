@@ -71,7 +71,11 @@ per variant. For experiments, `track('purchase', context, 25)` records a convers
 SDKs report each context's first exposure to a percentage split once, so a conversion counts
 for the variant that context saw first. Every instance rolls these up per variant and hour
 of first exposure within about a minute, recomputing each hour from the raw events so
-instances always agree.
+instances always agree. An experiment reads one flag's split against a control variant and
+reports, per metric and variant, the conversion rate or mean count or value with a 95%
+interval, and the difference and lift over the control with Welch's p-value. A sample ratio
+check runs first; when the split doesn't match the weights (chi-square p < 0.001) the
+results are hidden behind a warning.
 
 A whole project exports to one JSON document (flags, targeting in every environment and
 segments, with each environment's checksum) and imports back into a new project, or a copy
@@ -157,6 +161,9 @@ SDK routes take `Authorization: Bearer <key>`.
 | `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step                                           |
 | `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout                                 |
 | `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                                                           |
+| `GET/POST /api/projects/:p/experiments?environment=&flag=&status=`          | experiments; start one on a flag's live split, with a control and metrics                    |
+| `GET /api/projects/:p/experiments/:x`, `POST .../experiments/:x/stop`       | read or stop an experiment                                                                   |
+| `GET /api/projects/:p/experiments/:x/results?showMismatched=`               | per-variant rates, intervals and lift; hidden behind a warning on a failed SRM check         |
 | `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                                                    |
 | `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI                                            |
 | `GET /api/projects/:p/audit?flag=&segment=&actor=&q=&from=&to=&cursor=`     | change history with diffs, searchable, keyset-paged                                          |

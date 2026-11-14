@@ -11,6 +11,7 @@ export type ScheduleStatus = 'pending' | 'applied' | 'failed' | 'cancelled';
 export type RolloutStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
 /** Who paused a plan: a person, the kill switch, or an edit to the targeted serve. */
 export type PausedReason = 'manual' | 'kill_switch' | 'edited';
+export type ExperimentStatus = 'running' | 'stopped';
 
 export interface UsersTable {
   id: Generated<string>;
@@ -182,6 +183,30 @@ export interface RolloutPlansTable {
   finished_at: Date | null;
 }
 
+export interface ExperimentsTable {
+  id: Generated<string>;
+  project_id: string;
+  environment_id: string;
+  flag_id: string;
+  key: string;
+  name: string;
+  hypothesis: Generated<string>;
+  /** The serve the experiment reads: 'fallthrough' or { rule }. */
+  target: Json<unknown>;
+  /** The split at the target when the experiment started: the weights the SRM check expects. */
+  allocation: Json<unknown>;
+  control: string;
+  metrics: Json<unknown>;
+  status: Generated<ExperimentStatus>;
+  started_at: Date;
+  stopped_at: Date | null;
+  stopped_reason: string | null;
+  created_by: string | null;
+  created_by_name: string;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date, Date>;
+}
+
 export interface ExposureCountsTable {
   environment_id: string;
   flag_key: string;
@@ -324,6 +349,7 @@ export interface Database {
   ruleset_changes: RulesetChangesTable;
   scheduled_changes: ScheduledChangesTable;
   rollout_plans: RolloutPlansTable;
+  experiments: ExperimentsTable;
   exposure_counts: ExposureCountsTable;
   flag_evaluations: FlagEvaluationsTable;
   experiment_exposures: ExperimentExposuresTable;

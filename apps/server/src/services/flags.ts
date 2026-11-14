@@ -8,6 +8,7 @@ import {
 import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
 import { AppError, notFound } from '../errors.js';
+import { stopExperimentsForArchive } from './experiments.js';
 import { recordAudit, type Actor, type ChangeNote } from './audit.js';
 import { lifecycleFromRow, lifecycleQuery } from './lifecycle.js';
 import type { ProjectRow } from './projects.js';
@@ -720,6 +721,7 @@ async function setArchived(
             .skipLocked(),
         )
         .execute();
+      await stopExperimentsForArchive(trx, after.id, new Date());
     }
     await recordAudit(trx, {
       projectId: scope.project.id,

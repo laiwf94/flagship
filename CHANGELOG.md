@@ -6,8 +6,8 @@ Notable changes to flagship. Each entry links the roadmap issue it belongs to.
 
 ### Experiments ([#28](https://github.com/laiwf94/flagship/issues/28), 2026-11-16 to 2026-11-22)
 
-Upgrading runs three migrations (`010_rollout_plans`, `011_experiment_events`,
-`012_experiment_rollups`) on start.
+Upgrading runs four migrations (`010_rollout_plans`, `011_experiment_events`,
+`012_experiment_rollups`, `013_experiments`) on start.
 
 #### Added
 
@@ -43,6 +43,16 @@ Upgrading runs three migrations (`010_rollout_plans`, `011_experiment_events`,
   metrics, Wilson intervals for rates, and a chi-square sample ratio mismatch check
   (p < 0.001 by default). `summarize()` reads a variant straight from the hourly rollup's
   sums. Checked against tabulated critical values and SciPy.
+- Experiments: `POST /api/projects/:p/experiments` starts one on a flag's live percentage
+  split (the default rule or one rule) with a control variant and up to ten metrics, each a
+  conversion rate, a count or a value per exposed context; one runs per flag and
+  environment, `.../experiments/:x/stop` stops it, and archiving the flag stops it too.
+  `GET .../experiments/:x/results` reports each variant's mean with a 95% interval (Wilson
+  for rates, t otherwise) and the difference and lift over the control with Welch's p-value,
+  from the hourly rollup for contexts first exposed while it ran. A chi-square sample ratio
+  check against the recorded split runs first; below p = 0.001 the metrics are withheld
+  behind a `sample_ratio_mismatch` warning unless `?showMismatched=true`. `allocationChanged`
+  says when the live split no longer matches.
 
 #### Fixed
 

@@ -455,4 +455,38 @@ export const migrations: Record<string, Migration> = {
       REFERENCING NEW TABLE AS new_rows
       FOR EACH STATEMENT EXECUTE FUNCTION experiment_rollup_queue_conversions()`,
   ]),
+  // Experiments. An experiment reads one flag's split in one environment
+  // against a control variant and a list of conversion metrics; results come
+  // from the hourly rollup for contexts first exposed while it ran. The split
+  // it was started on is kept, so the sample ratio check has the weights the
+  // traffic should follow. One running experiment per flag and environment.
+  '013_experiments': statements([
+    `CREATE TABLE experiments (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      project_id uuid NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+      environment_id uuid NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+      flag_id uuid NOT NULL REFERENCES flags (id) ON DELETE CASCADE,
+      key text NOT NULL,
+      name text NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+      hypothesis text NOT NULL DEFAULT '' CHECK (length(hypothesis) <= 2000),
+      target jsonb NOT NULL,
+      allocation jsonb NOT NULL,
+      control text NOT NULL,
+      metrics jsonb NOT NULL,
+      status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'stopped')),
+      started_at timestamptz NOT NULL,
+      stopped_at timestamptz,
+      stopped_reason text CHECK (length(stopped_reason) <= 200),
+      created_by uuid REFERENCES users (id) ON DELETE SET NULL,
+      created_by_name text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (project_id, key),
+      CHECK ((status = 'stopped') = (stopped_at IS NOT NULL)),
+      CHECK (stopped_at IS NULL OR stopped_at >= started_at)
+    )`,
+    `CREATE UNIQUE INDEX experiments_running_idx ON experiments (flag_id, environment_id)
+      WHERE status = 'running'`,
+    `CREATE INDEX experiments_project_idx ON experiments (project_id, created_at DESC, id DESC)`,
+  ]),
 };

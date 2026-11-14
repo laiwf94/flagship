@@ -37,6 +37,7 @@ describe('migrations', () => {
       '010_rollout_plans',
       '011_experiment_events',
       '012_experiment_rollups',
+      '013_experiments',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -62,6 +63,7 @@ describe('migrations', () => {
       'experiment_rollup_dirty',
       'experiment_rollup_exposures',
       'experiment_rollup_pending',
+      'experiments',
       'exposure_counts',
       'flag_configs',
       'flag_evaluations',
@@ -97,6 +99,9 @@ describe('migrations', () => {
         'experiment_rollup_dirty_slice_idx',
         'experiment_rollup_exposures_pkey',
         'experiment_rollup_pending_pkey',
+        'experiments_project_idx',
+        'experiments_project_id_key_key',
+        'experiments_running_idx',
         'flag_configs_lifecycle_due_idx',
         'flag_evaluations_pkey',
         'login_attempts_last_at_idx',
