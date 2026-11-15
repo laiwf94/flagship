@@ -568,7 +568,16 @@ lock, re-reads the flag and applies the next step through the normal write path 
 version bump, stream patch, audit entry by "Rollout by alice") in a savepoint, then moves
 `step` and `next_at` in the same transaction. Another instance skips the claimed row, and
 once it commits the row is no longer due, so each step happens once (the test races two
-instances through a whole plan and counts one audit entry per step).
+instances through a whole plan and counts one audit entry per step). A property test goes
+further: random step lists and holds, random clock moves with each tick run on a random
+subset of three instances at once, and the kill switch thrown and the plan resumed at random
+points. A model of the plan predicts the live step, the status and `next_at` after every
+move, and the test checks them against the stored plan, the live serve, the audit trail
+(each step's serve exactly once, in order) and 300 evaluated contexts (nobody leaves the
+variant, companies stay together under `bucketBy: org`). Through the Node SDK over the real
+stream, a scheduler-driven plan keeps the same guarantees, and the first exposure the SDK
+reports for each context is the variant it got at the step it first showed up at; contexts
+first seen at 100% report none, since no split bucketed them.
 
 Before stepping, the loop checks what it is about to build on. If the flag is off the plan
 pauses (`kill_switch`); turning the flag off also pauses it at once, inside the write that
@@ -811,6 +820,20 @@ to ten metrics, the first being the primary one. Each metric is an event and a k
 Everything is read from the hourly rollup (one indexed range scan per metric event over at
 most one row per variant and hour), so a results request stays cheap however many events
 were sent. The arithmetic is a pure function, `analyze()`, tested without a database.
+
+Two tests run the whole pipeline, `POST /sdk/v1/events` on two instances through two rollup
+workers to the results route. A model-based property sends random first exposures (up to
+three reports per context, from SDKs that disagree on the variant), conversions placed
+before the exposure, at it, inside the window, at its last millisecond, exactly 7 days after
+and later, unexposed contexts' conversions and retried copies, all shuffled into random
+batches at random times the server still accepts, with rollups run in between; the results
+must equal a direct computation per variant. The sample ratio check runs on fixtures built
+from real evaluations of 20,000 contexts: fair 50/50 and 10/90 splits pass; losing one in
+twelve treatment exposures, or a treatment that falls back to the control for 5% of its
+contexts, is caught; and so is a rollout plan that steps from 10% to 50% while the
+experiment runs, with `allocationChanged` set and the early cohort's first exposures kept.
+A 3% loss on 20,000 contexts gives chi-square ≈ 4.6, which the check can't tell from chance:
+it detects broken splits, not small leaks, and needs more traffic for those.
 
 ## Flag lifecycle and stale flags
 
