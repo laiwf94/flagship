@@ -835,6 +835,34 @@ experiment runs, with `allocationChanged` set and the early cohort's first expos
 A 3% loss on 20,000 contexts gives chi-square ≈ 4.6, which the check can't tell from chance:
 it detects broken splits, not small leaks, and needs more traffic for those.
 
+### Demo against the Docker stack
+
+`examples/demo.sh` ends with two experiments on new 50/50 boolean flags in production
+(`examples/node-app/experiment.mjs`). The Node SDK runs against the second instance and the
+results are read from the first, so first exposures, conversions and the rollup cross
+instances. The outcomes are fixed rather than drawn: within each arm, an evenly spaced fixed
+share of arrivals converts, so the realized rates are the stated ones and the checks can be exact.
+
+- **Known effect.** 4,000 shoppers; 10% of those served `off` and 15% of those served `on`
+  buy, each for 40, with metrics `purchase` as a conversion and as a value. The results must
+  match the SDK's own tally of exposed and converted contexts and value per variant exactly,
+  pass the sample ratio check, and show a lift within 0.02 of +50% whose interval excludes
+  zero, with p < 0.001. A typical run prints off 10.0% [8.7%, 11.4%], on 15.0% [13.5%, 16.6%],
+  lift +50% [+25%, +76%], p ≈ 1e-6.
+- **Known mismatch.** 4,000 different visitors, since a purchase counts for every
+  experiment its buyer was exposed to. A second client with `sendExposures: false` decides
+  the variant, as a server rendering the page would, and the reporting client evaluates
+  only once the page is up; one in five visitors served `on` leaves first, so about 400
+  exposures are lost and both arms convert at 12%. The check must fail (chi-square is about 44 on
+  average, p around 1e-11; two local runs gave 20 and 60), the results must come back with `metrics: null` and the
+  `sample_ratio_mismatch` warning, and `?showMismatched=true` must return them.
+
+The demo waits until the results count every exposure and purchase it sent (the compose
+stack sets `FLAGSHIP_ROLLUP_INTERVAL_MS` to 5 seconds) and then stops both experiments,
+leaving their results readable. The fair split fails its check about once in a thousand
+runs by chance; the lost exposures miss it only if more than about 2,110 of the 4,000
+visitors are bucketed `on`, which is 3.5 standard deviations out.
+
 ## Flag lifecycle and stale flags
 
 Every flag has a stage in each environment, computed by `lifecycleOf` in

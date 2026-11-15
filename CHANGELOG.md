@@ -53,6 +53,11 @@ Upgrading runs four migrations (`010_rollout_plans`, `011_experiment_events`,
   check against the recorded split runs first; below p = 0.001 the metrics are withheld
   behind a `sample_ratio_mismatch` warning unless `?showMismatched=true`. `allocationChanged`
   says when the live split no longer matches.
+- `examples/demo.sh` runs two seeded experiments through the Node SDK on the Docker stack and
+  checks the results route: one with a known +50% effect (10% to 15%), reported with exact
+  counts and a lift interval around it, and one that loses one in five treatment exposures,
+  whose results the sample ratio check hides behind its warning. The compose stack rolls
+  results up every 5 seconds (`FLAGSHIP_ROLLUP_INTERVAL_MS`).
 
 #### Fixed
 

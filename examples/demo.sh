@@ -8,6 +8,9 @@
 # survives export and import with the same checksums. It ends with an incident
 # drill on a protected production: a reviewed change breaks the rollout, History
 # search finds it, and a restore puts it back through a second change request.
+# Last, two seeded experiments go through the SDK on B and are read on A: one
+# with a known +50% effect, found with exact counts, and one that loses one in
+# five treatment exposures, whose results the sample ratio check hides.
 # Needs Docker, Node 22 and pnpm. Leaves the stack running; stop it with
 #   docker compose --profile multi down -v
 set -euo pipefail
@@ -291,5 +294,50 @@ step "Lift production's protection again"
 api PUT "$P/environments/production/approvals" '{"requiredApprovals":0}' >/dev/null
 api PUT "$P/environments/production/change-notes" '{"requireReason":false,"requireLink":false}' >/dev/null
 echo "production takes direct edits again"
+
+step "Experiments: two 50/50 flags in production, one with a known effect, one with a known mismatch"
+RUN=$(date +%H%M%S)
+EFFECT_FLAG="checkout-cta-$RUN"
+SRM_FLAG="checkout-page-$RUN"
+for flag in "$EFFECT_FLAG" "$SRM_FLAG"; do
+  api POST "$P/flags" "{\"key\":\"$flag\",\"name\":\"Experiment $flag\",\"type\":\"boolean\"}" >/dev/null
+  version=$(api GET "$P/flags/$flag" | json '.environments.production.version')
+  api PUT "$P/flags/$flag/environments/production" "$(targeting "$version" "$(rollout 50)")" >/dev/null
+  api POST "$P/experiments" "{\"key\":\"$flag\",\"name\":\"Does $flag sell more?\",\"flag\":\"$flag\",\"environment\":\"production\",\"control\":\"off\",\"metrics\":[{\"event\":\"purchase\",\"kind\":\"conversion\"},{\"event\":\"purchase\",\"kind\":\"value\"}]}" |
+    json ".key + ' running on ' + JSON.parse(s).allocation.variants.map(v => v.variant + ' ' + v.weight / 1000 + '%').join(' / ')"
+done
+
+step "4,000 shoppers and 4,000 visitors through the SDK on B: exposures and purchases"
+FLAGSHIP_SDK_KEY=$KEY FLAGSHIP_URL=$B node examples/node-app/experiment.mjs \
+  simulate "$EFFECT_FLAG" "$SRM_FLAG" "$WORK/expected.json" || fail "the SDK could not send the events"
+
+step "Results on A once the hourly rollup has counted every event"
+# rolled_up FLAG: whether the results for FLAG's experiment count every
+# exposure and purchase the SDK sent.
+rolled_up() {
+  api GET "$P/experiments/$1/results?showMismatched=true" >"$WORK/$1.poll.json"
+  node -e '
+const [want, got] = process.argv.slice(1).map((f) => JSON.parse(require("node:fs").readFileSync(f, "utf8")));
+const arms = Object.values(want.expected[got.experiment.flag]);
+const sum = (f) => arms.reduce((n, a) => n + a[f], 0);
+const rate = got.metrics?.find((m) => m.kind === "conversion");
+const bought = rate ? rate.variants.reduce((n, v) => n + v.converted, 0) : -1;
+process.exit(got.exposed === sum("exposed") && bought === sum("converted") ? 0 : 1);
+' "$WORK/expected.json" "$WORK/$1.poll.json"
+}
+start=$(date +%s)
+until rolled_up "$EFFECT_FLAG" && rolled_up "$SRM_FLAG"; do
+  (($(date +%s) - start > 90)) && fail "the results did not reach the counts the SDK sent within 90s"
+  sleep 1
+done
+echo "rolled up after $(($(date +%s) - start))s"
+api GET "$P/experiments/$EFFECT_FLAG/results" >"$WORK/effect.json"
+api GET "$P/experiments/$SRM_FLAG/results" >"$WORK/srm.json"
+api GET "$P/experiments/$SRM_FLAG/results?showMismatched=true" >"$WORK/srm-shown.json"
+node examples/node-app/experiment.mjs check \
+  "$WORK/expected.json" "$WORK/effect.json" "$WORK/srm.json" "$WORK/srm-shown.json" ||
+  fail "the experiment results are wrong"
+for flag in "$EFFECT_FLAG" "$SRM_FLAG"; do api POST "$P/experiments/$flag/stop" '{}' >/dev/null; done
+echo "both experiments stopped; their results stay at $P/experiments/<key>/results"
 
 step "Done. Admin UI: $A or $B (admin@example.com / $PASSWORD)"

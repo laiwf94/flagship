@@ -14,6 +14,9 @@ x-flagship: &flagship
     FLAGSHIP_DATABASE_URL: postgres://flagship:flagship@postgres:5432/flagship
     FLAGSHIP_ADMIN_EMAIL: admin@example.com
     FLAGSHIP_ADMIN_PASSWORD: demo-password-change-me
+    # Roll experiment results up every 5 s instead of every minute, so the
+    # demo's results are ready right after its events are sent.
+    FLAGSHIP_ROLLUP_INTERVAL_MS: '5000'
   healthcheck:
     test:
       - CMD

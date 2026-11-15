@@ -114,10 +114,21 @@ each step's evidence as it checks it:
   and time finds the applied change; restoring it opens a change request the restorer can't
   approve, and once the other user approves it the app is back at 0/1000 on the same checksum
   as both instances. Production is unprotected again at the end, and a run that stopped
-  half-way through the drill is cleaned up by the next one.
+  half-way through the drill is cleaned up by the next one;
+- two experiments on new 50/50 flags in production, fed through the Node SDK on the second
+  instance and read on the first. In one, exactly 10% of 4,000 shoppers buy under `off` and
+  15% under `on`: the results show exactly those counts and rates with their intervals, a lift
+  near +50% whose interval excludes zero, and the revenue per shopper. In the other, a second
+  client decides the variant without reporting it, and one in five visitors served `on`
+  leaves before the reporting client sees them: the sample ratio check fails (chi-square
+  about 44, p far below 0.001) and the metrics are hidden behind the warning unless
+  `?showMismatched=true`.
 
 It fails if any check doesn't hold or the app doesn't print a step in time (15 seconds, 60
-for the restart). Stop the stack with `docker compose --profile multi down -v`.
+for the restart, 90 for experiment results). The compose stack rolls experiment results up
+every 5 seconds rather than every minute, so they are ready right after the events are sent.
+Like any p < 0.001 check, the fair split's sample ratio check fails about one run in a
+thousand by chance. Stop the stack with `docker compose --profile multi down -v`.
 
 Working on flagship itself needs Node 22, pnpm and Docker.
 
@@ -196,9 +207,9 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 | SDKs         | The Node SDK against a stub server that dies mid-stream and comes back, loses a patch or sends a bad checksum; against the real server for a 10% → 50% rollout, the kill switch and a corrupted stored patch it resyncs past; the OpenFeature provider through the OpenFeature SDK; the browser SDK in jsdom.                                                                                                                                                                                                                                             |
 | Experiments  | A property test drives random rollout plans through three racing instances with the kill switch thrown at random, against a model of every step; a model-based property sends exposures and conversions around the attribution window's edges, with retries, in random order and batches across two instances and two rollup workers, and compares the results route with a direct computation; the sample ratio check passes fair splits of 20,000 real evaluations and catches lost or misreported exposures and a rollout that stepped mid-experiment. |
 | Admin UI     | Component tests with Testing Library; Playwright against the built server for the main journeys, a two-editor conflict, a keyboard-only run, and axe (no serious or critical WCAG 2.1 AA findings) on every page at 1440 and 390 px and in dark mode.                                                                                                                                                                                                                                                                                                     |
-| Whole stack  | `examples/demo.sh` against two containers of the Docker image: the shared sign-in budget, per-environment versions, checksums on both instances, an instance killed and restarted, an export imported as a copy, and an incident drill: a bad change through a change request, found by search, restored through another.                                                                                                                                                                                                                                 |
+| Whole stack  | `examples/demo.sh` against two containers of the Docker image: the shared sign-in budget, per-environment versions, checksums on both instances, an instance killed and restarted, an export imported as a copy, an incident drill (a bad change through a change request, found by search, restored through another), and two seeded experiments, one with a known +50% effect and one with a known sample ratio mismatch, checked against the results route.                                                                                            |
 
-925 Vitest tests at 97.1% line coverage (the gate requires 90%), plus 7 Playwright tests.
+1320 Vitest tests at 97.5% line coverage (the gate requires 90%), plus 8 Playwright tests.
 
 ## Benchmarks
 
