@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-rout
 import { api, type Project } from '../api';
 import { Icon, type IconName } from '../components/icons';
 import { ErrorState, IconButton, Loading, Segmented } from '../components/ui';
-import { useResource } from '../hooks';
+import { useMediaQuery, useResource } from '../hooks';
 import { useSession } from '../session';
 
 export interface Scope {
@@ -38,6 +38,8 @@ export function Layout() {
   const location = useLocation();
   const { user, signOut } = useSession();
   const projects = useResource(() => api.projects(), 'projects');
+  // Three segments no longer fit beside the project name on a phone.
+  const narrow = useMediaQuery('(max-width: 600px)');
 
   const projectKey = params.project ?? '';
   const env = params.env ?? '';
@@ -110,7 +112,7 @@ export function Layout() {
             ) : (
               <strong>{project.name}</strong>
             )}
-            {project.environments.length <= 4 ? (
+            {project.environments.length <= (narrow ? 2 : 4) ? (
               <Segmented
                 label="Environment"
                 value={env}

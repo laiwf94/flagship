@@ -351,6 +351,17 @@ for (const width of [1440, 390] as const) {
     }
 
     await page.goto(`${base()}/p/default/staging/change-requests`);
+    if (width === 390) {
+      // Three environments: a select that lists all of them, not a clipped control.
+      const switcher = page.getByRole('combobox', { name: 'Environment' });
+      await expect(switcher).toBeVisible();
+      await expect(switcher.locator('option')).toHaveCount(3);
+      await expect(switcher.locator('option', { hasText: 'Staging' })).toHaveCount(1);
+      const box = await switcher.boundingBox();
+      expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    } else {
+      await expect(page.getByRole('radiogroup', { name: 'Environment' })).toBeVisible();
+    }
     await page.getByRole('link', { name: /Open new checkout to staff/ }).click();
     await expect(page.getByRole('heading', { name: 'Who gets what' })).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
