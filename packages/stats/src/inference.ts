@@ -103,7 +103,11 @@ export function welchTTest(
     };
   }
   const standardError = Math.sqrt(se2);
-  const df = (se2 * se2) / ((vc * vc) / (control.n - 1) + (vt * vt) / (treatment.n - 1));
+  // Weighting by each side's share of the variance keeps every term in [0, 1];
+  // squaring the raw variances underflows or overflows at extreme magnitudes.
+  const shareC = vc / se2;
+  const shareT = vt / se2;
+  const df = 1 / ((shareC * shareC) / (control.n - 1) + (shareT * shareT) / (treatment.n - 1));
   const t = difference / standardError;
   const pValue = Math.min(1, 2 * studentTSf(Math.abs(t), df));
   const critical = studentTQuantile(1 - (1 - confidence) / 2, df);

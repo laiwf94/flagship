@@ -114,6 +114,31 @@ describe("Welch's t-test", () => {
     expect(down.t).toBe(-Infinity);
   });
 
+  it('does not depend on the scale of the variances', () => {
+    const base = welchTTest({ n: 8, mean: 1, variance: 2 }, { n: 12, mean: 2, variance: 3 })!;
+    for (const k of [1e-200, 1e-100, 1e100, 1e150]) {
+      // Scaling the data by sqrt(k) scales the variances by k and the means by sqrt(k).
+      const f = Math.sqrt(k);
+      const r = welchTTest(
+        { n: 8, mean: 1 * f, variance: 2 * k },
+        { n: 12, mean: 2 * f, variance: 3 * k },
+      )!;
+      expect(Number.isFinite(r.df)).toBe(true);
+      expect(r.df).toBeCloseTo(base.df, 9);
+      expect(r.t).toBeCloseTo(base.t, 9);
+      expect(r.pValue).toBeCloseTo(base.pValue, 9);
+    }
+  });
+
+  it('handles one constant side at extreme magnitudes', () => {
+    const r = welchTTest({ n: 6, mean: 1, variance: 0 }, { n: 6, mean: 2, variance: 1e-200 })!;
+    expect(r.df).toBeCloseTo(5, 9);
+    expect(Number.isFinite(r.pValue)).toBe(true);
+    const big = welchTTest({ n: 6, mean: 1, variance: 1e200 }, { n: 6, mean: 2, variance: 0 })!;
+    expect(big.df).toBeCloseTo(5, 9);
+    expect(big.pValue).toBeGreaterThan(0.99);
+  });
+
   it('refuses bad input', () => {
     const ok = { n: 5, mean: 1, variance: 1 };
     expect(() => welchTTest({ n: 5, mean: 1, variance: -1 }, ok)).toThrow(RangeError);
