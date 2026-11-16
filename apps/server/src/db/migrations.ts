@@ -489,4 +489,31 @@ export const migrations: Record<string, Migration> = {
       WHERE status = 'running'`,
     `CREATE INDEX experiments_project_idx ON experiments (project_id, created_at DESC, id DESC)`,
   ]),
+  // The internal event bus. Every change already writes an audit entry in its
+  // own transaction, so the audit log doubles as the event log: each new entry
+  // records the id of the transaction that wrote it, and readers take entries
+  // in (tx, id) order only below the oldest transaction still running, which
+  // never skips an entry that commits late. Rows written before this
+  // migration keep a null tx and are not events. A statement trigger wakes
+  // listeners on commit. `event_consumers` holds the position of each durable
+  // consumer, advanced in the transaction that handles the events.
+  '014_event_bus': statements([
+    `ALTER TABLE audit_log ADD COLUMN tx xid8`,
+    `ALTER TABLE audit_log ALTER COLUMN tx SET DEFAULT pg_current_xact_id()`,
+    `CREATE INDEX audit_log_events_idx ON audit_log (tx, id) WHERE tx IS NOT NULL`,
+    `CREATE FUNCTION audit_log_notify_events() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM pg_notify('flagship_events', '');
+        RETURN NULL;
+      END
+    $$`,
+    `CREATE TRIGGER audit_log_events AFTER INSERT ON audit_log
+      FOR EACH STATEMENT EXECUTE FUNCTION audit_log_notify_events()`,
+    `CREATE TABLE event_consumers (
+      name text PRIMARY KEY CHECK (name ~ '^[a-z][a-z0-9_.-]{0,62}$'),
+      tx xid8 NOT NULL,
+      audit_id bigint NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  ]),
 };

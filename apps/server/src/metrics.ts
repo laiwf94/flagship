@@ -247,6 +247,12 @@ export function createMetrics() {
         ['stage'],
       ),
     ),
+    busEvents: registry.register(
+      new Counter('flagship_bus_events_total', 'Change events handled by bus consumers.', [
+        'consumer',
+        'result',
+      ]),
+    ),
     rulesetBuilds: registry.register(
       new Counter('flagship_ruleset_builds_total', 'Rulesets rebuilt from the database.'),
     ),

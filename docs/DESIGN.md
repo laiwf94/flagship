@@ -146,7 +146,7 @@ cannot loop.
 
 ## Storage and the write path
 
-PostgreSQL through Kysely, with typed tables and migrations in code. Fifteen tables; the
+PostgreSQL through Kysely, with typed tables and migrations in code. Twenty-five tables; the
 interesting ones:
 
 | Table                                                                               | Holds                                                                  |
@@ -156,7 +156,8 @@ interesting ones:
 | `segments`                                                                          | per-environment, with `version`                                        |
 | `environments`                                                                      | `ruleset_version`, bumped on every change; `required_approvals`        |
 | `ruleset_changes`                                                                   | one row per version: kind, key, new value (or null), ruleset checksum  |
-| `audit_log`                                                                         | actor, action, before and after JSON                                   |
+| `audit_log`                                                                         | actor, action, before and after JSON; doubles as the event log         |
+| `event_consumers`                                                                   | each durable event consumer's position                                 |
 | `login_attempts`                                                                    | recent sign-in attempts per email and per address, shared by instances |
 | `change_requests`, `change_request_reviews`                                         | proposed targeting or segment with its base, and each review           |
 | `experiment_exposures`, `conversion_events`                                         | first exposure per context and flag; raw conversions, one per SDK id   |
@@ -175,12 +176,56 @@ Every write follows the same shape inside one transaction:
    names, a deleted segment a rule still uses, or a new cycle.
 4. Write, bump `ruleset_version`, read the environment's ruleset back, insert the
    `ruleset_changes` row with the entry's value and the ruleset's checksum taken from that
-   read, write the audit entry, and `pg_notify`. The patch value comes from the read, not
-   from the code that made the change, so a patch can never disagree with a snapshot.
+   read, write the audit entry (which is also the change's event, see below), and
+   `pg_notify`. The patch value comes from the read, not from the code that made the change,
+   so a patch can never disagree with a snapshot.
 
 Because NOTIFY is delivered at commit, listeners never hear about a change that rolled
 back. `ruleset_changes` keeps the last 1,000 versions per environment
 (`FLAGSHIP_CHANGE_RETENTION`).
+
+## The internal event bus
+
+Parts of the server that react to changes, such as webhooks and guarded rollouts, hear
+about them from an event bus (`apps/server/src/events.ts`), and the event log is the audit
+log. Every change already writes an audit entry inside its own transaction, so an event
+exists exactly when the change committed: never for one that rolled back, and never missing
+for one that didn't. An event carries the entry: action, target, project and environment,
+actor, reason and link, and the before and after JSON.
+
+Each audit entry records the id of the transaction that wrote it (an `xid8` column defaulting
+to `pg_current_xact_id()`), and a statement trigger on `audit_log` runs `pg_notify` on
+`flagship_events`, which Postgres delivers at commit. The instance's existing LISTEN
+connection, the one the stream hub uses, also listens on that channel, so the bus costs no
+extra connection. A poll every 5 seconds covers notifications lost while that connection was
+down, and a reconnect wakes the bus at once. When a read finds committed events waiting behind
+an older transaction that is still running (below), the bus reads again after 25 ms, backing
+off to the poll interval, rather than waiting for the next notification.
+
+Reading in entry id order would lose events: ids are handed out when a row is inserted, so a
+transaction can take id 41, commit after the one that took id 42, and a reader that has
+moved past 42 never sees 41. Readers instead take entries in (transaction id, entry id)
+order, only from transactions older than `pg_snapshot_xmin(pg_current_snapshot())`, the
+oldest transaction still running. Every transaction below that has finished, and every new
+one gets a larger id, so nothing can appear behind a reader's position. A partial index on
+`(tx, id)` serves the read. The price is that a long-running transaction holds back every
+event committed after it started until it ends; nothing is lost. The horizon covers every
+transaction on the Postgres server, in any database, so a long one elsewhere on a shared
+server delays events too. Entries written before
+migration 014 have no transaction id and are not events.
+
+There are two kinds of handler:
+
+- **Live** handlers (`events.on`) run on every instance, in order, for events from the head
+  at the time they registered. One that throws is logged and the others still run.
+- **Durable** consumers (`events.consume(name, handler)`) keep their position in
+  `event_consumers`. Each batch is handled inside the transaction that advances the position,
+  holding that row with `FOR UPDATE SKIP LOCKED`, so whatever the handler writes (a webhook
+  outbox row, say) commits together with the new position. Any number of instances can run
+  the same consumer and each event is handled exactly once (the test races three instances
+  over 60 events with a primary key that would reject a duplicate). A handler that throws
+  rolls back and gets the same batch again on the next round. A consumer seen for the first
+  time starts at the current head rather than replaying history.
 
 Migrations run at start under Kysely's Postgres migrator, which takes an advisory lock;
 the test starts three migrators at once on an empty database.

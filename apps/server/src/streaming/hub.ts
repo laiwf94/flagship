@@ -46,6 +46,12 @@ export interface HubOptions {
   maxStreamsPerKey: number;
   /** Bytes buffered for one client before it is considered too slow and dropped. */
   maxBufferedBytes?: number;
+  /**
+   * Other channels to LISTEN on through the same connection, each with its
+   * handler. A handler is also called after a reconnect, when notifications
+   * may have been missed.
+   */
+  channels?: Record<string, () => void>;
 }
 
 export class StreamLimitError extends Error {}
@@ -109,6 +115,7 @@ export class Hub {
     client.on('notification', (msg) => {
       if (msg.channel === CHANGES_CHANNEL) this.onChange(msg.payload ?? '');
       else if (msg.channel === KEYS_CHANNEL) this.revoke(msg.payload ?? '');
+      else this.o.channels?.[msg.channel]?.();
     });
     client.on('error', (err) => {
       this.o.logger.warn({ err }, 'change listener lost its connection');
@@ -120,6 +127,10 @@ export class Hub {
     await client.connect();
     await client.query(`LISTEN ${CHANGES_CHANNEL}`);
     await client.query(`LISTEN ${KEYS_CHANNEL}`);
+    for (const channel of Object.keys(this.o.channels ?? {})) {
+      if (!/^[a-z_]+$/.test(channel)) throw new Error(`invalid channel "${channel}"`);
+      await client.query(`LISTEN ${channel}`);
+    }
     this.listener = client;
   }
 
@@ -133,6 +144,7 @@ export class Hub {
           // Anything may have changed while we weren't listening.
           this.o.cache.invalidate();
           for (const environmentId of this.subscribers.keys()) this.enqueue(environmentId);
+          for (const handler of Object.values(this.o.channels ?? {})) handler();
         })
         .catch((err: unknown) => {
           this.o.logger.warn({ err }, 'change listener reconnect failed');

@@ -38,6 +38,7 @@ describe('migrations', () => {
       '011_experiment_events',
       '012_experiment_rollups',
       '013_experiments',
+      '014_event_bus',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -58,6 +59,7 @@ describe('migrations', () => {
       'change_requests',
       'conversion_events',
       'environments',
+      'event_consumers',
       'experiment_exposures',
       'experiment_rollup_conversions',
       'experiment_rollup_dirty',
@@ -82,6 +84,8 @@ describe('migrations', () => {
     expect(indexes.rows.map((r) => r.indexname)).toEqual(
       expect.arrayContaining([
         'audit_log_actor_idx',
+        'audit_log_events_idx',
+        'event_consumers_pkey',
         'audit_log_project_idx',
         'audit_log_search_idx',
         'audit_log_target_idx',
@@ -310,6 +314,39 @@ describe('migrations', () => {
       await expect(sql`UPDATE audit_log SET snapshot = 'project'`.execute(old)).rejects.toThrow(
         /check constraint/,
       );
+    } finally {
+      await old.destroy();
+      await fresh.drop();
+    }
+  });
+
+  it('leave entries from before the event bus without a transaction id, and stamp new ones', async () => {
+    const fresh = await createTestDatabase();
+    const { db: old } = createDatabase({ url: fresh.url });
+    try {
+      const migrator = new Migrator({
+        db: old,
+        provider: { getMigrations: () => Promise.resolve(migrations) },
+      });
+      expect((await migrator.migrateTo('013_experiments')).error).toBeUndefined();
+      await sql`INSERT INTO audit_log (actor_name, action, target_type, target_key)
+        VALUES ('a', 'flag.create', 'flag', 'old')`.execute(old);
+      await migrate(old);
+      await old.transaction().execute(async (trx) => {
+        await sql`INSERT INTO audit_log (actor_name, action, target_type, target_key)
+          VALUES ('a', 'flag.create', 'flag', 'new1'), ('a', 'flag.create', 'flag', 'new2')`.execute(
+          trx,
+        );
+      });
+      const rows = await sql<{ target_key: string; tx: string | null }>`
+        SELECT target_key, tx::text AS tx FROM audit_log ORDER BY id`.execute(old);
+      expect(rows.rows[0]).toEqual({ target_key: 'old', tx: null });
+      // Both entries of one transaction carry its id.
+      expect(rows.rows[1]?.tx).toMatch(/^\d+$/);
+      expect(rows.rows[2]?.tx).toBe(rows.rows[1]?.tx);
+      await expect(
+        sql`INSERT INTO event_consumers (name, tx, audit_id) VALUES ('Bad', '1', 0)`.execute(old),
+      ).rejects.toThrow(/check constraint/);
     } finally {
       await old.destroy();
       await fresh.drop();

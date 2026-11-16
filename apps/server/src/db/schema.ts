@@ -136,7 +136,17 @@ export interface AuditLogTable {
   snapshot: SnapshotKind | null;
   /** Generated from action, target, actor, reason and link; never written. */
   search: ColumnType<string, never, never>;
+  /** The writing transaction's id (xid8, as text); null on entries from before the event bus. */
+  tx: ColumnType<string | null, never, never>;
   created_at: CreatedAt;
+}
+
+export interface EventConsumersTable {
+  name: string;
+  /** Position: the last event handled, as (transaction id, audit entry id). */
+  tx: string;
+  audit_id: number;
+  updated_at: UpdatedAt;
 }
 
 export interface RulesetChangesTable {
@@ -346,6 +356,7 @@ export interface Database {
   flag_configs: FlagConfigsTable;
   segments: SegmentsTable;
   audit_log: AuditLogTable;
+  event_consumers: EventConsumersTable;
   ruleset_changes: RulesetChangesTable;
   scheduled_changes: ScheduledChangesTable;
   rollout_plans: RolloutPlansTable;

@@ -9,6 +9,7 @@ import { SignInLimiter } from './auth/ratelimit.js';
 import type { Config } from './config.js';
 import type { Context } from './context.js';
 import type { Db } from './db/database.js';
+import { EventBus, EVENTS_CHANNEL } from './events.js';
 import { AppError, errorHandler, sendError } from './errors.js';
 import { createLogger } from './log.js';
 import { createMetrics, type Metrics } from './metrics.js';
@@ -51,6 +52,8 @@ export interface App {
   metrics: Metrics;
   ctx: Context;
   hub: Hub;
+  /** Committed changes, for in-process handlers and durable consumers. */
+  events: EventBus;
   cache: RulesetCache;
   scheduler: Scheduler;
   exposures: ExposureQueue;
@@ -178,6 +181,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     { prefix: '/api' },
   );
   const cache = new RulesetCache(db, metrics);
+  const events = new EventBus({ db, logger, metrics });
   const hub = new Hub({
     db,
     databaseUrl: config.databaseUrl,
@@ -187,8 +191,14 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     heartbeatMs: config.heartbeatSeconds * 1000,
     maxStreams: config.maxStreams,
     maxStreamsPerKey: config.maxStreamsPerKey,
+    channels: {
+      [EVENTS_CHANNEL]: () => {
+        events.wake();
+      },
+    },
   });
   await hub.start();
+  events.start();
   const exposures = new ExposureQueue({
     write: exposureWriter(db),
     limit: config.eventsQueueLimit,
@@ -238,6 +248,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   const closers: (() => Promise<void>)[] = [
     () => scheduler.stop(),
     () => hub.close(),
+    () => events.close(),
     () => exposures.stop(),
     () => experiments.stop(),
   ];
@@ -249,6 +260,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     metrics,
     ctx,
     hub,
+    events,
     cache,
     scheduler,
     exposures,
