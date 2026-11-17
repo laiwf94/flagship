@@ -39,6 +39,7 @@ describe('migrations', () => {
       '012_experiment_rollups',
       '013_experiments',
       '014_event_bus',
+      '015_webhooks',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -78,6 +79,9 @@ describe('migrations', () => {
       'segments',
       'sessions',
       'users',
+      'webhook_attempts',
+      'webhook_deliveries',
+      'webhooks',
     ]);
     const indexes = await sql<{ indexname: string }>`
       SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname`.execute(db);
@@ -115,6 +119,11 @@ describe('migrations', () => {
         'scheduled_changes_due_idx',
         'sessions_expires_idx',
         'api_keys_key_hash_key',
+        'webhook_attempts_pkey',
+        'webhook_deliveries_completed_idx',
+        'webhook_deliveries_due_idx',
+        'webhook_deliveries_webhook_idx',
+        'webhooks_project_idx',
       ]),
     );
   });

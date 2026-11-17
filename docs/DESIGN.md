@@ -230,6 +230,64 @@ There are two kinds of handler:
 Migrations run at start under Kysely's Postgres migrator, which takes an advisory lock;
 the test starts three migrators at once on an empty database.
 
+## Webhooks
+
+A webhook sends a project's change events to an HTTP endpoint (`services/webhooks.ts`). It
+can be limited to one environment, in which case events without an environment (flag
+creation, say) don't reach it, and to action patterns: `*`, an exact action such as
+`flag.kill_switch`, or a prefix such as `flag.*`. Only admins manage webhooks, at most 50 per
+project, since they send change details off the server.
+
+**Secrets.** The server generates each signing secret (`whsec_` and 32 random bytes), returns
+it once, and stores it sealed with AES-256-GCM under `FLAGSHIP_SECRET_KEY` (32 bytes, base64;
+`secretbox.ts`). A sealed value is a version byte, a fresh 12-byte IV, the tag and the
+ciphertext, and the webhook's id is the additional authenticated data, so a value copied
+into another row doesn't open. A key id stored next to it (16 hex characters of a hash of the
+key) says which key sealed it, so a changed or missing key is reported as that. Without the
+setting, creating a webhook answers `409 failed_precondition`. Audit entries carry the URL
+with its query string hidden and never the secret. Rotating replaces the secret and keeps the
+old one signing for 24 hours, so a receiver can switch without dropping a delivery.
+
+**Outbox.** The `webhooks` consumer on the event bus writes one row in `webhook_deliveries`
+per event and matching enabled webhook, with the payload, inside the transaction that
+advances the consumer: a committed change gets exactly one delivery per webhook and a
+rolled-back one gets none. It then sends a NOTIFY on `flagship_webhooks`, which wakes the
+worker on every instance. A payload over 256 KiB leaves out `before` and `after` and says
+`"truncated": true`.
+
+**Delivery.** A worker on each instance claims due rows with `FOR UPDATE SKIP LOCKED`,
+counting the attempt and moving `next_attempt_at` past the attempt's deadline: that is the
+lease, so a delivery whose instance died comes due again 30 seconds after its deadline and
+nothing else is needed to recover it. Up to `FLAGSHIP_WEBHOOK_CONCURRENCY` (8) attempts run
+at once on keep-alive connections. Each POST carries:
+
+| Header               | Value                                                                        |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `Flagship-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<body>">`, one `v1` per secret |
+| `Flagship-Delivery`  | the delivery id, the same on every retry                                     |
+| `Flagship-Event`     | the action, such as `flag.kill_switch`                                       |
+| `Flagship-Attempt`   | 1, 2, ...                                                                    |
+
+The body is `{id, type, createdAt, project, environment, target, actor, reason, link, before,
+after}`, where `id` (`evt_<n>`) is the same for every webhook that gets the event. Each
+attempt is signed at the time it is sent, so receivers can refuse old timestamps.
+
+An attempt succeeds on a 2xx. It has one deadline, `FLAGSHIP_WEBHOOK_TIMEOUT_MS` (10
+seconds), for connecting, sending and reading the response. Redirects are not followed. At
+most 64 KiB of the response is read before the connection is closed, and its first 1 KiB is
+kept. Anything else (a refused connection, the deadline, a cut-off response, a 3xx, 4xx or
+5xx) is retried after 10 s, 30 s, 1 min, 5 min, 15 min, 30 min and then hourly, each ±10%,
+or after the `Retry-After` of a 429 or 503 if that is longer (capped at an hour), until 24
+hours after the event: about 30 attempts. Then the delivery is marked failed. Every attempt
+goes in `webhook_attempts` with its status, error, duration and response excerpt, and a
+result arriving for an attempt whose lease another instance already took over changes
+nothing. Disabling a webhook marks its pending deliveries failed; deleting it removes them.
+Finished deliveries are removed after `FLAGSHIP_WEBHOOK_RETENTION_DAYS` (30). On shutdown the
+worker cuts attempts in flight short and records them as failed, so they are retried.
+
+`flagship_webhook_attempts_total{result}` counts attempts as `succeeded`, `retry`, `failed`
+(gave up) or `stale`, and `flagship_webhook_attempt_duration_seconds` times them.
+
 ## Two people editing one flag
 
 Every segment has a `version`, and so does every flag, twice over: `flags.version` covers
@@ -1127,6 +1185,8 @@ The OpenFeature provider maps these to `PROVIDER_NOT_READY`, `Stale` and `Ready`
   `x-csrf-token` are redacted as a second guard, and `key=` in URLs is masked. Tests check that
   session tokens, passwords and contexts don't appear in log output.
 - `/metrics` answers loopback only unless `FLAGSHIP_METRICS_TOKEN` is set.
+- Webhook signing secrets are encrypted at rest with AES-256-GCM under `FLAGSHIP_SECRET_KEY`
+  and shown once. Webhook attempts follow no redirects and read at most 64 KiB of a response.
 - The Docker image runs as nonroot on distroless Node; compose runs it read-only with no
   capabilities.
 

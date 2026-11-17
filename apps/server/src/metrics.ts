@@ -253,6 +253,20 @@ export function createMetrics() {
         'result',
       ]),
     ),
+    webhookDeliveries: registry.register(
+      new Counter(
+        'flagship_webhook_attempts_total',
+        'Webhook delivery attempts by outcome: succeeded, retry, failed (gave up) or stale.',
+        ['result'],
+      ),
+    ),
+    webhookDuration: registry.register(
+      new Histogram(
+        'flagship_webhook_attempt_duration_seconds',
+        'Time from sending a webhook delivery to its response, timeout or error.',
+        [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+      ),
+    ),
     rulesetBuilds: registry.register(
       new Counter('flagship_ruleset_builds_total', 'Rulesets rebuilt from the database.'),
     ),

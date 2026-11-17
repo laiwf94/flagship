@@ -516,4 +516,67 @@ export const migrations: Record<string, Migration> = {
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
   ]),
+  // Webhooks. Each subscribes to a project's change events, optionally in one
+  // environment, filtered by action patterns. The signing secret is sealed
+  // with AES-256-GCM under FLAGSHIP_SECRET_KEY (`secret_key_id` names that
+  // key); after a rotation the previous secret keeps signing alongside the new
+  // one until `previous_secret_expires_at`. The `webhooks` bus consumer writes
+  // one delivery per matching webhook and event in the same transaction that
+  // advances its position (a transactional outbox); a worker on each instance
+  // claims due deliveries with SKIP LOCKED, moving `next_attempt_at` forward
+  // as a lease, and records every attempt.
+  '015_webhooks': statements([
+    `CREATE TABLE webhooks (
+      id uuid PRIMARY KEY,
+      project_id uuid NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+      environment_id uuid REFERENCES environments (id) ON DELETE CASCADE,
+      name text NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+      url text NOT NULL CHECK (url ~ '^https?://' AND length(url) <= 2000),
+      events text[] NOT NULL CHECK (cardinality(events) BETWEEN 1 AND 50),
+      enabled boolean NOT NULL DEFAULT true,
+      secret_key_id text NOT NULL,
+      secret bytea NOT NULL,
+      previous_secret bytea,
+      previous_secret_expires_at timestamptz,
+      created_by uuid REFERENCES users (id) ON DELETE SET NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CHECK ((previous_secret IS NULL) = (previous_secret_expires_at IS NULL))
+    )`,
+    `CREATE INDEX webhooks_project_idx ON webhooks (project_id, created_at, id)`,
+    `CREATE TABLE webhook_deliveries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      webhook_id uuid NOT NULL REFERENCES webhooks (id) ON DELETE CASCADE,
+      event_id bigint NOT NULL,
+      event_type text NOT NULL,
+      payload jsonb NOT NULL,
+      status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'succeeded', 'failed')),
+      attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      next_attempt_at timestamptz NOT NULL,
+      give_up_at timestamptz NOT NULL,
+      last_attempt_at timestamptz,
+      last_status integer,
+      last_error text CHECK (length(last_error) <= 500),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      completed_at timestamptz,
+      CHECK ((status = 'pending') = (completed_at IS NULL))
+    )`,
+    `CREATE INDEX webhook_deliveries_due_idx ON webhook_deliveries (next_attempt_at)
+      WHERE status = 'pending'`,
+    `CREATE INDEX webhook_deliveries_webhook_idx
+      ON webhook_deliveries (webhook_id, created_at DESC, id DESC)`,
+    `CREATE INDEX webhook_deliveries_completed_idx ON webhook_deliveries (completed_at)
+      WHERE status <> 'pending'`,
+    `CREATE TABLE webhook_attempts (
+      delivery_id uuid NOT NULL REFERENCES webhook_deliveries (id) ON DELETE CASCADE,
+      attempt integer NOT NULL CHECK (attempt >= 1),
+      started_at timestamptz NOT NULL,
+      duration_ms integer NOT NULL CHECK (duration_ms >= 0),
+      status integer,
+      error text CHECK (length(error) <= 500),
+      response text CHECK (length(response) <= 1024),
+      response_truncated boolean NOT NULL DEFAULT false,
+      PRIMARY KEY (delivery_id, attempt)
+    )`,
+  ]),
 };

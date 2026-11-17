@@ -18,7 +18,40 @@ describe('loadConfig', () => {
       metricsToken: undefined,
       maxStreams: 20_000,
       importMaxBytes: 32 * 1024 * 1024,
+      secretKey: undefined,
+      webhookTimeoutMs: 10_000,
+      webhookConcurrency: 8,
+      webhookPollMs: 1000,
+      webhookRetentionDays: 30,
     });
+  });
+
+  it('parses the secret key and webhook settings', () => {
+    const key = Buffer.alloc(32, 7);
+    const c = loadConfig({
+      FLAGSHIP_DATABASE_URL: url,
+      FLAGSHIP_SECRET_KEY: key.toString('base64'),
+      FLAGSHIP_WEBHOOK_TIMEOUT_MS: '5000',
+      FLAGSHIP_WEBHOOK_CONCURRENCY: '2',
+      FLAGSHIP_WEBHOOK_POLL_MS: '250',
+      FLAGSHIP_WEBHOOK_RETENTION_DAYS: '7',
+    });
+    expect(c.secretKey?.equals(key)).toBe(true);
+    expect(c).toMatchObject({
+      webhookTimeoutMs: 5000,
+      webhookConcurrency: 2,
+      webhookPollMs: 250,
+      webhookRetentionDays: 7,
+    });
+    expect(loadConfig({ FLAGSHIP_DATABASE_URL: url, FLAGSHIP_SECRET_KEY: '' }).secretKey).toBe(
+      undefined,
+    );
+    expect(() =>
+      loadConfig({ FLAGSHIP_DATABASE_URL: url, FLAGSHIP_SECRET_KEY: 'c2hvcnQ=' }),
+    ).toThrow(/FLAGSHIP_SECRET_KEY: must decode to exactly 32 bytes/);
+    expect(() =>
+      loadConfig({ FLAGSHIP_DATABASE_URL: url, FLAGSHIP_WEBHOOK_TIMEOUT_MS: '60000' }),
+    ).toThrow(/FLAGSHIP_WEBHOOK_TIMEOUT_MS/);
   });
 
   it('parses every setting', () => {

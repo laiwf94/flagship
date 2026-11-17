@@ -346,6 +346,59 @@ export interface ChangeRequestReviewsTable {
   created_at: CreatedAt;
 }
 
+export interface WebhooksTable {
+  id: string;
+  project_id: string;
+  environment_id: string | null;
+  name: string;
+  url: string;
+  /** Action patterns: `*`, an exact action, or a prefix such as `flag.*`. */
+  events: string[];
+  enabled: Generated<boolean>;
+  /** Which FLAGSHIP_SECRET_KEY sealed `secret` and `previous_secret`. */
+  secret_key_id: string;
+  secret: Buffer;
+  previous_secret: Buffer | null;
+  previous_secret_expires_at: Date | null;
+  created_by: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export type WebhookDeliveryStatus = 'pending' | 'succeeded' | 'failed';
+
+export interface WebhookDeliveriesTable {
+  id: Generated<string>;
+  webhook_id: string;
+  /** The audit entry (event) delivered. */
+  event_id: number;
+  event_type: string;
+  payload: Json<unknown>;
+  status: Generated<WebhookDeliveryStatus>;
+  attempts: Generated<number>;
+  /** When the next attempt is due; while one runs, when its lease runs out. */
+  next_attempt_at: Date;
+  give_up_at: Date;
+  last_attempt_at: Date | null;
+  last_status: number | null;
+  last_error: string | null;
+  created_at: CreatedAt;
+  completed_at: Date | null;
+}
+
+export interface WebhookAttemptsTable {
+  delivery_id: string;
+  attempt: number;
+  started_at: Date;
+  duration_ms: number;
+  /** HTTP status, or null when no response arrived. */
+  status: number | null;
+  error: string | null;
+  /** The start of the response body. */
+  response: string | null;
+  response_truncated: Generated<boolean>;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -372,4 +425,7 @@ export interface Database {
   login_attempts: LoginAttemptsTable;
   change_requests: ChangeRequestsTable;
   change_request_reviews: ChangeRequestReviewsTable;
+  webhooks: WebhooksTable;
+  webhook_deliveries: WebhookDeliveriesTable;
+  webhook_attempts: WebhookAttemptsTable;
 }

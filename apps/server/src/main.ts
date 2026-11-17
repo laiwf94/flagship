@@ -31,6 +31,11 @@ import { createLogger } from './log.js';
  *   FLAGSHIP_CHANGE_RETENTION      ruleset changes kept per environment for stream resume (1000)
  *   FLAGSHIP_IMPORT_MAX_MB         largest project import accepted, in MiB (32)
  *   FLAGSHIP_ADMIN_UI_DIR          directory of the built admin UI to serve at /
+ *   FLAGSHIP_SECRET_KEY            32 random bytes, base64; encrypts webhook secrets at rest (webhooks need it)
+ *   FLAGSHIP_WEBHOOK_TIMEOUT_MS    deadline for one webhook attempt, connect to last byte (10000)
+ *   FLAGSHIP_WEBHOOK_CONCURRENCY   webhook attempts in flight per instance (8)
+ *   FLAGSHIP_WEBHOOK_POLL_MS       fallback poll for due webhook retries (1000)
+ *   FLAGSHIP_WEBHOOK_RETENTION_DAYS finished webhook deliveries kept for (30)
  */
 async function main(): Promise<void> {
   let config;

@@ -1,6 +1,7 @@
 import type { Config } from './config.js';
 import type { Db } from './db/database.js';
 import type { Metrics } from './metrics.js';
+import type { SecretBox } from './secretbox.js';
 import type { KeyAuthenticator } from './services/apikeys.js';
 
 /** What route modules and services need from the app. */
@@ -10,4 +11,6 @@ export interface Context {
   metrics: Metrics;
   now: () => Date;
   keys: KeyAuthenticator;
+  /** Seals secrets stored in the database; undefined without FLAGSHIP_SECRET_KEY. */
+  secrets: SecretBox | undefined;
 }

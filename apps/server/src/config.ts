@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { parseSecretKey, SecretKeyError } from './secretbox.js';
 
 const flag = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1');
 
@@ -37,6 +38,23 @@ const schema = z
     FLAGSHIP_CHANGE_RETENTION: int(10, 1_000_000, 1000),
     FLAGSHIP_IMPORT_MAX_MB: int(1, 1024, 32),
     FLAGSHIP_ADMIN_UI_DIR: z.string().min(1).optional(),
+    FLAGSHIP_SECRET_KEY: z
+      .string()
+      .optional()
+      .transform((v, ctx) => {
+        if (v === undefined || v === '') return undefined;
+        try {
+          return parseSecretKey(v);
+        } catch (err) {
+          if (!(err instanceof SecretKeyError)) throw err;
+          ctx.addIssue({ code: 'custom', message: err.message });
+          return z.NEVER;
+        }
+      }),
+    FLAGSHIP_WEBHOOK_TIMEOUT_MS: int(1000, 30_000, 10_000),
+    FLAGSHIP_WEBHOOK_CONCURRENCY: int(1, 100, 8),
+    FLAGSHIP_WEBHOOK_POLL_MS: int(100, 60_000, 1000),
+    FLAGSHIP_WEBHOOK_RETENTION_DAYS: int(1, 365, 30),
   })
   .refine(
     (c) => (c.FLAGSHIP_ADMIN_EMAIL === undefined) === (c.FLAGSHIP_ADMIN_PASSWORD === undefined),
@@ -71,6 +89,16 @@ export interface Config {
   /** Largest project import accepted, in bytes. */
   importMaxBytes: number;
   adminUiDir: string | undefined;
+  /** Encrypts secrets at rest, such as webhook signing secrets; webhooks need it. */
+  secretKey: Buffer | undefined;
+  /** Deadline for one webhook delivery attempt: connect, send and read the response. */
+  webhookTimeoutMs: number;
+  /** Webhook deliveries in flight at once on each instance. */
+  webhookConcurrency: number;
+  /** Fallback poll for due webhook deliveries; new ones wake the worker at once. */
+  webhookPollMs: number;
+  /** How long finished webhook deliveries are kept. */
+  webhookRetentionDays: number;
 }
 
 export class ConfigError extends Error {
@@ -113,5 +141,10 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     importMaxBytes: c.FLAGSHIP_IMPORT_MAX_MB * 1024 * 1024,
     adminUiDir:
       c.FLAGSHIP_ADMIN_UI_DIR === undefined ? undefined : resolve(c.FLAGSHIP_ADMIN_UI_DIR),
+    secretKey: c.FLAGSHIP_SECRET_KEY,
+    webhookTimeoutMs: c.FLAGSHIP_WEBHOOK_TIMEOUT_MS,
+    webhookConcurrency: c.FLAGSHIP_WEBHOOK_CONCURRENCY,
+    webhookPollMs: c.FLAGSHIP_WEBHOOK_POLL_MS,
+    webhookRetentionDays: c.FLAGSHIP_WEBHOOK_RETENTION_DAYS,
   };
 }

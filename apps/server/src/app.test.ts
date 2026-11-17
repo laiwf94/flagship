@@ -84,6 +84,11 @@ describe('metrics with a token', () => {
 describe('shutdown and failures', () => {
   it('reports unready when the database is gone and 503 while draining', async () => {
     const other = await testApp();
+    // Let the startup reads finish first: Kysely leaks a connection whose
+    // acquisition is still in flight when destroy() runs, and then the pool
+    // never finishes ending. The server itself always closes before the database.
+    await other.app.events.drain();
+    await other.app.webhooks.drain();
     await other.db.destroy();
     const ready = await other.app.server.inject({ url: '/readyz' });
     expect(ready.statusCode).toBe(503);

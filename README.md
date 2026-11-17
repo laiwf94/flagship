@@ -181,6 +181,8 @@ SDK routes take `Authorization: Bearer <key>`.
 | `GET /api/projects/:p/audit/:id/restore?to=before\|after`                   | what restoring an entry would change, against what is live                                   |
 | `POST /api/projects/:p/audit/:id/restore`                                   | restore it, or open a change request in a protected env                                      |
 | `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)                                  |
+| `GET/POST/PATCH/DELETE /api/projects/:p/webhooks[/:id]`                     | signed webhooks for change events; the secret is shown once (admin, needs a secret key)      |
+| `POST /api/projects/:p/webhooks/:id/secret`                                 | rotate the signing secret; the old one also signs for 24 hours (admin)                       |
 | `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)                                              |
 | `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`                                    |
 | `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only)                                |

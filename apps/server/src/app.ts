@@ -20,6 +20,8 @@ import { flagRoutes } from './routes/flags.js';
 import { projectRoutes } from './routes/projects.js';
 import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
+import { webhookRoutes } from './routes/webhooks.js';
+import { SecretBox } from './secretbox.js';
 import { KeyAuthenticator } from './services/apikeys.js';
 import { RulesetCache } from './services/cache.js';
 import { ExperimentEventQueue, experimentWriter } from './services/experimentEvents.js';
@@ -31,6 +33,13 @@ import { Hub } from './streaming/hub.js';
 import { bootstrapProject } from './services/projects.js';
 import { safeEqual } from './util.js';
 import { bootstrapAdmin } from './services/users.js';
+import {
+  pruneWebhookDeliveries,
+  webhookOutbox,
+  WEBHOOKS_CHANNEL,
+  WEBHOOKS_CONSUMER,
+  WebhookWorker,
+} from './services/webhooks.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -58,6 +67,8 @@ export interface App {
   scheduler: Scheduler;
   exposures: ExposureQueue;
   experiments: ExperimentEventQueue;
+  /** Delivers webhook outbox rows. */
+  webhooks: WebhookWorker;
   /** Stops accepting work, drains streams and background jobs, closes the server. */
   close: () => Promise<void>;
 }
@@ -69,7 +80,14 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   const { config, db } = deps;
   const metrics = createMetrics();
   const now = deps.now ?? (() => new Date());
-  const ctx: Context = { config, db, metrics, now, keys: new KeyAuthenticator(db, now) };
+  const ctx: Context = {
+    config,
+    db,
+    metrics,
+    now,
+    keys: new KeyAuthenticator(db, now),
+    secrets: config.secretKey === undefined ? undefined : new SecretBox(config.secretKey),
+  };
   const limiter = new SignInLimiter(db);
   const logger = deps.logger ?? createLogger(config.logLevel);
   // Widened so the instance type stays FastifyInstance with the default logger.
@@ -177,11 +195,22 @@ export async function buildApp(deps: AppDeps): Promise<App> {
       await api.register(flagRoutes(ctx));
       await api.register(changeRequestRoutes(ctx));
       await api.register(experimentRoutes(ctx));
+      await api.register(webhookRoutes(ctx));
     },
     { prefix: '/api' },
   );
   const cache = new RulesetCache(db, metrics);
   const events = new EventBus({ db, logger, metrics });
+  const webhooks = new WebhookWorker({
+    db,
+    secrets: ctx.secrets,
+    metrics,
+    logger,
+    now,
+    timeoutMs: config.webhookTimeoutMs,
+    concurrency: config.webhookConcurrency,
+    pollMs: config.webhookPollMs,
+  });
   const hub = new Hub({
     db,
     databaseUrl: config.databaseUrl,
@@ -195,10 +224,15 @@ export async function buildApp(deps: AppDeps): Promise<App> {
       [EVENTS_CHANNEL]: () => {
         events.wake();
       },
+      [WEBHOOKS_CHANNEL]: () => {
+        webhooks.wake();
+      },
     },
   });
   await hub.start();
   events.start();
+  events.consume(WEBHOOKS_CONSUMER, webhookOutbox(now));
+  webhooks.start();
   const exposures = new ExposureQueue({
     write: exposureWriter(db),
     limit: config.eventsQueueLimit,
@@ -241,6 +275,11 @@ export async function buildApp(deps: AppDeps): Promise<App> {
         everyMs: config.rollupIntervalMs,
         run: experimentRollup({ db, metrics, logger }),
       },
+      {
+        name: 'webhook_deliveries',
+        everyMs: 3_600_000,
+        run: pruneWebhookDeliveries(db, config.webhookRetentionDays),
+      },
     ],
   });
   scheduler.start();
@@ -249,6 +288,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     () => scheduler.stop(),
     () => hub.close(),
     () => events.close(),
+    () => webhooks.close(),
     () => exposures.stop(),
     () => experiments.stop(),
   ];
@@ -265,6 +305,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     scheduler,
     exposures,
     experiments,
+    webhooks,
     close: async () => {
       draining = true;
       for (const close of closers) await close();
