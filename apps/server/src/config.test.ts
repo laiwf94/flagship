@@ -23,7 +23,29 @@ describe('loadConfig', () => {
       webhookConcurrency: 8,
       webhookPollMs: 1000,
       webhookRetentionDays: 30,
+      webhookAllowedTargets: [],
     });
+  });
+
+  it('parses the webhook allow-list and rejects entries that are not targets', () => {
+    const c = loadConfig({
+      FLAGSHIP_DATABASE_URL: url,
+      FLAGSHIP_WEBHOOK_ALLOWED_TARGETS: ' 10.0.0.0/8, fd00::/8 ,receiver.internal,, ',
+    });
+    expect(c.webhookAllowedTargets).toEqual(['10.0.0.0/8', 'fd00::/8', 'receiver.internal']);
+    expect(
+      loadConfig({ FLAGSHIP_DATABASE_URL: url, FLAGSHIP_WEBHOOK_ALLOWED_TARGETS: '' })
+        .webhookAllowedTargets,
+    ).toEqual([]);
+    expect(() =>
+      loadConfig({
+        FLAGSHIP_DATABASE_URL: url,
+        FLAGSHIP_WEBHOOK_ALLOWED_TARGETS: '10.0.0.0/8,10.0.0.0/99,https://x',
+      }),
+    ).toThrow(
+      'FLAGSHIP_WEBHOOK_ALLOWED_TARGETS: "10.0.0.0/99" is not an IP address, a CIDR range or a host name\n' +
+        '  FLAGSHIP_WEBHOOK_ALLOWED_TARGETS: "https://x" is not an IP address, a CIDR range or a host name',
+    );
   });
 
   it('parses the secret key and webhook settings', () => {

@@ -21,6 +21,7 @@ import { projectRoutes } from './routes/projects.js';
 import { sdkRoutes } from './routes/sdk.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { EgressPolicy } from './egress.js';
 import { SecretBox } from './secretbox.js';
 import { KeyAuthenticator } from './services/apikeys.js';
 import { RulesetCache } from './services/cache.js';
@@ -87,6 +88,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     now,
     keys: new KeyAuthenticator(db, now),
     secrets: config.secretKey === undefined ? undefined : new SecretBox(config.secretKey),
+    egress: new EgressPolicy(config.webhookAllowedTargets),
   };
   const limiter = new SignInLimiter(db);
   const logger = deps.logger ?? createLogger(config.logLevel);
@@ -204,6 +206,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
   const webhooks = new WebhookWorker({
     db,
     secrets: ctx.secrets,
+    egress: ctx.egress,
     metrics,
     logger,
     now,

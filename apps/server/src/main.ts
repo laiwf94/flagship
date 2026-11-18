@@ -36,6 +36,7 @@ import { createLogger } from './log.js';
  *   FLAGSHIP_WEBHOOK_CONCURRENCY   webhook attempts in flight per instance (8)
  *   FLAGSHIP_WEBHOOK_POLL_MS       fallback poll for due webhook retries (1000)
  *   FLAGSHIP_WEBHOOK_RETENTION_DAYS finished webhook deliveries kept for (30)
+ *   FLAGSHIP_WEBHOOK_ALLOWED_TARGETS private receivers allowed anyway: IPs, CIDRs or host names
  */
 async function main(): Promise<void> {
   let config;

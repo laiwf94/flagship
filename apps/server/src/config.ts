@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { parseAllowEntry } from './egress.js';
 import { parseSecretKey, SecretKeyError } from './secretbox.js';
 
 const flag = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1');
@@ -55,6 +56,24 @@ const schema = z
     FLAGSHIP_WEBHOOK_CONCURRENCY: int(1, 100, 8),
     FLAGSHIP_WEBHOOK_POLL_MS: int(100, 60_000, 1000),
     FLAGSHIP_WEBHOOK_RETENTION_DAYS: int(1, 365, 30),
+    FLAGSHIP_WEBHOOK_ALLOWED_TARGETS: z
+      .string()
+      .optional()
+      .transform((v, ctx) => {
+        const list = (v ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s !== '');
+        for (const entry of list) {
+          if (parseAllowEntry(entry) === null) {
+            ctx.addIssue({
+              code: 'custom',
+              message: `"${entry}" is not an IP address, a CIDR range or a host name`,
+            });
+          }
+        }
+        return list;
+      }),
   })
   .refine(
     (c) => (c.FLAGSHIP_ADMIN_EMAIL === undefined) === (c.FLAGSHIP_ADMIN_PASSWORD === undefined),
@@ -99,6 +118,11 @@ export interface Config {
   webhookPollMs: number;
   /** How long finished webhook deliveries are kept. */
   webhookRetentionDays: number;
+  /**
+   * Private, loopback or link-local webhook receivers let through anyway:
+   * addresses, CIDR ranges or exact host names.
+   */
+  webhookAllowedTargets: string[];
 }
 
 export class ConfigError extends Error {
@@ -146,5 +170,6 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     webhookConcurrency: c.FLAGSHIP_WEBHOOK_CONCURRENCY,
     webhookPollMs: c.FLAGSHIP_WEBHOOK_POLL_MS,
     webhookRetentionDays: c.FLAGSHIP_WEBHOOK_RETENTION_DAYS,
+    webhookAllowedTargets: c.FLAGSHIP_WEBHOOK_ALLOWED_TARGETS,
   };
 }

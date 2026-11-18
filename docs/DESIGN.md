@@ -285,6 +285,30 @@ nothing. Disabling a webhook marks its pending deliveries failed; deleting it re
 Finished deliveries are removed after `FLAGSHIP_WEBHOOK_RETENTION_DAYS` (30). On shutdown the
 worker cuts attempts in flight short and records them as failed, so they are retried.
 
+**Private receivers (SSRF).** A webhook URL is chosen by whoever manages webhooks, and the
+server makes the request, so without a check it could be pointed at the server's own
+loopback, the database, a cloud metadata endpoint or anything else on the private network
+(`egress.ts`). Refused: loopback, private (RFC 1918 and IPv6 unique local), link-local,
+carrier-grade NAT, `0.0.0.0/8` and `::`, multicast, broadcast and reserved space,
+documentation and benchmarking ranges, the IETF protocol block `2001::/23` (which includes
+Teredo), and IPv6 forms that carry one of those inside them (IPv4-mapped, NAT64 `64:ff9b::/96`,
+6to4 `2002::/16`). The check runs on the address being connected to, after DNS: the
+delivery's sockets resolve names through the policy's own lookup, which refuses the
+connection if any address the name resolves to is not allowed. So a name that pointed
+somewhere public when the webhook was saved and points at `127.0.0.1` now (DNS rebinding) is
+still refused. Addresses written in the URL never reach a lookup, so they are checked before
+the request starts, after the URL parser has normalised spellings such as `2130706433` and
+`0x7f.1`. Saving a webhook whose URL is a refused literal address, or `localhost` or a
+`*.localhost` name, answers `400` with the reason; a name is only checked at delivery, where
+a refusal is recorded as the attempt's error (`refusing to connect to 10.0.0.5 (resolved from
+hooks.internal): a private address; list it in FLAGSHIP_WEBHOOK_ALLOWED_TARGETS to allow it`)
+and retried like any other failure. A self-hosted receiver on the private network is let
+through by listing it in `FLAGSHIP_WEBHOOK_ALLOWED_TARGETS`, comma-separated: an address
+(`10.0.0.7`), a CIDR range (`10.20.0.0/16`, `fd00::/8`) or an exact host name
+(`receiver.internal`), which is trusted whatever it resolves to. A range also matches the
+IPv4-mapped form of its addresses. Since redirects are never followed, a public receiver
+can't bounce a delivery inward either.
+
 `flagship_webhook_attempts_total{result}` counts attempts as `succeeded`, `retry`, `failed`
 (gave up) or `stale`, and `flagship_webhook_attempt_duration_seconds` times them.
 
@@ -1186,7 +1210,9 @@ The OpenFeature provider maps these to `PROVIDER_NOT_READY`, `Stale` and `Ready`
   session tokens, passwords and contexts don't appear in log output.
 - `/metrics` answers loopback only unless `FLAGSHIP_METRICS_TOKEN` is set.
 - Webhook signing secrets are encrypted at rest with AES-256-GCM under `FLAGSHIP_SECRET_KEY`
-  and shown once. Webhook attempts follow no redirects and read at most 64 KiB of a response.
+  and shown once. Webhook attempts follow no redirects, read at most 64 KiB of a response,
+  and refuse private, loopback and link-local addresses after DNS resolution unless they are
+  listed in `FLAGSHIP_WEBHOOK_ALLOWED_TARGETS`.
 - The Docker image runs as nonroot on distroless Node; compose runs it read-only with no
   capabilities.
 

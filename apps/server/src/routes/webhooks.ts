@@ -21,7 +21,12 @@ const webhookParams = projectParams.extend({ id: z.string().max(64) });
 
 /** Webhook management: admins only, since a webhook sends change details off the server. */
 export function webhookRoutes(ctx: Context) {
-  const deps: WebhookDeps = { db: ctx.db, secrets: ctx.secrets, now: ctx.now };
+  const deps: WebhookDeps = {
+    db: ctx.db,
+    secrets: ctx.secrets,
+    now: ctx.now,
+    egress: ctx.egress,
+  };
   const project = async (params: unknown) => {
     const p = parse(projectParams, params, 'path');
     return (await getProject(ctx.db, p.project)).id;

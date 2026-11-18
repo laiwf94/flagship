@@ -1,10 +1,12 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import http, { type IncomingHttpHeaders } from 'node:http';
+import https from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { testApp, type TestApp } from '../../test/app.js';
 import { PASSWORD, signIn, userWithRole, type Client } from '../../test/session.js';
+import { EgressPolicy } from '../egress.js';
 import { SecretBox } from '../secretbox.js';
 import { recordAudit } from './audit.js';
 import {
@@ -155,6 +157,8 @@ beforeAll(async () => {
       secretKey: KEY,
       webhookTimeoutMs: 500,
       webhookPollMs: 60_000,
+      // The test receivers listen on loopback.
+      webhookAllowedTargets: ['127.0.0.1'],
       sessionIdleMinutes: 10_080 * 52,
       sessionMaxHours: 24 * 400,
     },
@@ -287,7 +291,7 @@ describe('webhook management', () => {
   });
 
   it('needs FLAGSHIP_SECRET_KEY', async () => {
-    const deps = { db: t.db, secrets: undefined, now: () => clock };
+    const deps = { db: t.db, secrets: undefined, now: () => clock, egress: new EgressPolicy() };
     await expect(
       createWebhook(
         deps,
@@ -307,7 +311,12 @@ describe('webhook management', () => {
       .select('id')
       .where('key', '=', 'many')
       .executeTakeFirstOrThrow();
-    const deps = { db: t.db, secrets: new SecretBox(KEY), now: () => clock };
+    const deps = {
+      db: t.db,
+      secrets: new SecretBox(KEY),
+      now: () => clock,
+      egress: new EgressPolicy(),
+    };
     for (let i = 0; i < MAX_WEBHOOKS_PER_PROJECT; i++) {
       await createWebhook(
         deps,
@@ -978,5 +987,157 @@ describe('webhook helpers', () => {
     expect(small).toMatchObject({ after: { x: 1 }, environment: 'production' });
     expect(small).not.toHaveProperty('truncated');
     expect(Buffer.byteLength(buildPayload(event, 'default', null))).toBeLessThan(MAX_PAYLOAD_BYTES);
+  });
+});
+
+describe('refusing private receivers', () => {
+  it('rejects literal private, loopback and link-local URLs when a webhook is saved', async () => {
+    for (const url of [
+      'http://10.0.0.1/hook',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://[::1]:8080/',
+      'http://[fd00::1]/',
+      'http://2130706434/', // 127.0.0.2: only 127.0.0.1 is allowed here
+      'http://localhost:9000/',
+      'http://127.0.0.2/',
+    ]) {
+      const res = await admin.request('POST', `${P}/webhooks`, { name: 'internal', url });
+      expect(res.statusCode, url).toBe(400);
+      expect(res.json<{ error: { details: { path: string; message: string }[] } }>()).toMatchObject(
+        {
+          error: {
+            details: [
+              {
+                path: 'url',
+                message: expect.stringMatching(
+                  /^refusing to connect to .*; list it in FLAGSHIP_WEBHOOK_ALLOWED_TARGETS to allow it$/,
+                ) as unknown,
+              },
+            ],
+          },
+        },
+      );
+    }
+    // The allow-listed loopback receiver is fine, and so is a public name (checked at delivery).
+    const ok = await hook({ name: 'allowed', url: receiver.url('/allowed'), enabled: false });
+    const patched = await admin.request('PATCH', `${P}/webhooks/${ok.id}`, {
+      url: 'http://192.168.1.1/x',
+    });
+    expect(patched.statusCode).toBe(400);
+    expect(
+      (await admin.request('PATCH', `${P}/webhooks/${ok.id}`, { url: 'https://example.com/x' }))
+        .statusCode,
+    ).toBe(200);
+    await admin.request('DELETE', `${P}/webhooks/${ok.id}`);
+  });
+
+  it('refuses at delivery time, and keeps retrying, a URL that is no longer allowed', async () => {
+    const h = await hook({
+      name: 'moved',
+      url: receiver.url('/moved'),
+      events: ['flag.kill_switch'],
+    });
+    // As if it was saved under an older allow-list: same receiver, another loopback address.
+    const port = new URL(receiver.url()).port;
+    await t.db
+      .updateTable('webhooks')
+      .set({ url: `http://127.0.0.2:${port}/moved` })
+      .where('id', '=', h.id)
+      .execute();
+    await flag('moved');
+    await kill('moved', 'production');
+    await settle(async () => (await deliveries(h.id))[0]?.attempts === 1);
+    const [d] = await deliveries(h.id);
+    expect(d).toMatchObject({
+      status: 'pending',
+      last_status: null,
+      last_error:
+        'refusing to connect to 127.0.0.2: a loopback address; ' +
+        'list it in FLAGSHIP_WEBHOOK_ALLOWED_TARGETS to allow it',
+    });
+    expect(receiver.at('/moved')).toHaveLength(0);
+    const [a] = await attempts(d?.id ?? '');
+    expect(a).toMatchObject({ attempt: 1, status: null, error: d?.last_error });
+    await admin.request('DELETE', `${P}/webhooks/${h.id}`);
+  });
+});
+
+describe('sending with an egress policy', () => {
+  const server = http.createServer((_req, res) => {
+    hits++;
+    res.writeHead(204).end();
+  });
+  let hits = 0;
+  let port = 0;
+  beforeAll(async () => {
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    port = (server.address() as AddressInfo).port;
+  });
+  afterAll(async () => {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  });
+  // A resolver that knows one public-looking name, pointed at loopback: DNS rebinding.
+  const rebinding = (allow: string[] = []) =>
+    new EgressPolicy(allow, {
+      resolve: (host) =>
+        host === 'hooks.rebind.test'
+          ? Promise.resolve([{ address: '127.0.0.1', family: 4 }])
+          : Promise.reject(Object.assign(new Error(`ENOTFOUND ${host}`), { code: 'ENOTFOUND' })),
+    });
+  const post = (url: string, egress: EgressPolicy) =>
+    send({ url, headers: {}, body: '{}' }, { timeoutMs: 2000, egress });
+
+  it('never opens a connection to a refused literal address', async () => {
+    const before = hits;
+    const r = await post(`http://127.0.0.1:${port}/`, new EgressPolicy());
+    expect(r).toMatchObject({ status: null, durationMs: 0 });
+    expect(r.error).toMatch(/^refusing to connect to 127\.0\.0\.1: a loopback address/);
+    expect(delivered(r)).toBe(false);
+    expect(hits).toBe(before);
+  });
+
+  it('checks the address a name resolves to when the socket connects', async () => {
+    const before = hits;
+    const refused = await post(`http://hooks.rebind.test:${port}/`, rebinding());
+    expect(refused.status).toBeNull();
+    expect(refused.error).toBe(
+      'refusing to connect to 127.0.0.1 (resolved from hooks.rebind.test): a loopback address; ' +
+        'list it in FLAGSHIP_WEBHOOK_ALLOWED_TARGETS to allow it',
+    );
+    expect(hits).toBe(before);
+
+    // The same request goes through once the name or the address is allowed,
+    // which also shows the policy's resolver is the one the socket used.
+    for (const allow of [['hooks.rebind.test'], ['127.0.0.0/8']]) {
+      const r = await post(`http://hooks.rebind.test:${port}/`, rebinding(allow));
+      expect(r, allow[0]).toMatchObject({ status: 204, error: null });
+    }
+    expect(hits).toBe(before + 2);
+    const missing = await post(`http://nowhere.rebind.test:${port}/`, rebinding());
+    expect(missing.error).toMatch(/ENOTFOUND/);
+  });
+
+  it('applies through keep-alive agents, as the worker sends', async () => {
+    const agents = {
+      http: new http.Agent({ keepAlive: true }),
+      https: new https.Agent({ keepAlive: true }),
+    };
+    const url = `http://hooks.rebind.test:${port}/`;
+    try {
+      const refused = await send(
+        { url, headers: {}, body: '{}' },
+        { timeoutMs: 2000, egress: rebinding(), agents },
+      );
+      expect(refused.error).toMatch(/^refusing to connect to 127\.0\.0\.1 \(resolved from/);
+      const ok = await send(
+        { url, headers: {}, body: '{}' },
+        { timeoutMs: 2000, egress: rebinding(['hooks.rebind.test']), agents },
+      );
+      expect(ok).toMatchObject({ status: 204, error: null });
+    } finally {
+      agents.http.destroy();
+      agents.https.destroy();
+    }
   });
 });

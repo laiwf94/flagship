@@ -6,6 +6,7 @@ import { sql } from 'kysely';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { Db } from '../db/database.js';
+import type { EgressPolicy } from '../egress.js';
 import type { WebhookDeliveryStatus } from '../db/schema.js';
 import { AppError, notFound } from '../errors.js';
 import type { ChangeEvent, DurableHandler } from '../events.js';
@@ -224,6 +225,17 @@ export interface WebhookDeps {
   db: Db;
   secrets: SecretBox | undefined;
   now: () => Date;
+  /** Checks a URL's literal address up front; deliveries check every resolved address. */
+  egress: EgressPolicy;
+}
+
+/** Refuses a URL whose literal address (or localhost name) could never be delivered to. */
+function checkTarget(d: WebhookDeps, url: string): void {
+  const parsed = URL.parse(url);
+  const why = parsed === null ? null : d.egress.urlRefusal(parsed);
+  if (why !== null) {
+    throw new AppError('invalid_argument', 'invalid webhook', [{ path: 'url', message: why }]);
+  }
 }
 
 function box(d: WebhookDeps): SecretBox {
@@ -296,6 +308,7 @@ export async function createWebhook(
   actor: Actor,
 ): Promise<WebhookView & { secret: string }> {
   const sealer = box(d);
+  checkTarget(d, input.url);
   const id = randomUUID();
   const secret = newSecret();
   const sealed = sealer.seal(secret, context(id));
@@ -358,6 +371,7 @@ export async function updateWebhook(
   patch: WebhookPatch,
   actor: Actor,
 ): Promise<WebhookView> {
+  if (patch.url !== undefined) checkTarget(d, patch.url);
   return d.db.transaction().execute(async (trx) => {
     const locked = UUID.safeParse(id).success
       ? await trx
@@ -621,6 +635,8 @@ export interface AttemptResult {
 
 export interface SendOptions {
   timeoutMs: number;
+  /** Which addresses may be connected to; without one, any may. */
+  egress?: EgressPolicy;
   agents?: { http: http.Agent; https: https.Agent };
   signal?: AbortSignal;
 }
@@ -648,10 +664,11 @@ const clean = (text: string, max: number) =>
 export function send(req: OutgoingRequest, o: SendOptions): Promise<AttemptResult> {
   const started = performance.now();
   const url = URL.parse(req.url);
-  if (url === null) {
+  const refused = url === null ? 'invalid URL' : (o.egress?.urlRefusal(url) ?? null);
+  if (url === null || refused !== null) {
     return Promise.resolve({
       status: null,
-      error: 'invalid URL',
+      error: refused,
       response: null,
       truncated: false,
       durationMs: 0,
@@ -690,6 +707,8 @@ export function send(req: OutgoingRequest, o: SendOptions): Promise<AttemptResul
     const request = (secure ? https : http).request(url, {
       method: 'POST',
       headers: { ...req.headers, 'content-length': String(Buffer.byteLength(req.body)) },
+      // Every address is checked as it is resolved, so the one connected to is the one checked.
+      ...(o.egress === undefined ? {} : { lookup: o.egress.lookup }),
       ...(o.agents === undefined ? {} : { agent: secure ? o.agents.https : o.agents.http }),
     });
     const timer = setTimeout(() => {
@@ -793,6 +812,8 @@ export interface WebhookWorkerOptions {
   timeoutMs: number;
   concurrency: number;
   pollMs: number;
+  /** Refuses private, loopback and link-local receivers unless allow-listed. */
+  egress: EgressPolicy;
   random?: () => number;
 }
 
@@ -961,7 +982,12 @@ export class WebhookWorker {
         },
         body: c.payload,
       },
-      { timeoutMs: this.o.timeoutMs, agents: this.agents, signal: this.abort.signal },
+      {
+        timeoutMs: this.o.timeoutMs,
+        agents: this.agents,
+        signal: this.abort.signal,
+        egress: this.o.egress,
+      },
     );
     this.o.metrics.webhookDuration.observe(result.durationMs / 1000);
     await this.record(c, startedAt, result);
