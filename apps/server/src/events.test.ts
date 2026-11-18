@@ -271,13 +271,12 @@ describe('event bus', () => {
         });
       }
     });
-    await drainUntil([first], () => batches.length >= 1);
-    expect(batches).toEqual([['one', 'two']]);
+    // The first attempt throws: its writes roll back, and the next round gets the same batch.
+    // drain() coalesces wakes, so that retry may already run inside the same drain() call.
+    await drainUntil([first], () => batches.length >= 2);
     expect(metrics.registry.render()).toContain(
       'flagship_bus_events_total{consumer="durable",result="error"} 1',
     );
-    // The first attempt threw: its writes rolled back, and the next round gets the same batch.
-    await drainUntil([first], () => batches.length >= 2);
     expect(batches).toEqual([
       ['one', 'two'],
       ['one', 'two'],
