@@ -141,12 +141,12 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 
 ## SDKs
 
-| Package                      | For         | How it works                                                                                                                                |
-| ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@flagship/node`             | servers     | holds the ruleset, evaluates locally, SSE with resume, ETag polling fallback, exposure and `track()` batching                               |
-| `@flagship/node/openfeature` | OpenFeature | `OpenFeature.setProvider(new FlagshipProvider({ sdkKey, baseUrl }))`                                                                        |
-| `@flagship/browser`          | web apps    | client key; the server evaluates the user's context and the SDK caches the values for synchronous reads; refetches when the version changes |
-| `@flagship/core`             | everything  | model, validation, evaluator; also used by the admin UI's preview                                                                           |
+| Package                      | For         | How it works                                                                                                                                                         |
+| ---------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@flagship/node`             | servers     | holds the ruleset, evaluates locally, SSE with resume, ETag polling fallback, exposure and `track()` batching; `parseWebhook()` checks a webhook's signature and age |
+| `@flagship/node/openfeature` | OpenFeature | `OpenFeature.setProvider(new FlagshipProvider({ sdkKey, baseUrl }))`                                                                                                 |
+| `@flagship/browser`          | web apps    | client key; the server evaluates the user's context and the SDK caches the values for synchronous reads; refetches when the version changes                          |
+| `@flagship/core`             | everything  | model, validation, evaluator; also used by the admin UI's preview                                                                                                    |
 
 ## HTTP API
 
@@ -183,6 +183,9 @@ SDK routes take `Authorization: Bearer <key>`.
 | `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)                                  |
 | `GET/POST/PATCH/DELETE /api/projects/:p/webhooks[/:id]`                     | signed webhooks for change events; the secret is shown once (admin, needs a secret key)      |
 | `POST /api/projects/:p/webhooks/:id/secret`                                 | rotate the signing secret; the old one also signs for 24 hours (admin)                       |
+| `GET /api/projects/:p/webhooks/:id/deliveries?status=&event=&cursor=`       | the delivery log, newest first, keyset-paged (admin)                                         |
+| `GET /api/projects/:p/webhooks/:id/deliveries/:d`                           | one delivery with its payload and every attempt (admin)                                      |
+| `POST .../deliveries/:d/replay, POST .../webhooks/:id/replay`               | send one finished delivery again, or every one in a window not yet replayed (admin)          |
 | `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)                                              |
 | `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`                                    |
 | `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only)                                |

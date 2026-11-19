@@ -384,6 +384,8 @@ export interface WebhookDeliveriesTable {
   last_error: string | null;
   created_at: CreatedAt;
   completed_at: Date | null;
+  /** The delivery this one replays, while that one is kept. */
+  replay_of: string | null;
 }
 
 export interface WebhookAttemptsTable {

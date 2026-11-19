@@ -1,7 +1,8 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import http, { type IncomingHttpHeaders } from 'node:http';
 import https from 'node:https';
 import type { AddressInfo } from 'node:net';
+import { parseWebhook, WebhookSignatureError } from '@flagship/node';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { testApp, type TestApp } from '../../test/app.js';
@@ -18,6 +19,7 @@ import {
   isWebhookUrl,
   maskUrl,
   matchesEvent,
+  MAX_BULK_REPLAY,
   MAX_PAYLOAD_BYTES,
   MAX_WEBHOOKS_PER_PROJECT,
   parseRetryAfter,
@@ -25,6 +27,9 @@ import {
   RESPONSE_EXCERPT_BYTES,
   send,
   signatureHeader,
+  type DeliveryDetail,
+  type DeliveryPage,
+  type DeliveryView,
   type WebhookPayload,
 } from './webhooks.js';
 
@@ -785,6 +790,312 @@ describe('webhook delivery', () => {
     expect(res.body).toContain('flagship_webhook_attempt_duration_seconds_count');
     const consumer = await sql<{ name: string }>`SELECT name FROM event_consumers`.execute(t.db);
     expect(consumer.rows.map((r) => r.name)).toContain('webhooks');
+  });
+});
+
+describe('the delivery log and replay', () => {
+  const D = (h: { id: string }) => `${P}/webhooks/${h.id}/deliveries`;
+
+  it('lists deliveries newest first, filters and pages them, and shows each attempt', async () => {
+    let n = 0;
+    receiver.respond = (req, res) => {
+      if (req.path === '/log' && ++n === 1) res.writeHead(500).end('boom');
+      else res.writeHead(200).end('ok');
+    };
+    const h = await hook({ name: 'log', url: receiver.url('/log'), events: ['flag.kill_switch'] });
+    await flag('logged');
+    await kill('logged', 'production');
+    await kill('logged', 'production', false);
+    await kill('logged', 'development');
+    await settle(() => receiver.at('/log').length === 3);
+    advance(11_000);
+    await settle(() => receiver.at('/log').length === 4);
+
+    const all = (await admin.request('GET', D(h))).json<DeliveryPage>();
+    expect(all.next).toBeNull();
+    expect(all.deliveries).toHaveLength(3);
+    const created = all.deliveries.map((d) => d.createdAt);
+    expect(created).toEqual([...created].sort().reverse());
+    expect(all.deliveries.every((d) => d.status === 'succeeded' && d.nextAttemptAt === null)).toBe(
+      true,
+    );
+    expect(all.deliveries.map((d) => d.attempts).sort()).toEqual([1, 1, 2]);
+
+    // Pages of two, with the cursor carrying on exactly where the last one stopped.
+    const first = (await admin.request('GET', `${D(h)}?limit=2`)).json<DeliveryPage>();
+    expect(first.deliveries.map((d) => d.id)).toEqual(all.deliveries.slice(0, 2).map((d) => d.id));
+    expect(first.next).not.toBeNull();
+    const second = (
+      await admin.request('GET', `${D(h)}?limit=2&cursor=${first.next ?? ''}`)
+    ).json<DeliveryPage>();
+    expect(second.deliveries.map((d) => d.id)).toEqual([all.deliveries[2]?.id]);
+    expect(second.next).toBeNull();
+
+    const count = async (query: string) =>
+      (await admin.request('GET', `${D(h)}?${query}`)).json<DeliveryPage>().deliveries.length;
+    expect(await count('status=succeeded')).toBe(3);
+    expect(await count('status=pending')).toBe(0);
+    expect(await count('event=flag.kill_switch')).toBe(3);
+    expect(await count('event=flag.create')).toBe(0);
+
+    // One delivery: its payload, as sent, and both attempts.
+    const retried = all.deliveries.find((d) => d.attempts === 2);
+    const detail = (
+      await admin.request('GET', `${D(h)}/${retried?.id ?? ''}`)
+    ).json<DeliveryDetail>();
+    expect(detail.attemptLog.map((a) => [a.attempt, a.status, a.response, a.error])).toEqual([
+      [1, 500, 'boom', null],
+      [2, 200, 'ok', null],
+    ]);
+    expect(detail.lastStatus).toBe(200);
+    const sent = receiver.at('/log').filter((r) => r.headers['flagship-delivery'] === detail.id);
+    expect(sent).toHaveLength(2);
+    expect(detail.payload).toEqual(JSON.parse(sent[0]?.body ?? ''));
+    expect(detail.eventId).toBe(detail.payload.id);
+    expect(detail.payload).toMatchObject({ type: 'flag.kill_switch', target: { key: 'logged' } });
+
+    // What a receiver does with it, using the SDK's helper.
+    const event = parseWebhook(
+      sent[1]?.body ?? '',
+      sent[1]?.headers['flagship-signature'],
+      h.secret,
+      {
+        now: () => clock,
+      },
+    );
+    expect(event.id).toBe(detail.eventId);
+    expect(() =>
+      parseWebhook(sent[1]?.body ?? '', sent[1]?.headers['flagship-signature'], 'whsec_wrong', {
+        now: () => clock,
+      }),
+    ).toThrow(WebhookSignatureError);
+
+    // Admins only, and the right errors for what doesn't exist or doesn't parse.
+    expect((await editor.request('GET', D(h))).statusCode).toBe(403);
+    expect((await editor.request('GET', `${D(h)}/${detail.id}`)).statusCode).toBe(403);
+    const bad = await admin.request('GET', `${D(h)}?cursor=bm9wZQ`);
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.details[0].path).toBe('cursor');
+    expect((await admin.request('GET', `${D(h)}?status=lost`)).statusCode).toBe(400);
+    expect((await admin.request('GET', `${D(h)}?limit=201`)).statusCode).toBe(400);
+    expect((await admin.request('GET', `${D(h)}/${randomUUID()}`)).statusCode).toBe(404);
+    expect((await admin.request('GET', `${D(h)}/nope`)).statusCode).toBe(404);
+    expect(
+      (await admin.request('GET', `${P}/webhooks/${randomUUID()}/deliveries`)).statusCode,
+    ).toBe(404);
+    const other = await hook({ name: 'other', url: receiver.url('/other'), events: ['x.y'] });
+    expect((await admin.request('GET', `${D(other)}/${detail.id}`)).statusCode).toBe(404);
+    for (const id of [h.id, other.id]) await admin.request('DELETE', `${P}/webhooks/${id}`);
+  });
+
+  it('replays a finished delivery as a new one, for the same event, signed afresh', async () => {
+    receiver.respond = (_req, res) => {
+      res.writeHead(503).end('down');
+    };
+    const h = await hook({
+      name: 'replay',
+      url: receiver.url('/rep'),
+      events: ['flag.kill_switch'],
+    });
+    await flag('replayed');
+    await kill('replayed', 'production');
+    await settle(() => receiver.at('/rep').length === 1);
+    // The receiver stays down, so someone disables the webhook: the delivery fails.
+    await admin.request('PATCH', `${P}/webhooks/${h.id}`, { enabled: false });
+    const [failed] = (await admin.request('GET', D(h))).json<DeliveryPage>().deliveries;
+    expect(failed).toMatchObject({ status: 'failed', lastError: 'webhook disabled', attempts: 1 });
+    const id = failed?.id ?? '';
+
+    const disabled = await admin.request('POST', `${D(h)}/${id}/replay`);
+    expect(disabled.statusCode).toBe(409);
+    expect(disabled.json().error.message).toMatch(/enable the webhook/);
+
+    await admin.request('PATCH', `${P}/webhooks/${h.id}`, { enabled: true });
+    // A delivery still being retried can't be replayed: it would be sent twice.
+    await kill('replayed', 'production', false);
+    await settle(() => receiver.at('/rep').length === 2);
+    const pending = (await admin.request('GET', `${D(h)}?status=pending`)).json<DeliveryPage>()
+      .deliveries[0];
+    const busy = await admin.request('POST', `${D(h)}/${pending?.id ?? ''}/replay`);
+    expect(busy.statusCode).toBe(409);
+    expect(busy.json().error.message).toMatch(/still being retried/);
+
+    // The receiver is back and the secret was rotated in the meantime.
+    receiver.respond = (_req, res) => {
+      res.writeHead(204).end();
+    };
+    const secret = (await admin.request('POST', `${P}/webhooks/${h.id}/secret`)).json<{
+      secret: string;
+    }>().secret;
+    expect((await editor.request('POST', `${D(h)}/${id}/replay`)).statusCode).toBe(403);
+    const res = await admin.request('POST', `${D(h)}/${id}/replay`);
+    expect(res.statusCode, res.body).toBe(202);
+    const replay = res.json<DeliveryView>();
+    expect(replay).toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      replayOf: id,
+      eventId: failed?.eventId,
+      eventType: 'flag.kill_switch',
+      giveUpAt: new Date(clock.getTime() + 24 * 3_600_000).toISOString(),
+    });
+    expect(replay.id).not.toBe(id);
+    await settle(
+      async () =>
+        (await admin.request('GET', `${D(h)}/${replay.id}`)).json<DeliveryView>().status ===
+        'succeeded',
+    );
+    const sent = receiver.at('/rep').filter((r) => r.headers['flagship-delivery'] === replay.id);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.headers['flagship-attempt']).toBe('1');
+    expect(sent[0]?.body).toBe(receiver.at('/rep')[0]?.body);
+    // Signed now, with the new secret (and the old one, during the overlap).
+    const header = sent[0]?.headers['flagship-signature'];
+    expect(parseWebhook(sent[0]?.body ?? '', header, secret, { now: () => clock }).id).toBe(
+      failed?.eventId,
+    );
+    expect(verify(header, sent[0]?.body ?? '', h.secret)).toBe(true);
+
+    // The original keeps its own record.
+    const original = (await admin.request('GET', `${D(h)}/${id}`)).json<DeliveryDetail>();
+    expect(original).toMatchObject({ status: 'failed', replayOf: null });
+    expect(original.attemptLog).toHaveLength(1);
+    const audit = await t.db
+      .selectFrom('audit_log')
+      .select(['actor_name', 'target_key', 'after'])
+      .where('action', '=', 'webhook.replay')
+      .where('target_key', '=', 'replay')
+      .execute();
+    expect(audit).toEqual([
+      {
+        actor_name: expect.any(String),
+        target_key: 'replay',
+        after: { deliveries: 1, event: failed?.eventId, replayOf: id },
+      },
+    ]);
+
+    // A delivery that succeeded can be sent again too.
+    const again = await admin.request('POST', `${D(h)}/${replay.id}/replay`);
+    expect(again.statusCode).toBe(202);
+    expect(again.json()).toMatchObject({ replayOf: replay.id });
+    await settle(
+      () =>
+        receiver.at('/rep').filter((r) => r.headers['flagship-delivery'] === again.json().id)
+          .length === 1,
+    );
+
+    expect((await admin.request('POST', `${D(h)}/${randomUUID()}/replay`)).statusCode).toBe(404);
+    await admin.request('DELETE', `${P}/webhooks/${h.id}`);
+  });
+
+  it('replays what a window missed once, however often it is asked', async () => {
+    receiver.respond = (req, res) => {
+      res.writeHead(req.path === '/bulk' ? 500 : 200).end();
+    };
+    const h = await hook({
+      name: 'bulk',
+      url: receiver.url('/bulk'),
+      events: ['flag.kill_switch'],
+    });
+    await flag('bulk');
+    await kill('bulk', 'production');
+    await kill('bulk', 'production', false);
+    await kill('bulk', 'development');
+    await settle(() => receiver.at('/bulk').length === 3);
+    await admin.request('PATCH', `${P}/webhooks/${h.id}`, { enabled: false });
+    const originals = (await admin.request('GET', D(h))).json<DeliveryPage>().deliveries;
+    expect(originals.map((d) => d.status)).toEqual(['failed', 'failed', 'failed']);
+    const from = originals.at(-1)?.createdAt ?? '';
+    const to = new Date(Date.parse(originals[0]?.createdAt ?? '') + 1).toISOString();
+
+    const R = `${P}/webhooks/${h.id}/replay`;
+    expect((await admin.request('POST', R, { from })).statusCode).toBe(409);
+    await admin.request('PATCH', `${P}/webhooks/${h.id}`, { enabled: true });
+    receiver.respond = (_req, res) => {
+      res.writeHead(200).end();
+    };
+    for (const body of [
+      {},
+      { from: 'yesterday' },
+      { from: to, to: from },
+      { from, status: ['pending'] },
+      { from, status: [] },
+      { from, extra: true },
+    ]) {
+      const bad = await admin.request('POST', R, body);
+      expect(bad.statusCode, JSON.stringify(body)).toBe(400);
+    }
+    expect((await editor.request('POST', R, { from })).statusCode).toBe(403);
+
+    const res = await admin.request('POST', R, { from });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(res.json()).toEqual({ replayed: 3, more: false });
+    await settle(() => receiver.at('/bulk').length === 6);
+    const bodies = (rs: Received[]) => rs.map((r) => r.body).sort();
+    expect(bodies(receiver.at('/bulk').slice(3))).toEqual(bodies(receiver.at('/bulk').slice(0, 3)));
+
+    // Asking again sends nothing twice, and leaves no audit entry for nothing.
+    expect((await admin.request('POST', R, { from })).json()).toEqual({ replayed: 0, more: false });
+    const audited = async () =>
+      (
+        await t.db
+          .selectFrom('audit_log')
+          .select('after')
+          .where('action', '=', 'webhook.replay')
+          .where('target_key', '=', 'bulk')
+          .execute()
+      ).map((a) => a.after);
+    expect(await audited()).toEqual([
+      { deliveries: 3, from, to: clock.toISOString(), status: ['failed'] },
+    ]);
+    // Within the originals' window every delivery already has a replay; the replays
+    // themselves (succeeded, created later) are outside it.
+    expect(
+      (await admin.request('POST', R, { from, to, status: ['failed', 'succeeded'] })).json(),
+    ).toEqual({ replayed: 0, more: false });
+    const list = (await admin.request('GET', D(h))).json<DeliveryPage>().deliveries;
+    expect(list).toHaveLength(6);
+    expect(new Set(list.flatMap((d) => (d.replayOf === null ? [] : [d.replayOf])))).toEqual(
+      new Set(originals.map((d) => d.id)),
+    );
+    await admin.request('DELETE', `${P}/webhooks/${h.id}`);
+  });
+
+  it(`replays at most ${MAX_BULK_REPLAY} deliveries a call and says when there are more`, async () => {
+    const h = await hook({
+      name: 'many',
+      url: receiver.url('/many'),
+      events: ['flag.kill_switch'],
+    });
+    await sql`
+      INSERT INTO webhook_deliveries
+        (webhook_id, event_id, event_type, payload, status, attempts, next_attempt_at,
+         give_up_at, completed_at, created_at)
+      SELECT ${h.id}::uuid, n, 'flag.kill_switch', jsonb_build_object('id', 'evt_' || n), 'failed', 1,
+        now(), now(), now(), now() - make_interval(secs => n)
+      FROM generate_series(1, ${MAX_BULK_REPLAY + 1}) n`.execute(t.db);
+    const R = `${P}/webhooks/${h.id}/replay`;
+    const from = new Date(Date.now() - 86_400_000).toISOString();
+    const to = new Date(Date.now() + 1000).toISOString();
+    expect((await admin.request('POST', R, { from, to })).json()).toEqual({
+      replayed: MAX_BULK_REPLAY,
+      more: true,
+    });
+    expect((await admin.request('POST', R, { from, to })).json()).toEqual({
+      replayed: 1,
+      more: false,
+    });
+    // Oldest first: the last call picked up the newest.
+    const last = await t.db
+      .selectFrom('webhook_deliveries as r')
+      .innerJoin('webhook_deliveries as o', 'o.id', 'r.replay_of')
+      .select('o.event_id')
+      .where('r.webhook_id', '=', h.id)
+      .orderBy('r.created_at', 'desc')
+      .orderBy('o.event_id')
+      .executeTakeFirst();
+    expect(last?.event_id).toBe(1);
+    await admin.request('DELETE', `${P}/webhooks/${h.id}`);
   });
 });
 

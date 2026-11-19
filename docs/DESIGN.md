@@ -285,6 +285,32 @@ nothing. Disabling a webhook marks its pending deliveries failed; deleting it re
 Finished deliveries are removed after `FLAGSHIP_WEBHOOK_RETENTION_DAYS` (30). On shutdown the
 worker cuts attempts in flight short and records them as failed, so they are retried.
 
+**Delivery log and replay.** `GET .../webhooks/:id/deliveries` lists a webhook's
+deliveries newest first, filtered by `status` and `event`, keyset-paged on `(created_at, id)`
+along the same index the outbox writes, so a deep page costs what the first does.
+`GET .../deliveries/:d` adds the payload exactly as sent and every attempt with its status,
+error, duration and response excerpt. A replay never resets a delivery: it writes a new
+one with the same payload, and so the same event id for receivers that deduplicate, a fresh
+24-hour retry window and `replay_of` pointing at the original, whose own record is kept.
+It gets a new delivery id, starts again at attempt 1 and is signed with the current secrets
+when it is sent. `POST .../deliveries/:d/replay` replays one delivery that has succeeded or
+failed; a pending one is refused, since it would go out twice, and so is any replay while the
+webhook is disabled, where it would never be sent. After an outage, `POST
+.../webhooks/:id/replay` with `{from, to?, status?}` replays, oldest first, the deliveries
+created in that window with those statuses (`failed` by default) that have no replay yet:
+at most 1000 a call, with `more: true` when there are others, and asking twice sends nothing
+twice. Both hold the webhook's row lock, are audited as `webhook.replay` with what they
+replayed, and wake the workers.
+
+**Verifying on the receiver.** `@flagship/node` exports `parseWebhook(rawBody, header,
+secrets)` and `verifyWebhookSignature`. They take the raw body, since re-serialised JSON
+won't match, and one secret or several (during a rotation). A request passes when a `v1`
+matches and `t` is within five minutes of now either way (`toleranceSeconds`). The
+comparison is constant-time and checks every candidate. Unknown schemes and odd `v1` values
+are skipped so the format can grow, and at most eight signatures and 4 KiB of header are
+looked at. A failure throws `WebhookSignatureError` with a `code`: `missing_header`,
+`malformed_header`, `timestamp_out_of_range`, `no_matching_signature` or `invalid_body`.
+
 **Private receivers (SSRF).** A webhook URL is chosen by whoever manages webhooks, and the
 server makes the request, so without a check it could be pointed at the server's own
 loopback, the database, a cloud metadata endpoint or anything else on the private network

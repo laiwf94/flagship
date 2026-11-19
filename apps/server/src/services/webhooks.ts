@@ -495,6 +495,398 @@ export async function rotateWebhookSecret(
 }
 
 // ---------------------------------------------------------------------------
+// The delivery log and replay
+
+/** Most deliveries one bulk replay creates; call again while `more` says so. */
+export const MAX_BULK_REPLAY = 1000;
+
+export interface DeliveryView {
+  id: string;
+  /** The event's id, as in the payload: the same on a replay. */
+  eventId: string;
+  eventType: string;
+  status: WebhookDeliveryStatus;
+  attempts: number;
+  createdAt: string;
+  /** When the next attempt is due, while the delivery is pending. */
+  nextAttemptAt: string | null;
+  /** When retries stop. */
+  giveUpAt: string;
+  lastAttemptAt: string | null;
+  lastStatus: number | null;
+  lastError: string | null;
+  completedAt: string | null;
+  /** The delivery this one replays. */
+  replayOf: string | null;
+}
+
+export interface AttemptView {
+  attempt: number;
+  startedAt: string;
+  durationMs: number;
+  /** HTTP status, or null when no response arrived. */
+  status: number | null;
+  error: string | null;
+  /** The first 1 KiB of the response body. */
+  response: string | null;
+  responseTruncated: boolean;
+}
+
+export interface DeliveryDetail extends DeliveryView {
+  /** The JSON body, exactly as it is sent. */
+  payload: WebhookPayload;
+  /** Every attempt, oldest first. */
+  attemptLog: AttemptView[];
+}
+
+export interface DeliveryPage {
+  deliveries: DeliveryView[];
+  /** Cursor for the next (older) page, or null when this was the last one. */
+  next: string | null;
+}
+
+export const deliveryQuery = z.object({
+  status: z.enum(['pending', 'succeeded', 'failed']).optional(),
+  event: z
+    .string()
+    .max(100)
+    .regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/, 'must be an action such as flag.kill_switch')
+    .optional(),
+  cursor: z.string().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type DeliveryQuery = z.output<typeof deliveryQuery>;
+
+export const bulkReplayInput = z
+  .strictObject({
+    /** Inclusive lower bound on when the deliveries were created. */
+    from: z.iso.datetime({ offset: true }),
+    /** Exclusive upper bound; now when left out. */
+    to: z.iso.datetime({ offset: true }).optional(),
+    status: z
+      .array(z.enum(['succeeded', 'failed']))
+      .min(1)
+      .max(2)
+      .default(['failed']),
+  })
+  .refine((v) => v.to === undefined || Date.parse(v.from) < Date.parse(v.to), {
+    message: 'must be after from',
+    path: ['to'],
+  });
+export type BulkReplayInput = z.output<typeof bulkReplayInput>;
+
+const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+/** A page boundary: the last delivery's exact creation time and id. */
+export function encodeDeliveryCursor(at: string, id: string): string {
+  return Buffer.from(`${at}|${id}`, 'utf8').toString('base64url');
+}
+
+/** Reads a cursor from a previous page, or throws invalid_argument. */
+export function decodeDeliveryCursor(raw: string): { at: string; id: string } {
+  const text = /^[A-Za-z0-9_-]{1,200}$/.test(raw)
+    ? Buffer.from(raw, 'base64url').toString('utf8')
+    : '';
+  const [at, id, extra] = text.split('|');
+  if (
+    extra !== undefined ||
+    at === undefined ||
+    id === undefined ||
+    !CURSOR_AT.test(at) ||
+    Number.isNaN(Date.parse(at)) ||
+    !UUID.safeParse(id).success
+  ) {
+    throw new AppError('invalid_argument', 'invalid cursor', [
+      { path: 'cursor', message: 'not a cursor from a previous page' },
+    ]);
+  }
+  return { at, id };
+}
+
+interface DeliveryRow {
+  id: string;
+  event_id: number;
+  event_type: string;
+  status: WebhookDeliveryStatus;
+  attempts: number;
+  created_at: Date;
+  next_attempt_at: Date;
+  give_up_at: Date;
+  last_attempt_at: Date | null;
+  last_status: number | null;
+  last_error: string | null;
+  completed_at: Date | null;
+  replay_of: string | null;
+}
+
+const DELIVERY_COLUMNS = [
+  'id',
+  'event_id',
+  'event_type',
+  'status',
+  'attempts',
+  'created_at',
+  'next_attempt_at',
+  'give_up_at',
+  'last_attempt_at',
+  'last_status',
+  'last_error',
+  'completed_at',
+  'replay_of',
+] as const;
+
+function deliveryView(r: DeliveryRow): DeliveryView {
+  return {
+    id: r.id,
+    eventId: `evt_${r.event_id}`,
+    eventType: r.event_type,
+    status: r.status,
+    attempts: r.attempts,
+    createdAt: r.created_at.toISOString(),
+    nextAttemptAt: r.status === 'pending' ? r.next_attempt_at.toISOString() : null,
+    giveUpAt: r.give_up_at.toISOString(),
+    lastAttemptAt: r.last_attempt_at?.toISOString() ?? null,
+    lastStatus: r.last_status,
+    lastError: r.last_error,
+    completedAt: r.completed_at?.toISOString() ?? null,
+    replayOf: r.replay_of,
+  };
+}
+
+/**
+ * One page of a webhook's deliveries, newest first, keyset-paged on
+ * (created_at, id) along webhook_deliveries_webhook_idx.
+ */
+export async function listDeliveries(
+  d: WebhookDeps,
+  projectId: string,
+  webhookId: string,
+  q: DeliveryQuery,
+): Promise<DeliveryPage> {
+  await findRow(d.db, projectId, webhookId);
+  let query = d.db
+    .selectFrom('webhook_deliveries')
+    .select(DELIVERY_COLUMNS)
+    .select(
+      sql<string>`to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as(
+        'exact_at',
+      ),
+    )
+    .where('webhook_id', '=', webhookId);
+  if (q.status !== undefined) query = query.where('status', '=', q.status);
+  if (q.event !== undefined) query = query.where('event_type', '=', q.event);
+  if (q.cursor !== undefined) {
+    const { at, id } = decodeDeliveryCursor(q.cursor);
+    query = query.where(sql<boolean>`(created_at, id) < (${at}::timestamptz, ${id}::uuid)`);
+  }
+  const found = await query
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .limit(q.limit + 1)
+    .execute();
+  const page = found.slice(0, q.limit);
+  const last = page.at(-1);
+  return {
+    deliveries: page.map(deliveryView),
+    next:
+      found.length > q.limit && last !== undefined
+        ? encodeDeliveryCursor(last.exact_at, last.id)
+        : null,
+  };
+}
+
+async function findDelivery(
+  db: Db,
+  projectId: string,
+  webhookId: string,
+  deliveryId: string,
+): Promise<DeliveryRow & { payload: string }> {
+  await findRow(db, projectId, webhookId);
+  const row = UUID.safeParse(deliveryId).success
+    ? await db
+        .selectFrom('webhook_deliveries')
+        .select(DELIVERY_COLUMNS)
+        .select(sql<string>`payload::text`.as('payload'))
+        .where('id', '=', deliveryId)
+        .where('webhook_id', '=', webhookId)
+        .executeTakeFirst()
+    : undefined;
+  if (row === undefined) throw notFound('delivery');
+  return row;
+}
+
+/** One delivery with its payload and every attempt. */
+export async function getDelivery(
+  d: WebhookDeps,
+  projectId: string,
+  webhookId: string,
+  deliveryId: string,
+): Promise<DeliveryDetail> {
+  const row = await findDelivery(d.db, projectId, webhookId, deliveryId);
+  const log = await d.db
+    .selectFrom('webhook_attempts')
+    .selectAll()
+    .where('delivery_id', '=', row.id)
+    .orderBy('attempt')
+    .execute();
+  return {
+    ...deliveryView(row),
+    payload: JSON.parse(row.payload) as WebhookPayload,
+    attemptLog: log.map((a) => ({
+      attempt: a.attempt,
+      startedAt: a.started_at.toISOString(),
+      durationMs: a.duration_ms,
+      status: a.status,
+      error: a.error,
+      response: a.response,
+      responseTruncated: a.response_truncated,
+    })),
+  };
+}
+
+/** Locks the webhook row and refuses a disabled one: a replay would never be sent. */
+async function lockEnabled(trx: Db, projectId: string, webhookId: string): Promise<string> {
+  const row = UUID.safeParse(webhookId).success
+    ? await trx
+        .selectFrom('webhooks')
+        .select(['name', 'enabled'])
+        .where('id', '=', webhookId)
+        .where('project_id', '=', projectId)
+        .forUpdate()
+        .executeTakeFirst()
+    : undefined;
+  if (row === undefined) throw notFound('webhook');
+  if (!row.enabled) {
+    throw new AppError('failed_precondition', 'enable the webhook before replaying deliveries');
+  }
+  return row.name;
+}
+
+/**
+ * Sends a finished delivery again, as a new delivery with the same payload
+ * (so the same event id, for receivers that deduplicate) and a fresh 24-hour
+ * retry window. It is signed with the current secret when it is sent. The
+ * original and its attempts stay in the log.
+ */
+export async function replayDelivery(
+  d: WebhookDeps,
+  projectId: string,
+  webhookId: string,
+  deliveryId: string,
+  actor: Actor,
+): Promise<DeliveryView> {
+  return d.db.transaction().execute(async (trx) => {
+    const name = await lockEnabled(trx, projectId, webhookId);
+    const original = await findDelivery(trx, projectId, webhookId, deliveryId);
+    if (original.status === 'pending') {
+      throw new AppError(
+        'failed_precondition',
+        'the delivery is still being retried; replay it once it has succeeded or failed',
+      );
+    }
+    const now = d.now();
+    const created = await trx
+      .insertInto('webhook_deliveries')
+      .columns([
+        'webhook_id',
+        'event_id',
+        'event_type',
+        'payload',
+        'next_attempt_at',
+        'give_up_at',
+        'replay_of',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('webhook_deliveries')
+          .select([
+            'webhook_id',
+            'event_id',
+            'event_type',
+            'payload',
+            eb.val(now).as('next_attempt_at'),
+            eb.val(new Date(now.getTime() + RETRY_WINDOW_MS)).as('give_up_at'),
+            'id',
+          ])
+          .where('id', '=', original.id),
+      )
+      .returning(DELIVERY_COLUMNS)
+      .executeTakeFirstOrThrow();
+    await recordAudit(trx, {
+      projectId,
+      actor,
+      action: 'webhook.replay',
+      targetType: 'webhook',
+      targetKey: name,
+      after: { deliveries: 1, event: `evt_${original.event_id}`, replayOf: original.id },
+    });
+    await sql`SELECT pg_notify(${WEBHOOKS_CHANNEL}, '')`.execute(trx);
+    return deliveryView(created);
+  });
+}
+
+/**
+ * Replays, oldest first, up to MAX_BULK_REPLAY finished deliveries created in
+ * [from, to) with one of the given statuses that have not been replayed yet:
+ * after an outage, one call (or a few, while `more` is true) resends what the
+ * receiver missed, and calling again does not send anything twice.
+ */
+export async function replayDeliveries(
+  d: WebhookDeps,
+  projectId: string,
+  webhookId: string,
+  input: BulkReplayInput,
+  actor: Actor,
+): Promise<{ replayed: number; more: boolean }> {
+  return d.db.transaction().execute(async (trx) => {
+    const name = await lockEnabled(trx, projectId, webhookId);
+    const now = d.now();
+    const to = input.to === undefined ? now : new Date(input.to);
+    const giveUp = new Date(now.getTime() + RETRY_WINDOW_MS);
+    const result = await sql<{ n: string; more: boolean }>`
+      WITH candidates AS (
+        SELECT o.id FROM webhook_deliveries o
+        WHERE o.webhook_id = ${webhookId}
+          AND o.created_at >= ${new Date(input.from)} AND o.created_at < ${to}
+          AND o.status IN (${sql.join(input.status)})
+          AND NOT EXISTS (SELECT 1 FROM webhook_deliveries r WHERE r.replay_of = o.id)
+        ORDER BY o.created_at, o.id
+        LIMIT ${MAX_BULK_REPLAY + 1}
+      ), chosen AS (
+        SELECT id FROM candidates LIMIT ${MAX_BULK_REPLAY}
+      ), inserted AS (
+        INSERT INTO webhook_deliveries
+          (webhook_id, event_id, event_type, payload, next_attempt_at, give_up_at, replay_of)
+        SELECT o.webhook_id, o.event_id, o.event_type, o.payload, ${now}, ${giveUp}, o.id
+        FROM webhook_deliveries o JOIN chosen USING (id)
+        RETURNING 1
+      )
+      SELECT (SELECT count(*) FROM inserted) AS n,
+        (SELECT count(*) FROM candidates) > ${MAX_BULK_REPLAY} AS more`.execute(trx);
+    const row = result.rows[0];
+    const replayed = Number(row?.n ?? 0);
+    const more = row?.more ?? false;
+    if (replayed > 0) {
+      await recordAudit(trx, {
+        projectId,
+        actor,
+        action: 'webhook.replay',
+        targetType: 'webhook',
+        targetKey: name,
+        after: {
+          deliveries: replayed,
+          from: new Date(input.from).toISOString(),
+          to: to.toISOString(),
+          status: input.status,
+        },
+      });
+      await sql`SELECT pg_notify(${WEBHOOKS_CHANNEL}, '')`.execute(trx);
+    }
+    return { replayed, more };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // The outbox
 
 /** The JSON body of a delivery. */

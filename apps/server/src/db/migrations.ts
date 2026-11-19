@@ -579,4 +579,10 @@ export const migrations: Record<string, Migration> = {
       PRIMARY KEY (delivery_id, attempt)
     )`,
   ]),
+  '016_webhook_replays': statements([
+    `ALTER TABLE webhook_deliveries
+      ADD COLUMN replay_of uuid REFERENCES webhook_deliveries (id) ON DELETE SET NULL`,
+    `CREATE INDEX webhook_deliveries_replay_idx ON webhook_deliveries (replay_of)
+      WHERE replay_of IS NOT NULL`,
+  ]),
 };

@@ -40,6 +40,7 @@ describe('migrations', () => {
       '013_experiments',
       '014_event_bus',
       '015_webhooks',
+      '016_webhook_replays',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -122,6 +123,7 @@ describe('migrations', () => {
         'webhook_attempts_pkey',
         'webhook_deliveries_completed_idx',
         'webhook_deliveries_due_idx',
+        'webhook_deliveries_replay_idx',
         'webhook_deliveries_webhook_idx',
         'webhooks_project_idx',
       ]),
