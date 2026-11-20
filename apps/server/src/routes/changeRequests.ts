@@ -75,25 +75,29 @@ export function changeRequestRoutes(ctx: Context) {
   };
 
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/projects/:project/change-requests', async (request) => {
-      const { project } = parse(projectParams, request.params, 'path');
-      const q = parse(listQuery, request.query, 'query');
-      const p = await getProject(ctx.db, project);
-      const environmentId =
-        q.environment === undefined
-          ? undefined
-          : (await getEnvironment(ctx.db, p.id, q.environment)).id;
-      const requests = await listChangeRequests(ctx.db, p.id, { ...q, environmentId });
-      const last = requests.at(-1);
-      return {
-        changeRequests: requests,
-        next: requests.length === q.limit && last !== undefined ? last.id : null,
-      };
-    });
+    api.get(
+      '/projects/:project/change-requests',
+      { config: { scope: 'change-requests:read' } },
+      async (request) => {
+        const { project } = parse(projectParams, request.params, 'path');
+        const q = parse(listQuery, request.query, 'query');
+        const p = await getProject(ctx.db, project);
+        const environmentId =
+          q.environment === undefined
+            ? undefined
+            : (await getEnvironment(ctx.db, p.id, q.environment)).id;
+        const requests = await listChangeRequests(ctx.db, p.id, { ...q, environmentId });
+        const last = requests.at(-1);
+        return {
+          changeRequests: requests,
+          next: requests.length === q.limit && last !== undefined ? last.id : null,
+        };
+      },
+    );
 
     api.post(
       '/projects/:project/flags/:flag/environments/:environment/change-requests',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'change-requests:write' } },
       async (request, reply) => {
         const p = parse(targetParams, request.params, 'path');
         const { baseVersion, title, description, ...config } = parse(
@@ -115,7 +119,7 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/environments/:environment/segments/:segment/change-requests',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'change-requests:write' } },
       async (request, reply) => {
         const p = parse(segmentParams, request.params, 'path');
         const { segment, ...rest } = parse(segmentProposalInput, request.body, 'change request');
@@ -138,15 +142,19 @@ export function changeRequestRoutes(ctx: Context) {
       },
     );
 
-    api.get('/projects/:project/change-requests/:id', async (request) => {
-      const p = parse(requestParams, request.params, 'path');
-      const project = await getProject(ctx.db, p.project);
-      return getChangeRequest(ctx.db, project.id, p.id);
-    });
+    api.get(
+      '/projects/:project/change-requests/:id',
+      { config: { scope: 'change-requests:read' } },
+      async (request) => {
+        const p = parse(requestParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        return getChangeRequest(ctx.db, project.id, p.id);
+      },
+    );
 
     api.post(
       '/projects/:project/change-requests/:id/reviews',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'change-requests:write' } },
       async (request, reply) => {
         const p = parse(requestParams, request.params, 'path');
         const body = parse(reviewInput, request.body, 'review');
@@ -158,7 +166,7 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/change-requests/:id/apply',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'change-requests:write' } },
       async (request) => {
         const p = parse(requestParams, request.params, 'path');
         const body = parse(revision, request.body, 'apply');
@@ -168,7 +176,7 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/change-requests/:id/rebase',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'change-requests:write' } },
       async (request) => {
         const p = parse(requestParams, request.params, 'path');
         const body = parse(revision, request.body, 'rebase');
@@ -178,7 +186,7 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/change-requests/:id/close',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'change-requests:write' } },
       async (request) => {
         const p = parse(requestParams, request.params, 'path');
         const body = parse(

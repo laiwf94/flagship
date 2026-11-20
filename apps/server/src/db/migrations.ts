@@ -585,4 +585,30 @@ export const migrations: Record<string, Migration> = {
     `CREATE INDEX webhook_deliveries_replay_idx ON webhook_deliveries (replay_of)
       WHERE replay_of IS NOT NULL`,
   ]),
+  // Scoped API tokens for automation. A token belongs to a user and acts as
+  // them, narrowed to its scopes and optionally to one project and some of its
+  // environments (`environment_ids` NULL means all of them; ids rather than a
+  // join table so a deleted environment can never widen a token). Only the
+  // SHA-256 is stored. Every token expires; `created_at` comes from the app
+  // clock like sessions, so expiry is computed against one time source.
+  '017_api_tokens': statements([
+    `CREATE TABLE api_tokens (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      name text NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+      display_prefix text NOT NULL,
+      token_hash bytea NOT NULL UNIQUE,
+      scopes text[] NOT NULL CHECK (cardinality(scopes) BETWEEN 1 AND 50),
+      project_id uuid REFERENCES projects (id) ON DELETE CASCADE,
+      environment_ids uuid[] CHECK (cardinality(environment_ids) BETWEEN 1 AND 20),
+      created_at timestamptz NOT NULL,
+      expires_at timestamptz NOT NULL,
+      last_used_at timestamptz,
+      revoked_at timestamptz,
+      CHECK (expires_at > created_at),
+      CHECK (environment_ids IS NULL OR project_id IS NOT NULL)
+    )`,
+    `CREATE INDEX api_tokens_user_idx ON api_tokens (user_id, created_at DESC)`,
+    `CREATE INDEX api_tokens_expires_idx ON api_tokens (expires_at)`,
+  ]),
 };

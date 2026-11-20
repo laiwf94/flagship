@@ -64,8 +64,14 @@ export function changeNote(request: FastifyRequest): ChangeNote | undefined {
   return { reason, link };
 }
 
-/** The signed-in user as the actor of a change, with the reason and link they gave. */
+/**
+ * The signed-in user as the actor of a change, with the reason and link they
+ * gave. A change made with an API token names the token after the user, so
+ * the audit log tells automation from hands.
+ */
 export function actorOf(request: FastifyRequest): Actor {
   const user = currentUser(request);
-  return { id: user.id, name: user.name, note: changeNote(request) };
+  const name =
+    request.apiToken === null ? user.name : `${user.name} (token ${request.apiToken.name})`;
+  return { id: user.id, name, note: changeNote(request) };
 }

@@ -26,18 +26,18 @@ const idParams = z.object({ id: z.uuid() });
 
 export function userRoutes(ctx: Context) {
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/users', { config: { role: 'admin' } }, async () => ({
+    api.get('/users', { config: { role: 'admin', sessionOnly: true } }, async () => ({
       users: await listUsers(ctx.db),
     }));
 
-    api.post('/users', { config: { role: 'admin' } }, async (request, reply) => {
+    api.post('/users', { config: { role: 'admin', sessionOnly: true } }, async (request, reply) => {
       const actor = currentUser(request);
       const body = parse(createSchema, request.body, 'user');
       const user = await createUser(ctx.db, body, { id: actor.id, name: actor.name });
       return reply.status(201).send(user);
     });
 
-    api.patch('/users/:id', { config: { role: 'admin' } }, async (request) => {
+    api.patch('/users/:id', { config: { role: 'admin', sessionOnly: true } }, async (request) => {
       const actor = currentUser(request);
       const { id } = parse(idParams, request.params, 'user id');
       const body = parse(updateSchema, request.body, 'user');

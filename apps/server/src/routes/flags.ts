@@ -164,7 +164,7 @@ export function flagRoutes(ctx: Context) {
   };
 
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/projects/:project/flags', async (request) => {
+    api.get('/projects/:project/flags', { config: { scope: 'flags:read' } }, async (request) => {
       const { project } = parse(projectParams, request.params, 'path');
       const q = parse(listQuery, request.query, 'query');
       const p = await getProject(ctx.db, project);
@@ -172,37 +172,53 @@ export function flagRoutes(ctx: Context) {
       return { flags: await listFlags(ctx.db, p.id, e.id, q, ctx.now()) };
     });
 
-    api.get('/projects/:project/environments/:environment/stale-flags', async (request) => {
-      const { project, environment } = parse(envParams, request.params, 'path');
-      const p = await getProject(ctx.db, project);
-      const e = await env(p.id, environment);
-      return {
-        staleAfterDays: STALE_AFTER_DAYS,
-        flags: await staleFlags(ctx.db, p.id, e.id, ctx.now()),
-      };
-    });
+    api.get(
+      '/projects/:project/environments/:environment/stale-flags',
+      { config: { scope: 'flags:read' } },
+      async (request) => {
+        const { project, environment } = parse(envParams, request.params, 'path');
+        const p = await getProject(ctx.db, project);
+        const e = await env(p.id, environment);
+        return {
+          staleAfterDays: STALE_AFTER_DAYS,
+          flags: await staleFlags(ctx.db, p.id, e.id, ctx.now()),
+        };
+      },
+    );
 
-    api.post('/projects/:project/flags', { config: { role: 'editor' } }, async (request, reply) => {
-      const { project } = parse(projectParams, request.params, 'path');
-      const body = parse(flagInput, request.body, 'flag');
-      return reply.status(201).send(await createFlag(await scope(request, project), body));
-    });
+    api.post(
+      '/projects/:project/flags',
+      { config: { role: 'editor', scope: 'flags:write' } },
+      async (request, reply) => {
+        const { project } = parse(projectParams, request.params, 'path');
+        const body = parse(flagInput, request.body, 'flag');
+        return reply.status(201).send(await createFlag(await scope(request, project), body));
+      },
+    );
 
-    api.get('/projects/:project/flags/:flag', async (request) => {
-      const { project, flag } = parse(flagParams, request.params, 'path');
-      const p = await getProject(ctx.db, project);
-      return getFlag(ctx.db, p.id, flag);
-    });
+    api.get(
+      '/projects/:project/flags/:flag',
+      { config: { scope: 'flags:read' } },
+      async (request) => {
+        const { project, flag } = parse(flagParams, request.params, 'path');
+        const p = await getProject(ctx.db, project);
+        return getFlag(ctx.db, p.id, flag);
+      },
+    );
 
-    api.put('/projects/:project/flags/:flag', { config: { role: 'editor' } }, async (request) => {
-      const { project, flag } = parse(flagParams, request.params, 'path');
-      const body = parse(flagPatch, request.body, 'flag');
-      return updateFlag(await scope(request, project), flag, body);
-    });
+    api.put(
+      '/projects/:project/flags/:flag',
+      { config: { role: 'editor', scope: 'flags:write' } },
+      async (request) => {
+        const { project, flag } = parse(flagParams, request.params, 'path');
+        const body = parse(flagPatch, request.body, 'flag');
+        return updateFlag(await scope(request, project), flag, body);
+      },
+    );
 
     api.post(
       '/projects/:project/flags/:flag/archive',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request) => {
         const { project, flag } = parse(flagParams, request.params, 'path');
         const body = parse(z.strictObject({ version }), request.body, 'archive');
@@ -212,7 +228,7 @@ export function flagRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/flags/:flag/restore',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request) => {
         const { project, flag } = parse(flagParams, request.params, 'path');
         const body = parse(z.strictObject({ version }), request.body, 'restore');
@@ -222,7 +238,7 @@ export function flagRoutes(ctx: Context) {
 
     api.put(
       '/projects/:project/flags/:flag/environments/:environment',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request) => {
         const p = parse(flagEnvParams, request.params, 'path');
         const { version: expected, ...config } = parse(configInput, request.body, 'targeting');
@@ -233,7 +249,7 @@ export function flagRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/flags/:flag/environments/:environment/kill-switch',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request) => {
         const p = parse(flagEnvParams, request.params, 'path');
         const body = parse(z.strictObject({ enabled: z.boolean() }), request.body, 'kill switch');
@@ -244,6 +260,7 @@ export function flagRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/flags/:flag/environments/:environment/schedules',
+      { config: { scope: 'flags:read' } },
       async (request) => {
         const p = parse(flagEnvParams, request.params, 'path');
         const project = await getProject(ctx.db, p.project);
@@ -254,7 +271,7 @@ export function flagRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/flags/:flag/environments/:environment/schedules',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request, reply) => {
         const p = parse(flagEnvParams, request.params, 'path');
         const body = parse(scheduleInput, request.body, 'scheduled change');
@@ -272,7 +289,7 @@ export function flagRoutes(ctx: Context) {
 
     api.delete(
       '/projects/:project/flags/:flag/environments/:environment/schedules/:id',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request) => {
         const p = parse(scheduleParams, request.params, 'path');
         const s = await scope(request, p.project);
@@ -282,6 +299,7 @@ export function flagRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/flags/:flag/environments/:environment/rollout-plans',
+      { config: { scope: 'flags:read' } },
       async (request) => {
         const p = parse(flagEnvParams, request.params, 'path');
         const project = await getProject(ctx.db, p.project);
@@ -292,7 +310,7 @@ export function flagRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/flags/:flag/environments/:environment/rollout-plans',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request, reply) => {
         const p = parse(flagEnvParams, request.params, 'path');
         const body = parse(rolloutPlanSchema, request.body, 'rollout plan');
@@ -310,7 +328,7 @@ export function flagRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/flags/:flag/environments/:environment/rollout-plans/:id/:action',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'flags:write' } },
       async (request) => {
         const p = parse(planParams, request.params, 'path');
         const s = await scope(request, p.project);
@@ -325,36 +343,48 @@ export function flagRoutes(ctx: Context) {
       },
     );
 
-    api.get('/projects/:project/flags/:flag/exposures', async (request) => {
-      const p = parse(flagParams, request.params, 'path');
-      const q = parse(
-        z.object({
-          environment: keySchema,
-          hours: z.coerce.number().int().min(1).max(720).default(24),
-        }),
-        request.query,
-        'query',
-      );
-      const project = await getProject(ctx.db, p.project);
-      const e = await env(project.id, q.environment);
-      return exposureSummary(ctx.db, e.id, p.flag, q.hours, ctx.now());
-    });
+    api.get(
+      '/projects/:project/flags/:flag/exposures',
+      { config: { scope: 'flags:read' } },
+      async (request) => {
+        const p = parse(flagParams, request.params, 'path');
+        const q = parse(
+          z.object({
+            environment: keySchema,
+            hours: z.coerce.number().int().min(1).max(720).default(24),
+          }),
+          request.query,
+          'query',
+        );
+        const project = await getProject(ctx.db, p.project);
+        const e = await env(project.id, q.environment);
+        return exposureSummary(ctx.db, e.id, p.flag, q.hours, ctx.now());
+      },
+    );
 
-    api.get('/projects/:project/environments/:environment/ruleset', async (request) => {
-      const p = parse(envParams, request.params, 'path');
-      const project = await getProject(ctx.db, p.project);
-      return loadRuleset(ctx.db, (await env(project.id, p.environment)).id);
-    });
+    api.get(
+      '/projects/:project/environments/:environment/ruleset',
+      { config: { scope: 'flags:read' } },
+      async (request) => {
+        const p = parse(envParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        return loadRuleset(ctx.db, (await env(project.id, p.environment)).id);
+      },
+    );
 
-    api.get('/projects/:project/environments/:environment/segments', async (request) => {
-      const p = parse(envParams, request.params, 'path');
-      const project = await getProject(ctx.db, p.project);
-      return { segments: await listSegments(ctx.db, (await env(project.id, p.environment)).id) };
-    });
+    api.get(
+      '/projects/:project/environments/:environment/segments',
+      { config: { scope: 'segments:read' } },
+      async (request) => {
+        const p = parse(envParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        return { segments: await listSegments(ctx.db, (await env(project.id, p.environment)).id) };
+      },
+    );
 
     api.post(
       '/projects/:project/environments/:environment/segments',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'segments:write' } },
       async (request, reply) => {
         const p = parse(envParams, request.params, 'path');
         const body = parse(segmentInput, request.body, 'segment');
@@ -365,15 +395,19 @@ export function flagRoutes(ctx: Context) {
       },
     );
 
-    api.get('/projects/:project/environments/:environment/segments/:segment', async (request) => {
-      const p = parse(segmentParams, request.params, 'path');
-      const project = await getProject(ctx.db, p.project);
-      return getSegment(ctx.db, (await env(project.id, p.environment)).id, p.segment);
-    });
+    api.get(
+      '/projects/:project/environments/:environment/segments/:segment',
+      { config: { scope: 'segments:read' } },
+      async (request) => {
+        const p = parse(segmentParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        return getSegment(ctx.db, (await env(project.id, p.environment)).id, p.segment);
+      },
+    );
 
     api.put(
       '/projects/:project/environments/:environment/segments/:segment',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'segments:write' } },
       async (request) => {
         const p = parse(segmentParams, request.params, 'path');
         const { version: expected, ...body } = parse(segmentPatch, request.body, 'segment');
@@ -384,7 +418,7 @@ export function flagRoutes(ctx: Context) {
 
     api.delete(
       '/projects/:project/environments/:environment/segments/:segment',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'segments:write' } },
       async (request, reply) => {
         const p = parse(segmentParams, request.params, 'path');
         const q = parse(
@@ -398,7 +432,7 @@ export function flagRoutes(ctx: Context) {
       },
     );
 
-    api.get('/projects/:project/audit', async (request) => {
+    api.get('/projects/:project/audit', { config: { scope: 'audit:read' } }, async (request) => {
       const { project } = parse(projectParams, request.params, 'path');
       const q = parse(auditQuery, request.query, 'query');
       const p = await getProject(ctx.db, project);
@@ -419,16 +453,20 @@ export function flagRoutes(ctx: Context) {
       });
     });
 
-    api.get('/projects/:project/audit/:id/restore', async (request) => {
-      const p = parse(entryParams, request.params, 'path');
-      const q = parse(restoreQuery, request.query, 'query');
-      const project = await getProject(ctx.db, p.project);
-      return planRestore(ctx.db, project.id, p.id, q.to);
-    });
+    api.get(
+      '/projects/:project/audit/:id/restore',
+      { config: { scope: 'audit:read' } },
+      async (request) => {
+        const p = parse(entryParams, request.params, 'path');
+        const q = parse(restoreQuery, request.query, 'query');
+        const project = await getProject(ctx.db, p.project);
+        return planRestore(ctx.db, project.id, p.id, q.to);
+      },
+    );
 
     api.post(
       '/projects/:project/audit/:id/restore',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'audit:restore' } },
       async (request, reply) => {
         const p = parse(entryParams, request.params, 'path');
         const body = parse(restoreInput, request.body, 'restore');

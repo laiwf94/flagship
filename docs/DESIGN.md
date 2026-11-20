@@ -505,6 +505,40 @@ nothing here: the secret already has full entropy, and looking up by hash means 
 time doesn't depend on the secret. The full key is shown once, at creation. `last_used_at` is
 written at most once a minute per key and instance.
 
+## API tokens
+
+Scripts and CI call the admin API with tokens rather than sessions. A token is `fst_` and 256
+random bits, stored as its SHA-256 like an SDK key and shown once. It belongs to the user who
+made it and acts as them: changes are audited under the user's id, with the actor named
+`<user> (token <name>)` so the history tells automation from hands.
+
+What a token may do is the intersection of three things, checked on every request in the
+`/api` guard:
+
+- **Scopes.** Every `/api` route declares the one scope it needs (`flags:write`,
+  `webhooks:read`, ...) or that it is `sessionOnly`. An `onRoute` hook refuses to start the
+  server if a route declares neither or both, so a new route can't be opened to tokens, or
+  closed to them, by omission. Sessions, users and token management are session-only, so a
+  leaked token can't mint another or extend itself.
+- **The owner's role, now.** Each scope has a least role (`flags:write` needs editor,
+  `webhooks:*` admin); a user can only create tokens with scopes their role allows, and the
+  route's role is checked against the owner's current role on each request. Demoting the owner
+  narrows their tokens at once; disabling them ends them.
+- **Project and environments.** A token is for one project or all of them. A project token
+  only reaches routes whose `:project` is that project, so cross-project routes such as
+  `GET /api/projects` are refused. It may further be limited to some environments: routes
+  naming an `:environment` must name one of them, and routes without one (creating a flag,
+  applying a change request) are refused for writes, since they reach every environment.
+  Reads of project-level data are allowed. The environments are stored as ids, not a join
+  table, so deleting an environment can never widen a token.
+
+Every token expires, after 1 to 365 days chosen at creation, and can be revoked by its owner or
+an admin, effective on the next request. Expired and revoked tokens stay listed for 30 days,
+then the scheduler deletes them. A token request carries no ambient browser credential, so it
+needs no CSRF token; the `Origin` check still applies, and if both a token and a cookie are
+sent, the cookie is ignored. `last_used_at` is written at most once a minute per token and
+instance.
+
 ## Sessions and CSRF
 
 Admin users sign in with email and password, hashed with scrypt (N=2^15, r=8, p=1, 16-byte
@@ -1233,7 +1267,7 @@ The OpenFeature provider maps these to `PROVIDER_NOT_READY`, `Stale` and `Ready`
   generic 500 and their details go to the log only.
 - Logs are JSON with request ids. Headers aren't logged, `authorization`, `cookie` and
   `x-csrf-token` are redacted as a second guard, and `key=` in URLs is masked. Tests check that
-  session tokens, passwords and contexts don't appear in log output.
+  session tokens, API tokens, passwords and contexts don't appear in log output.
 - `/metrics` answers loopback only unless `FLAGSHIP_METRICS_TOKEN` is set.
 - Webhook signing secrets are encrypted at rest with AES-256-GCM under `FLAGSHIP_SECRET_KEY`
   and shown once. Webhook attempts follow no redirects, read at most 64 KiB of a response,

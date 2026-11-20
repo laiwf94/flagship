@@ -41,6 +41,7 @@ describe('migrations', () => {
       '014_event_bus',
       '015_webhooks',
       '016_webhook_replays',
+      '017_api_tokens',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -56,6 +57,7 @@ describe('migrations', () => {
     );
     expect(tables.rows.map((r) => r.table_name)).toEqual([
       'api_keys',
+      'api_tokens',
       'audit_log',
       'change_request_reviews',
       'change_requests',
@@ -120,6 +122,9 @@ describe('migrations', () => {
         'scheduled_changes_due_idx',
         'sessions_expires_idx',
         'api_keys_key_hash_key',
+        'api_tokens_expires_idx',
+        'api_tokens_token_hash_key',
+        'api_tokens_user_idx',
         'webhook_attempts_pkey',
         'webhook_deliveries_completed_idx',
         'webhook_deliveries_due_idx',

@@ -150,15 +150,28 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 
 ## HTTP API
 
-Admin routes use the session cookie and need `X-CSRF-Token` on writes. Any write can carry
-`Flagship-Reason` (percent-encoded) and `Flagship-Link` headers, recorded on its audit entry.
-SDK routes take `Authorization: Bearer <key>`.
+Admin routes use the session cookie and need `X-CSRF-Token` on writes, or an API token in
+`Authorization: Bearer fst_...` with no cookie or CSRF token. A token acts as the user who made
+it, limited to its scopes, to one project or all, and optionally to some of that project's
+environments; it expires after 1 to 365 days and can't manage sessions, users or tokens. Any
+write can carry `Flagship-Reason` (percent-encoded) and `Flagship-Link` headers, recorded on its
+audit entry. SDK routes take `Authorization: Bearer <key>`.
+
+```sh
+curl -X POST "$FLAGSHIP/api/projects/default/flags/new-checkout/environments/production/kill-switch" \
+  -H "Authorization: Bearer $FLAGSHIP_TOKEN" -H 'Content-Type: application/json' \
+  -H 'Flagship-Reason: error%20rate%20alarm' -d '{"enabled": true}'
+```
+
+Scopes: `flags`, `segments`, `change-requests` and `experiments` each `:read` and `:write`;
+`audit:read`, `audit:restore`; `projects`, `sdk-keys` and `webhooks` each `:read` and `:write`.
 
 | Endpoint                                                                    | Purpose                                                                                      |
 | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `POST /api/session`, `GET /api/session`, `DELETE /api/session`              | sign in (returns the CSRF token), current user, sign out                                     |
 | `PUT /api/session/password`                                                 | change password, ending other sessions                                                       |
 | `GET/POST /api/users`, `PATCH /api/users/:id`                               | people and roles (admin)                                                                     |
+| `GET/POST /api/tokens`, `DELETE /api/tokens/:id`                            | your API tokens; the secret is returned once (an admin can revoke anyone's)                  |
 | `GET/POST /api/projects`, `POST /api/projects/:p/environments`              | projects and environments                                                                    |
 | `GET/POST/DELETE /api/projects/:p/environments/:e/api-keys[/:id]`           | SDK keys; the secret is returned once (admin)                                                |
 | `GET /api/projects/:p/export`                                               | the whole project as one JSON document, streamed (admin)                                     |

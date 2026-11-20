@@ -178,6 +178,48 @@ export interface ApiKey {
   revoked: boolean;
 }
 
+export type TokenScope =
+  | 'flags:read'
+  | 'flags:write'
+  | 'segments:read'
+  | 'segments:write'
+  | 'change-requests:read'
+  | 'change-requests:write'
+  | 'experiments:read'
+  | 'experiments:write'
+  | 'audit:read'
+  | 'audit:restore'
+  | 'projects:read'
+  | 'projects:write'
+  | 'sdk-keys:read'
+  | 'sdk-keys:write'
+  | 'webhooks:read'
+  | 'webhooks:write';
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  displayPrefix: string;
+  scopes: TokenScope[];
+  /** The one project it may touch, or null for every project. */
+  project: string | null;
+  /** The environments it may change, or null for all of them. */
+  environments: string[] | null;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  revoked: boolean;
+  expired: boolean;
+}
+
+export interface ApiTokenInput {
+  name: string;
+  scopes: TokenScope[];
+  project?: string;
+  environments?: string[];
+  expiresInDays: number;
+}
+
 export interface ManagedUser extends User {
   disabled: boolean;
   createdAt: string;
@@ -666,6 +708,10 @@ export const api = {
       'DELETE',
       `/api/projects/${enc(project)}/environments/${enc(env)}/api-keys/${enc(id)}`,
     ),
+  apiTokens: () => request<{ tokens: ApiToken[] }>('GET', '/api/tokens'),
+  createApiToken: (input: ApiTokenInput) =>
+    request<ApiToken & { secret: string }>('POST', '/api/tokens', input),
+  revokeApiToken: (id: string) => request<undefined>('DELETE', `/api/tokens/${enc(id)}`),
   setChangeNotes: (
     project: string,
     env: string,

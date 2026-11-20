@@ -17,6 +17,7 @@ import {
 import { fullDate, slugify, timeAgo } from '../format';
 import { useResource } from '../hooks';
 import { useSession } from '../session';
+import { ApiTokens } from './ApiTokens';
 import { useScope } from './Layout';
 
 export function Settings() {
@@ -26,10 +27,11 @@ export function Settings() {
       <div className="page-head">
         <div>
           <h1>Settings</h1>
-          <p className="muted">Environments, SDK keys and who can change flags.</p>
+          <p className="muted">Environments, API tokens, SDK keys and who can change flags.</p>
         </div>
       </div>
       <Environments />
+      <ApiTokens />
       {can('admin') ? (
         <>
           <ApiKeys />

@@ -98,18 +98,18 @@ export function sessionRoutes(ctx: Context, limiter: SignInLimiter) {
       };
     });
 
-    api.get('/session', async (request) => ({
+    api.get('/session', { config: { sessionOnly: true } }, async (request) => ({
       user: currentUser(request),
       csrfToken: request.session?.csrfToken,
     }));
 
-    api.delete('/session', async (request, reply) => {
+    api.delete('/session', { config: { sessionOnly: true } }, async (request, reply) => {
       if (request.session !== null) await deleteSession(ctx.db, request.session.tokenHash);
       clearCookie(ctx, request, reply);
       return reply.status(204).send();
     });
 
-    api.put('/session/password', async (request, reply) => {
+    api.put('/session/password', { config: { sessionOnly: true } }, async (request, reply) => {
       const user = currentUser(request);
       const body = parse(passwordChangeSchema, request.body, 'password change');
       const row = await ctx.db

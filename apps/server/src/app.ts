@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import { sql } from 'kysely';
 import type { Logger } from 'pino';
-import { sessionGuard } from './auth/guard.js';
+import { requireScopeDeclaration, sessionGuard } from './auth/guard.js';
 import { SignInLimiter } from './auth/ratelimit.js';
 import type { Config } from './config.js';
 import type { Context } from './context.js';
@@ -19,11 +19,13 @@ import { experimentRoutes } from './routes/experiments.js';
 import { flagRoutes } from './routes/flags.js';
 import { projectRoutes } from './routes/projects.js';
 import { sdkRoutes } from './routes/sdk.js';
+import { tokenRoutes } from './routes/tokens.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { EgressPolicy } from './egress.js';
 import { SecretBox } from './secretbox.js';
 import { KeyAuthenticator } from './services/apikeys.js';
+import { pruneApiTokens, TokenAuthenticator } from './services/apitokens.js';
 import { RulesetCache } from './services/cache.js';
 import { ExperimentEventQueue, experimentWriter } from './services/experimentEvents.js';
 import { experimentRollup } from './services/experimentRollup.js';
@@ -87,6 +89,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     metrics,
     now,
     keys: new KeyAuthenticator(db, now),
+    tokens: new TokenAuthenticator(db, now),
     secrets: config.secretKey === undefined ? undefined : new SecretBox(config.secretKey),
     egress: new EgressPolicy(config.webhookAllowedTargets),
   };
@@ -110,6 +113,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
 
   server.decorateRequest('user', null);
   server.decorateRequest('session', null);
+  server.decorateRequest('apiToken', null);
   await server.register(cookie);
   server.setErrorHandler(errorHandler);
   const uiDir = config.adminUiDir;
@@ -190,8 +194,10 @@ export async function buildApp(deps: AppDeps): Promise<App> {
 
   await server.register(
     async (api) => {
+      api.addHook('onRoute', requireScopeDeclaration);
       api.addHook('onRequest', sessionGuard(ctx));
       await api.register(sessionRoutes(ctx, limiter));
+      await api.register(tokenRoutes(ctx));
       await api.register(userRoutes(ctx));
       await api.register(projectRoutes(ctx));
       await api.register(flagRoutes(ctx));
@@ -278,6 +284,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
         everyMs: config.rollupIntervalMs,
         run: experimentRollup({ db, metrics, logger }),
       },
+      { name: 'api_tokens', everyMs: 3_600_000, run: pruneApiTokens(db) },
       {
         name: 'webhook_deliveries',
         everyMs: 3_600_000,

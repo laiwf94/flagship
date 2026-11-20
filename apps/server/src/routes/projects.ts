@@ -46,39 +46,49 @@ export function projectRoutes(ctx: Context) {
   };
 
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/projects', async () => ({ projects: await listProjects(ctx.db) }));
+    api.get('/projects', { config: { scope: 'projects:read' } }, async () => ({
+      projects: await listProjects(ctx.db),
+    }));
 
-    api.post('/projects', { config: { role: 'admin' } }, async (request, reply) => {
-      const user = actorOf(request);
-      const body = parse(projectInput, request.body, 'project');
-      return reply.status(201).send(await createProject(ctx.db, body, user));
-    });
+    api.post(
+      '/projects',
+      { config: { role: 'admin', scope: 'projects:write' } },
+      async (request, reply) => {
+        const user = actorOf(request);
+        const body = parse(projectInput, request.body, 'project');
+        return reply.status(201).send(await createProject(ctx.db, body, user));
+      },
+    );
 
-    api.get('/projects/:project/export', { config: { role: 'admin' } }, async (request, reply) => {
-      const { project } = parse(projectParams, request.params, 'path');
-      const chunks = exportProject(ctx.db, project, ctx.now);
-      // The first chunk is read before any header is sent, so an unknown
-      // project is still a clean 404 rather than a broken download.
-      const first = await chunks.next();
-      async function* rest(): AsyncGenerator<string> {
-        try {
-          if (first.done !== true) yield first.value;
-          yield* chunks;
-        } finally {
-          await chunks.return(undefined);
+    api.get(
+      '/projects/:project/export',
+      { config: { role: 'admin', scope: 'projects:read' } },
+      async (request, reply) => {
+        const { project } = parse(projectParams, request.params, 'path');
+        const chunks = exportProject(ctx.db, project, ctx.now);
+        // The first chunk is read before any header is sent, so an unknown
+        // project is still a clean 404 rather than a broken download.
+        const first = await chunks.next();
+        async function* rest(): AsyncGenerator<string> {
+          try {
+            if (first.done !== true) yield first.value;
+            yield* chunks;
+          } finally {
+            await chunks.return(undefined);
+          }
         }
-      }
-      const date = ctx.now().toISOString().slice(0, 10);
-      return reply
-        .type('application/json; charset=utf-8')
-        .header('cache-control', 'no-store')
-        .header('content-disposition', `attachment; filename="${project}-${date}.flagship.json"`)
-        .send(Readable.from(rest(), { objectMode: false }));
-    });
+        const date = ctx.now().toISOString().slice(0, 10);
+        return reply
+          .type('application/json; charset=utf-8')
+          .header('cache-control', 'no-store')
+          .header('content-disposition', `attachment; filename="${project}-${date}.flagship.json"`)
+          .send(Readable.from(rest(), { objectMode: false }));
+      },
+    );
 
     api.post(
       '/projects/import',
-      { config: { role: 'admin' }, bodyLimit: ctx.config.importMaxBytes },
+      { config: { role: 'admin', scope: 'projects:write' }, bodyLimit: ctx.config.importMaxBytes },
       async (request, reply) => {
         const user = actorOf(request);
         const as = parse(importQuery, request.query, 'query');
@@ -89,7 +99,7 @@ export function projectRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/environments',
-      { config: { role: 'admin' } },
+      { config: { role: 'admin', scope: 'projects:write' } },
       async (request, reply) => {
         const user = actorOf(request);
         const { project } = parse(projectParams, request.params, 'path');
@@ -100,7 +110,7 @@ export function projectRoutes(ctx: Context) {
 
     api.put(
       '/projects/:project/environments/:environment/approvals',
-      { config: { role: 'admin' } },
+      { config: { role: 'admin', scope: 'projects:write' } },
       async (request) => {
         const user = actorOf(request);
         const env = await environment(request.params);
@@ -111,7 +121,7 @@ export function projectRoutes(ctx: Context) {
 
     api.put(
       '/projects/:project/environments/:environment/change-notes',
-      { config: { role: 'admin' } },
+      { config: { role: 'admin', scope: 'projects:write' } },
       async (request) => {
         const user = actorOf(request);
         const env = await environment(request.params);
@@ -122,7 +132,7 @@ export function projectRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/environments/:environment/api-keys',
-      { config: { role: 'admin' } },
+      { config: { role: 'admin', scope: 'sdk-keys:read' } },
       async (request) => ({
         keys: await listApiKeys(ctx.db, (await environment(request.params)).id),
       }),
@@ -130,7 +140,7 @@ export function projectRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/environments/:environment/api-keys',
-      { config: { role: 'admin' } },
+      { config: { role: 'admin', scope: 'sdk-keys:write' } },
       async (request, reply) => {
         const user = actorOf(request);
         const env = await environment(request.params);
@@ -141,7 +151,7 @@ export function projectRoutes(ctx: Context) {
 
     api.delete(
       '/projects/:project/environments/:environment/api-keys/:id',
-      { config: { role: 'admin' } },
+      { config: { role: 'admin', scope: 'sdk-keys:write' } },
       async (request, reply) => {
         const user = actorOf(request);
         const env = await environment(request.params);

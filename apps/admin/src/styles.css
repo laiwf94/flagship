@@ -1427,6 +1427,14 @@ input[type='range'] {
   grid-template-columns: minmax(0, 1fr) 140px 150px;
 }
 
+.token-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 160px) 120px 140px 96px;
+}
+
+.token-scopes {
+  overflow-wrap: anywhere;
+}
+
 .exposures-row {
   grid-template-columns: minmax(96px, auto) 1fr minmax(110px, auto);
 }
@@ -1578,6 +1586,7 @@ input[type='range'] {
 
   .key-row,
   .user-row,
+  .token-row,
   .row-button {
     grid-template-columns: minmax(0, 1fr) auto;
   }

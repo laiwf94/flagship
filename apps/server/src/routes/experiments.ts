@@ -29,27 +29,31 @@ const resultsQuery = z.object({
 
 export function experimentRoutes(ctx: Context) {
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/projects/:project/experiments', async (request) => {
-      const { project } = parse(projectParams, request.params, 'path');
-      const q = parse(listQuery, request.query, 'query');
-      const p = await getProject(ctx.db, project);
-      const environmentId =
-        q.environment === undefined
-          ? undefined
-          : (await getEnvironment(ctx.db, p.id, q.environment)).id;
-      return {
-        experiments: await listExperiments(ctx.db, p.id, {
-          limit: q.limit,
-          ...(environmentId === undefined ? {} : { environmentId }),
-          ...(q.flag === undefined ? {} : { flag: q.flag }),
-          ...(q.status === undefined ? {} : { status: q.status }),
-        }),
-      };
-    });
+    api.get(
+      '/projects/:project/experiments',
+      { config: { scope: 'experiments:read' } },
+      async (request) => {
+        const { project } = parse(projectParams, request.params, 'path');
+        const q = parse(listQuery, request.query, 'query');
+        const p = await getProject(ctx.db, project);
+        const environmentId =
+          q.environment === undefined
+            ? undefined
+            : (await getEnvironment(ctx.db, p.id, q.environment)).id;
+        return {
+          experiments: await listExperiments(ctx.db, p.id, {
+            limit: q.limit,
+            ...(environmentId === undefined ? {} : { environmentId }),
+            ...(q.flag === undefined ? {} : { flag: q.flag }),
+            ...(q.status === undefined ? {} : { status: q.status }),
+          }),
+        };
+      },
+    );
 
     api.post(
       '/projects/:project/experiments',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'experiments:write' } },
       async (request, reply) => {
         const { project } = parse(projectParams, request.params, 'path');
         const body = parse(experimentInput, request.body, 'experiment');
@@ -70,15 +74,19 @@ export function experimentRoutes(ctx: Context) {
       },
     );
 
-    api.get('/projects/:project/experiments/:experiment', async (request) => {
-      const p = parse(experimentParams, request.params, 'path');
-      const project = await getProject(ctx.db, p.project);
-      return getExperiment(ctx.db, project.id, p.experiment);
-    });
+    api.get(
+      '/projects/:project/experiments/:experiment',
+      { config: { scope: 'experiments:read' } },
+      async (request) => {
+        const p = parse(experimentParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        return getExperiment(ctx.db, project.id, p.experiment);
+      },
+    );
 
     api.post(
       '/projects/:project/experiments/:experiment/stop',
-      { config: { role: 'editor' } },
+      { config: { role: 'editor', scope: 'experiments:write' } },
       async (request) => {
         const p = parse(experimentParams, request.params, 'path');
         const project = await getProject(ctx.db, p.project);
@@ -90,13 +98,17 @@ export function experimentRoutes(ctx: Context) {
       },
     );
 
-    api.get('/projects/:project/experiments/:experiment/results', async (request) => {
-      const p = parse(experimentParams, request.params, 'path');
-      const q = parse(resultsQuery, request.query, 'query');
-      const project = await getProject(ctx.db, p.project);
-      return experimentResults(ctx.db, project.id, p.experiment, {
-        showMismatched: q.showMismatched === 'true',
-      });
-    });
+    api.get(
+      '/projects/:project/experiments/:experiment/results',
+      { config: { scope: 'experiments:read' } },
+      async (request) => {
+        const p = parse(experimentParams, request.params, 'path');
+        const q = parse(resultsQuery, request.query, 'query');
+        const project = await getProject(ctx.db, p.project);
+        return experimentResults(ctx.db, project.id, p.experiment, {
+          showMismatched: q.showMismatched === 'true',
+        });
+      },
+    );
   };
 }

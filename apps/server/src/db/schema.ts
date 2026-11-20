@@ -68,6 +68,23 @@ export interface ApiKeysTable {
   revoked_at: Date | null;
 }
 
+export interface ApiTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  name: string;
+  display_prefix: string;
+  token_hash: Buffer;
+  scopes: string[];
+  project_id: string | null;
+  /** Null means every environment of the project (or of every project). */
+  environment_ids: string[] | null;
+  // Written from the app clock so expiry is computed against one time source.
+  created_at: ColumnType<Date, Date, never>;
+  expires_at: Date;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+}
+
 export interface FlagsTable {
   id: Generated<string>;
   project_id: string;
@@ -407,6 +424,7 @@ export interface Database {
   projects: ProjectsTable;
   environments: EnvironmentsTable;
   api_keys: ApiKeysTable;
+  api_tokens: ApiTokensTable;
   flags: FlagsTable;
   flag_configs: FlagConfigsTable;
   segments: SegmentsTable;
