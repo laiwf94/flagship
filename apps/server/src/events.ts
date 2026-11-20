@@ -84,6 +84,23 @@ export async function eventHead(db: Db): Promise<EventCursor> {
   return { tx, id: 0 };
 }
 
+/**
+ * The head as `eventHead` reads it, plus the ids of events at or above it
+ * that are already visible, read under the same snapshot. Starting from the
+ * head alone would replay those: the horizon is held back by any older
+ * transaction still open anywhere in the cluster.
+ */
+export async function visibleHead(db: Db): Promise<{ head: EventCursor; seen: number[] }> {
+  const row = await sql<{ tx: string; seen: string[] }>`
+    WITH h AS (SELECT pg_snapshot_xmin(pg_current_snapshot()) AS tx)
+    SELECT h.tx::text AS tx,
+      ARRAY(SELECT a.id::text FROM audit_log a WHERE a.tx >= h.tx ORDER BY a.id) AS seen
+    FROM h`.execute(db);
+  const r = row.rows[0];
+  if (r === undefined) throw new Error('no snapshot');
+  return { head: { tx: r.tx, id: 0 }, seen: r.seen.map(Number) };
+}
+
 export interface EventBatch {
   events: ChangeEvent[];
   /**
@@ -162,6 +179,8 @@ interface Durable {
 export class EventBus {
   private readonly live = new Set<LiveHandler>();
   private liveCursor: EventCursor | null = null;
+  /** Events visible when the live cursor was fixed but after it; never dispatched to live handlers. */
+  private liveSeen = new Set<number>();
   /** Bumped when the last live handler leaves, so a read in flight can't move a fresh cursor back. */
   private liveGeneration = 0;
   private readonly durable = new Map<string, Durable>();
@@ -195,17 +214,23 @@ export class EventBus {
    */
   async on(handler: LiveHandler): Promise<() => void> {
     if (this.liveCursor === null) {
-      const head = await eventHead(this.o.db);
-      // Another registration may have fixed the position while this one read the head.
-      this.liveCursor ??= head;
+      // Another registration may fix the position while this one reads the head.
+      this.fixLiveCursor(await visibleHead(this.o.db));
     }
     this.live.add(handler);
     return () => {
       if (this.live.delete(handler) && this.live.size === 0) {
         this.liveCursor = null;
+        this.liveSeen.clear();
         this.liveGeneration++;
       }
     };
+  }
+
+  private fixLiveCursor(at: { head: EventCursor; seen: number[] }): void {
+    if (this.liveCursor !== null) return;
+    this.liveCursor = at.head;
+    this.liveSeen = new Set(at.seen);
   }
 
   /**
@@ -299,12 +324,14 @@ export class EventBus {
       const generation = this.liveGeneration;
       const { events, held } = await readEvents(this.o.db, this.liveCursor, this.batch);
       if (events.length === 0 || generation !== this.liveGeneration) return held;
-      for (const handler of this.live) {
+      const fresh =
+        this.liveSeen.size === 0 ? events : events.filter((e) => !this.liveSeen.delete(e.id));
+      for (const handler of fresh.length === 0 ? [] : this.live) {
         try {
-          await handler(events);
-          this.o.metrics.busEvents.inc({ consumer: 'live', result: 'ok' }, events.length);
+          await handler(fresh);
+          this.o.metrics.busEvents.inc({ consumer: 'live', result: 'ok' }, fresh.length);
         } catch (err) {
-          this.o.metrics.busEvents.inc({ consumer: 'live', result: 'error' }, events.length);
+          this.o.metrics.busEvents.inc({ consumer: 'live', result: 'error' }, fresh.length);
           this.o.logger.error({ err }, 'live event handler failed');
         }
       }

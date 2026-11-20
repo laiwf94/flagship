@@ -155,6 +155,38 @@ describe('event bus', () => {
     }
   });
 
+  it('starts a live handler after what was already committed, even behind an older open transaction', async () => {
+    const blocker = await client();
+    const b = bus();
+    const seen: string[] = [];
+    try {
+      // An open transaction with an id holds the horizon back below the next entry.
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT pg_current_xact_id()');
+      await entry('before-on');
+      const off = await b.on((events) => {
+        seen.push(...events.map((e) => e.targetKey));
+      });
+      await blocker.query('ROLLBACK');
+      await entry('after-on');
+      await drainUntil([b], () => seen.includes('after-on'));
+      expect(seen).toEqual(['after-on']);
+      off();
+
+      // A second registration after the last handler left starts afresh.
+      const again: string[] = [];
+      await b.on((events) => {
+        again.push(...events.map((e) => e.targetKey));
+      });
+      await entry('third');
+      await drainUntil([b], () => again.includes('third'));
+      expect(again).toEqual(['third']);
+    } finally {
+      await b.close();
+      await blocker.end();
+    }
+  });
+
   it('never skips an entry whose transaction started first and committed last', async () => {
     const b = bus();
     const seen: string[] = [];
