@@ -252,11 +252,24 @@ describe('export', () => {
         WHERE datname = current_database() AND state LIKE 'idle in transaction%'`.execute(t.db);
       return Number(r.rows[0]?.n);
     };
+    // The app's event bus runs short transactions of its own in this database
+    // after the writes above, so wait for the count to settle rather than sample it once.
+    const settle = async (want: number) => {
+      const deadline = Date.now() + 5000;
+      for (;;) {
+        const n = await open();
+        if (n === want || Date.now() > deadline) return n;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
     const chunks = exportProject(t.db, 'shop');
     await chunks.next();
-    expect(await open()).toBe(1);
-    await chunks.return(undefined);
-    expect(await open()).toBe(0);
+    try {
+      expect(await settle(1)).toBe(1);
+    } finally {
+      await chunks.return(undefined);
+    }
+    expect(await settle(0)).toBe(0);
   });
 
   it('pages through large projects and stays consistent across pages', async () => {
