@@ -233,6 +233,13 @@ export function createMetrics() {
         'result',
       ]),
     ),
+    rolloutGuardChecks: registry.register(
+      new Counter(
+        'flagship_rollout_guard_checks_total',
+        'Guarded rollout plans checked after a rollup, by outcome.',
+        ['result'],
+      ),
+    ),
     flagsByLifecycle: registry.register(
       new Gauge(
         'flagship_flags_lifecycle',

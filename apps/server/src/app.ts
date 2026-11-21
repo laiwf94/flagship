@@ -29,6 +29,7 @@ import { pruneApiTokens, TokenAuthenticator } from './services/apitokens.js';
 import { RulesetCache } from './services/cache.js';
 import { ExperimentEventQueue, experimentWriter } from './services/experimentEvents.js';
 import { experimentRollup } from './services/experimentRollup.js';
+import { rolloutGuards } from './services/guards.js';
 import { ExposureQueue, exposureWriter } from './services/exposures.js';
 import { lifecycleCheck } from './services/lifecycle.js';
 import { Scheduler } from './services/schedules.js';
@@ -282,7 +283,13 @@ export async function buildApp(deps: AppDeps): Promise<App> {
       {
         name: 'experiment_rollup',
         everyMs: config.rollupIntervalMs,
-        run: experimentRollup({ db, metrics, logger }),
+        run: experimentRollup({
+          db,
+          metrics,
+          logger,
+          // Guarded rollouts are judged on the numbers just rolled up.
+          after: rolloutGuards({ db, metrics, logger, retention: config.changeRetention }),
+        }),
       },
       { name: 'api_tokens', everyMs: 3_600_000, run: pruneApiTokens(db) },
       {

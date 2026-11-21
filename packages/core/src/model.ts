@@ -32,6 +32,10 @@ export const LIMITS = {
   rolloutSteps: 20,
   /** Longest hold on one rollout step: 30 days. */
   rolloutHoldMinutes: 43_200,
+  /** Guard metrics on one rollout plan. */
+  rolloutGuards: 5,
+  /** Exposed contexts a guard can ask for on each side before it judges. */
+  guardMinContexts: 1_000_000,
 } as const;
 
 /** Rollout weights are integers out of this total, so 1 unit is 0.001%. */
@@ -139,6 +143,27 @@ export const rolloutStepSchema = z.strictObject({
 export type RolloutStep = z.infer<typeof rolloutStepSchema>;
 
 /**
+ * A metric that stops a rollout when the rolled-out variant does measurably
+ * worse than the baseline on it. Per exposed context, like an experiment
+ * metric: `conversion` is the share that sent the event at least once,
+ * `count` how many times they sent it, `value` the sum of its values.
+ * `worse` says which way is bad (an error rate gets worse going up, a
+ * checkout rate going down), and `threshold` is the relative change the
+ * rollout tolerates: 0.1 breaches only when the variant is confidently more
+ * than 10% worse. `action` pauses the plan or rolls the serve back to the
+ * baseline. A guard waits for `minContexts` exposed contexts on each side.
+ */
+export const rolloutGuardSchema = z.strictObject({
+  event: keySchema,
+  kind: z.enum(['conversion', 'count', 'value']).default('conversion'),
+  worse: z.enum(['higher', 'lower']).default('higher'),
+  threshold: z.number().min(0).max(10).default(0),
+  minContexts: z.int().min(10).max(LIMITS.guardMinContexts).default(100),
+  action: z.enum(['pause', 'rollback']).default('pause'),
+});
+export type RolloutGuard = z.infer<typeof rolloutGuardSchema>;
+
+/**
  * A progressive rollout of one variant over another on one serve of a flag.
  * Steps only grow, so with the sticky bucketing in bucket.ts nobody who got
  * `variant` at one step loses it at the next; the last step is 100%.
@@ -150,8 +175,21 @@ export const rolloutPlanSchema = z
     baseline: keySchema,
     bucketBy: attributeNameSchema.optional(),
     steps: z.array(rolloutStepSchema).min(1).max(LIMITS.rolloutSteps),
+    guards: z.array(rolloutGuardSchema).max(LIMITS.rolloutGuards).optional(),
   })
   .superRefine((plan, ctx) => {
+    const seen = new Set<string>();
+    plan.guards?.forEach((g, i) => {
+      const id = `${g.event}|${g.kind}`;
+      if (seen.has(id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['guards', i, 'event'],
+          message: `a guard on "${g.event}" (${g.kind}) is already listed`,
+        });
+      }
+      seen.add(id);
+    });
     if (plan.variant === plan.baseline) {
       ctx.addIssue({
         code: 'custom',

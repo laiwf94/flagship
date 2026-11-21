@@ -42,6 +42,7 @@ describe('migrations', () => {
       '015_webhooks',
       '016_webhook_replays',
       '017_api_tokens',
+      '018_rollout_guards',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -118,6 +119,7 @@ describe('migrations', () => {
         'login_attempts_last_at_idx',
         'rollout_plans_due_idx',
         'rollout_plans_flag_idx',
+        'rollout_plans_guarded_idx',
         'rollout_plans_live_idx',
         'scheduled_changes_due_idx',
         'sessions_expires_idx',

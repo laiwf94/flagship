@@ -1,6 +1,15 @@
 import { ROLLOUT_TOTAL } from '@flagship/core';
 import { describe, expect, it } from 'vitest';
-import { defaultDraft, holdLabel, planFromDraft, type PlanDraft } from './RolloutPlan';
+import type { GuardReading } from '../api';
+import {
+  defaultDraft,
+  guardLabel,
+  holdLabel,
+  NEW_GUARD,
+  planFromDraft,
+  readingLabel,
+  type PlanDraft,
+} from './RolloutPlan';
 
 const flag = {
   type: 'boolean' as const,
@@ -26,6 +35,7 @@ describe('defaultDraft', () => {
         { percent: '25', hold: '60' },
         { percent: '50', hold: '60' },
       ],
+      guards: [],
     });
   });
 
@@ -107,6 +117,120 @@ describe('planFromDraft', () => {
         step6: 'Hold for 1 minute to 30 days',
       },
     });
+  });
+});
+
+describe('guards in the draft', () => {
+  it('turns tolerances in percent into fractions and keeps the rest', () => {
+    const r = planFromDraft(
+      draft({
+        steps: [],
+        guards: [
+          { ...NEW_GUARD, event: ' error ' },
+          {
+            event: 'checkout',
+            kind: 'value',
+            worse: 'lower',
+            threshold: '12.5',
+            minContexts: '500',
+            action: 'rollback',
+          },
+        ],
+      }),
+    );
+    expect(r).toEqual({
+      ok: true,
+      plan: {
+        target: 'fallthrough',
+        variant: 'on',
+        baseline: 'off',
+        steps: [{ weight: ROLLOUT_TOTAL }],
+        guards: [
+          {
+            event: 'error',
+            kind: 'conversion',
+            worse: 'higher',
+            threshold: 0,
+            minContexts: 100,
+            action: 'pause',
+          },
+          {
+            event: 'checkout',
+            kind: 'value',
+            worse: 'lower',
+            threshold: 0.125,
+            minContexts: 500,
+            action: 'rollback',
+          },
+        ],
+      },
+    });
+  });
+
+  it('reports each bad guard against its row', () => {
+    const r = planFromDraft(
+      draft({
+        guards: [
+          { ...NEW_GUARD, event: '' },
+          { ...NEW_GUARD, event: 'error' },
+          { ...NEW_GUARD, event: 'error' },
+          { ...NEW_GUARD, event: 'latency', threshold: '-1' },
+          { ...NEW_GUARD, event: 'latency', kind: 'count', minContexts: '9' },
+          { ...NEW_GUARD, event: 'cpu', minContexts: '10.5' },
+        ],
+      }),
+    );
+    expect(r).toEqual({
+      ok: false,
+      errors: {
+        guard0: 'Enter the event key the SDK tracks, such as "error"',
+        guard2: 'This metric is already guarded',
+        guard3: 'Tolerate 0% to 1000%',
+        guard4: 'Wait for 10 to 1,000,000 contexts',
+        guard5: 'Wait for 10 to 1,000,000 contexts',
+      },
+    });
+  });
+
+  it('describes a guard and a reading in plain words', () => {
+    const g = {
+      event: 'error',
+      kind: 'conversion',
+      worse: 'higher',
+      threshold: 0.1,
+      minContexts: 1000,
+      action: 'rollback',
+    } as const;
+    expect(guardLabel(g, 'off')).toBe(
+      'Rolls back if share of contexts sending "error" is higher than on off by more than 10%, once 1,000 contexts have seen each variant.',
+    );
+    expect(guardLabel({ ...g, kind: 'value', threshold: 0, action: 'pause' }, 'off')).toBe(
+      'Pauses if value per context of "error" is higher than on off, once 1,000 contexts have seen each variant.',
+    );
+    const reading: GuardReading = {
+      guard: g,
+      state: 'breached',
+      variant: { variant: 'on', exposed: 1200, mean: 0.2 },
+      baseline: { variant: 'off', exposed: 12_000, mean: 0.05 },
+      lift: 3,
+      liftInterval: { lower: 2.25, upper: 3.754 },
+      difference: 0.15,
+      differenceInterval: { lower: 0.1, upper: 0.2 },
+      pValue: 0,
+    };
+    expect(readingLabel(reading)).toBe(
+      '20% on on (1,200 contexts) against 5% on off (12,000): +300%, interval +225% to +375.4%.',
+    );
+    expect(
+      readingLabel({
+        ...reading,
+        guard: { ...g, kind: 'count' },
+        variant: { variant: 'on', exposed: 10, mean: 1.23456 },
+        baseline: { variant: 'off', exposed: 0, mean: null },
+        lift: null,
+        liftInterval: null,
+      }),
+    ).toBe('1.23 on on (10 contexts) against no data on off (0).');
   });
 });
 

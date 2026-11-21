@@ -784,6 +784,72 @@ the holder re-reads the flag after it gets the environment. Environments are loc
 `FOR NO KEY UPDATE`, which serialises writers but doesn't block the foreign key checks of
 audit entries written by other transactions.
 
+## Guarded rollouts
+
+A plan can carry up to five guard metrics, stored in its plan document. Each names an event
+the SDKs track and what it measures per exposed context, as experiment metrics do: the share
+of contexts that sent it (`conversion`), how many times (`count`) or the sum of its values
+(`value`), over the 7-day attribution window. `worse` says which way is a regression (an error
+rate goes `higher`, a checkout rate `lower`), `threshold` is the relative change the rollout
+tolerates (0.1 is 10%), `minContexts` (100 by default) is how many exposed contexts each
+variant needs before the guard judges, and `action` pauses the plan or rolls it back.
+
+**When guards run.** `services/guards.ts` runs at the end of every rollup turn. It checks the
+active guarded plans whose flag that turn rolled up, plus any not checked for 15 minutes,
+since another instance may have rolled the flag up and stopped before checking. It reads the
+rollup for contexts first exposed from `guard_from` on, which is when the plan started.
+
+**When a guard breaches.** It compares the variant with the baseline using the delta-method
+interval for the relative lift. It breaches only when that whole interval lies past the
+threshold in the bad direction. If the baseline mean is 0, the relative change is undefined.
+In that case a `higher` guard breaches once Welch's interval for the difference is above 0,
+and a `lower` guard cannot breach.
+
+Guards are read again after every rollup, so they use 99% intervals rather than the 95% the
+experiment console uses. That keeps repeated looks at a healthy rollout from pausing it. They
+are still repeated looks, not a sequential test: the minimum sample and a non-zero threshold
+are what keep the false alarm rate low. Sequential testing is planned for week 25.
+
+**Known bias.** Exposures are first exposures, so a context that saw the baseline before a
+step moved it to the variant still counts as baseline. That dilutes the difference, which
+makes a guard slower to fire but never makes a healthy variant look worse.
+
+**Acting on a breach.** The check claims the plan row with `FOR UPDATE SKIP LOCKED` and then
+takes the environment lock, the same order the scheduler uses. A plan someone else holds is
+skipped until a later turn. What happens next depends on the action:
+
+- **Pause.** The plan pauses with reason `guard`.
+- **Rollback** (when any breached guard asks for it). The check writes the baseline to the
+  targeted serve through the normal write path: validation, version bump, stream patch, and a
+  `flag.rollout.rollback` audit entry by "Rollout guard on a plan by alice". The plan ends as
+  `rolled_back`, and the flag is free for a new plan.
+  - If the serve was edited by hand since the step, the check leaves it alone and pauses the
+    plan instead, with a note saying why. It does the same when the write is refused.
+
+In both cases the breached readings are stored on the plan (`guardBreach`) and in a
+`flag.rollout.guard` audit entry, so webhooks receive them too. Each reading carries both
+means, the exposure counts, the lift, both intervals and the p-value.
+
+`GET .../rollout-plans/:id/guards` shows what every guard reads now, including `waiting`.
+
+**Resuming.** You can resume a plan a guard paused. Resuming moves `guard_from` to the next
+whole hour, so the evidence that paused the plan doesn't pause it again: the guards judge only
+contexts first exposed after that.
+
+**Tests.** `guards.test.ts` runs against Postgres and covers:
+
+- a pause with its audited values;
+- a resume that ignores old evidence but pauses on a fresh regression;
+- a rollback that SDK evaluation sees, followed by a new plan on the same flag;
+- a rollback refused over a hand edit;
+- healthy and waiting readings;
+- plans held by another transaction;
+- the touched-or-stale selection;
+- a failing check that does not stop the next plan.
+
+The breach rule is also tested on its own across kinds, directions, thresholds and zero
+baselines. `flagship_rollout_guard_checks_total{result}` counts the outcomes.
+
 ## Exposure events
 
 Exposures (which variant was served) let the UI show a per-variant count. SDKs aggregate in

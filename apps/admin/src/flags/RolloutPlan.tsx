@@ -2,6 +2,7 @@ import {
   DEFAULT_ROLLOUT_STEPS,
   LIMITS,
   ROLLOUT_TOTAL,
+  type RolloutGuard,
   type RolloutPlan as Plan,
   type RolloutTarget,
 } from '@flagship/core';
@@ -11,6 +12,8 @@ import {
   api,
   type ChangeNote,
   type FlagDetail,
+  type GuardBreach,
+  type GuardReading,
   type RolloutAction,
   type RolloutPlanView,
 } from '../api';
@@ -55,9 +58,33 @@ export interface PlanDraft {
   bucketBy: string;
   /** Every step before the last; the last is always everyone. */
   steps: StepDraft[];
+  guards: GuardDraft[];
 }
 
-export type DraftErrors = Partial<Record<'bucketBy' | 'baseline' | `step${number}`, string>>;
+/** A guard metric as typed into the editor; the threshold is a percentage. */
+export interface GuardDraft {
+  event: string;
+  kind: RolloutGuard['kind'];
+  worse: RolloutGuard['worse'];
+  threshold: string;
+  minContexts: string;
+  action: RolloutGuard['action'];
+}
+
+export const NEW_GUARD: GuardDraft = {
+  event: '',
+  kind: 'conversion',
+  worse: 'higher',
+  threshold: '0',
+  minContexts: '100',
+  action: 'pause',
+};
+
+export type DraftErrors = Partial<
+  Record<'bucketBy' | 'baseline' | `step${number}` | `guard${number}`, string>
+>;
+
+const KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const MAX_STEPS = LIMITS.rolloutSteps - 1;
 
@@ -81,6 +108,7 @@ export function defaultDraft(flag: Pick<FlagDetail, 'type' | 'variants'>): PlanD
       percent: String(s.weight / 1000),
       hold: String(s.holdMinutes ?? 60),
     })),
+    guards: [],
   };
 }
 
@@ -118,6 +146,35 @@ export function planFromDraft(
     }
     steps.push({ weight, holdMinutes: hold });
   });
+  const guards: RolloutGuard[] = [];
+  const seen = new Set<string>();
+  d.guards.forEach((g, i) => {
+    const event = g.event.trim();
+    const threshold = Number(g.threshold);
+    const minContexts = Number(g.minContexts);
+    if (!KEY.test(event) || event.length > LIMITS.keyLength) {
+      errors[`guard${i}`] = 'Enter the event key the SDK tracks, such as "error"';
+    } else if (seen.has(`${event}|${g.kind}`)) {
+      errors[`guard${i}`] = 'This metric is already guarded';
+    } else if (g.threshold.trim() === '' || !(threshold >= 0 && threshold <= 1000)) {
+      errors[`guard${i}`] = 'Tolerate 0% to 1000%';
+    } else if (
+      !Number.isInteger(minContexts) ||
+      minContexts < 10 ||
+      minContexts > LIMITS.guardMinContexts
+    ) {
+      errors[`guard${i}`] = 'Wait for 10 to 1,000,000 contexts';
+    }
+    seen.add(`${event}|${g.kind}`);
+    guards.push({
+      event,
+      kind: g.kind,
+      worse: g.worse,
+      threshold: Math.round(threshold * 1000) / 100_000,
+      minContexts,
+      action: g.action,
+    });
+  });
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   const target: RolloutTarget = d.target === 'fallthrough' ? 'fallthrough' : { rule: d.target };
   return {
@@ -128,6 +185,7 @@ export function planFromDraft(
       baseline: d.baseline,
       ...(bucketBy === '' ? {} : { bucketBy }),
       steps: [...steps, { weight: ROLLOUT_TOTAL }],
+      ...(guards.length === 0 ? {} : { guards }),
     },
   };
 }
@@ -138,13 +196,97 @@ const STATUS: Record<RolloutPlanView['status'], { tone: Tone; label: string }> =
   completed: { tone: 'success', label: 'Completed' },
   cancelled: { tone: 'neutral', label: 'Cancelled' },
   failed: { tone: 'critical', label: 'Failed' },
+  rolled_back: { tone: 'critical', label: 'Rolled back' },
 };
+
+const METRIC: Record<RolloutGuard['kind'], string> = {
+  conversion: 'Share of contexts sending',
+  count: 'Times per context',
+  value: 'Value per context of',
+};
+
+/** "Pauses if the share of contexts sending "error" is higher than on off by more than 10%." */
+export function guardLabel(g: RolloutGuard, baseline: string): string {
+  const by = g.threshold > 0 ? ` by more than ${pct(g.threshold)}` : '';
+  return (
+    `${g.action === 'rollback' ? 'Rolls back' : 'Pauses'} if ${METRIC[g.kind].toLowerCase()} ` +
+    `"${g.event}" is ${g.worse} than on ${baseline}${by}, once ${g.minContexts.toLocaleString('en')} ` +
+    'contexts have seen each variant.'
+  );
+}
+
+/** A fraction as a percentage with up to one decimal: 0.25 → "25%". */
+function pct(x: number): string {
+  return `${Number((x * 100).toFixed(1)).toLocaleString('en')}%`;
+}
+
+function meanLabel(kind: RolloutGuard['kind'], mean: number | null): string {
+  if (mean === null) return 'no data';
+  return kind === 'conversion' ? pct(mean) : Number(mean.toPrecision(3)).toLocaleString('en');
+}
+
+/** One reading in a sentence: the two means, then the change with its interval. */
+export function readingLabel(r: GuardReading): string {
+  const means =
+    `${meanLabel(r.guard.kind, r.variant.mean)} on ${r.variant.variant} ` +
+    `(${r.variant.exposed.toLocaleString('en')} contexts) against ` +
+    `${meanLabel(r.guard.kind, r.baseline.mean)} on ${r.baseline.variant} ` +
+    `(${r.baseline.exposed.toLocaleString('en')})`;
+  if (r.lift === null || r.liftInterval === null) return `${means}.`;
+  const signed = (x: number) => `${x > 0 ? '+' : ''}${pct(x)}`;
+  return (
+    `${means}: ${signed(r.lift)}, interval ${signed(r.liftInterval.lower)} to ` +
+    `${signed(r.liftInterval.upper)}.`
+  );
+}
+
+/** What rolled a finished plan back, for the history; nothing for other plans. */
+function RollbackNote({ plan }: { plan: RolloutPlanView }) {
+  const breach = plan.guardBreach;
+  if (plan.status !== 'rolled_back' || breach === undefined || breach === null) return null;
+  return (
+    <span className="field-error">
+      Rolled back to {plan.plan.baseline}:{' '}
+      {breach.readings.map((r) => `"${r.guard.event}" ${readingLabel(r)}`).join(' ')}
+    </span>
+  );
+}
+
+function BreachDetails({ breach }: { breach: GuardBreach | null | undefined }) {
+  if (breach === undefined || breach === null) return null;
+  return (
+    <div className="banner rollout-breach" role="status">
+      <p>
+        <strong>
+          {breach.rolledBack
+            ? 'A guard metric rolled this rollout back'
+            : 'A guard metric paused this rollout'}
+        </strong>{' '}
+        at {percent(breach.weight)}, {fullDate(breach.at)}, with{' '}
+        {Math.round(breach.confidence * 100)}% confidence.
+        {breach.note === null ? '' : ` Not rolled back: ${breach.note}.`}
+      </p>
+      <ul>
+        {breach.readings.map((r) => (
+          <li key={`${r.guard.event}|${r.guard.kind}`}>
+            <strong>
+              {METRIC[r.guard.kind]} "{r.guard.event}"
+            </strong>
+            : {readingLabel(r)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 const PAUSED: Record<NonNullable<RolloutPlanView['pausedReason']>, string> = {
   manual: 'Paused by hand.',
   kill_switch: 'Paused because the flag was turned off. Turn it on, then resume.',
   edited:
     'Paused because the targeted serve was edited outside the plan. Cancel it and start a new one to continue.',
+  guard:
+    'Paused because a guard metric did worse on the rolled-out variant. Resume to keep going: the guards then count only contexts first exposed from the next hour on.',
 };
 
 function targetLabel(flag: FlagDetail, env: string, target: RolloutTarget): string {
@@ -243,6 +385,16 @@ export function RolloutPlan({
                 <strong>{percent(live.weight)}</strong>
               </p>
               {live.pausedReason !== null && <p className="muted">{PAUSED[live.pausedReason]}</p>}
+              <BreachDetails breach={live.guardBreach} />
+              {(live.plan.guards ?? []).length > 0 && (
+                <ul className="rollout-guards" aria-label="Guard metrics">
+                  {live.plan.guards?.map((g) => (
+                    <li key={`${g.event}|${g.kind}`} className="small">
+                      {guardLabel(g, live.plan.baseline)}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {live.nextAt !== null && (
                 <p className="muted small" title={fullDate(live.nextAt)}>
                   Next step {timeAgo(live.nextAt)}, at {fullDate(live.nextAt)}.
@@ -305,6 +457,7 @@ export function RolloutPlan({
                       {p.finishedAt === null ? '' : ` · ended ${timeAgo(p.finishedAt)}`}
                     </span>
                     {p.error !== null && <span className="field-error">{p.error}</span>}
+                    <RollbackNote plan={p} />
                   </span>
                   <span>
                     <Badge tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Badge>
@@ -402,6 +555,12 @@ function StartDialog({
   };
   const setStep = (i: number, patch: Partial<StepDraft>) => {
     setDraft((d) => ({ ...d, steps: d.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) }));
+  };
+  const setGuard = (i: number, patch: Partial<GuardDraft>) => {
+    setDraft((d) => ({
+      ...d,
+      guards: d.guards.map((g, j) => (j === i ? { ...g, ...patch } : g)),
+    }));
   };
 
   const submit = async (e: SyntheticEvent) => {
@@ -589,6 +748,127 @@ function StartDialog({
               }}
             >
               Add a step
+            </Button>
+          )}
+        </fieldset>
+        <fieldset className="rollout-editor">
+          <legend>Guard metrics</legend>
+          <p className="muted small">
+            After each hourly rollup, a guard compares the rolled-out variant with{' '}
+            {draft.baseline || 'the baseline'} on an event the SDK tracks, and pauses or rolls back
+            when it is worse with 99% confidence.
+          </p>
+          <ol className="rollout-editor-guards">
+            {draft.guards.map((g, i) => (
+              <li key={i}>
+                <Field label={`Guard ${i + 1} event`} error={errors[`guard${i}`]}>
+                  {(p) => (
+                    <input
+                      {...p}
+                      value={g.event}
+                      placeholder="error"
+                      onChange={(e) => {
+                        setGuard(i, { event: e.target.value });
+                      }}
+                    />
+                  )}
+                </Field>
+                <Field label={`Guard ${i + 1} measures`}>
+                  {(p) => (
+                    <select
+                      {...p}
+                      value={g.kind}
+                      onChange={(e) => {
+                        setGuard(i, { kind: e.target.value as GuardDraft['kind'] });
+                      }}
+                    >
+                      <option value="conversion">Share of contexts sending it</option>
+                      <option value="count">Times per context</option>
+                      <option value="value">Value per context</option>
+                    </select>
+                  )}
+                </Field>
+                <Field label={`Guard ${i + 1} is worse when`}>
+                  {(p) => (
+                    <select
+                      {...p}
+                      value={g.worse}
+                      onChange={(e) => {
+                        setGuard(i, { worse: e.target.value as GuardDraft['worse'] });
+                      }}
+                    >
+                      <option value="higher">Higher</option>
+                      <option value="lower">Lower</option>
+                    </select>
+                  )}
+                </Field>
+                <Field label={`Guard ${i + 1} tolerance in %`}>
+                  {(p) => (
+                    <input
+                      {...p}
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={1000}
+                      step="any"
+                      value={g.threshold}
+                      onChange={(e) => {
+                        setGuard(i, { threshold: e.target.value });
+                      }}
+                    />
+                  )}
+                </Field>
+                <Field label={`Guard ${i + 1} minimum contexts`}>
+                  {(p) => (
+                    <input
+                      {...p}
+                      type="number"
+                      inputMode="numeric"
+                      min={10}
+                      max={LIMITS.guardMinContexts}
+                      value={g.minContexts}
+                      onChange={(e) => {
+                        setGuard(i, { minContexts: e.target.value });
+                      }}
+                    />
+                  )}
+                </Field>
+                <Field label={`Guard ${i + 1} on a breach`}>
+                  {(p) => (
+                    <select
+                      {...p}
+                      value={g.action}
+                      onChange={(e) => {
+                        setGuard(i, { action: e.target.value as GuardDraft['action'] });
+                      }}
+                    >
+                      <option value="pause">Pause</option>
+                      <option value="rollback">
+                        Roll back to {draft.baseline || 'the baseline'}
+                      </option>
+                    </select>
+                  )}
+                </Field>
+                <IconButton
+                  icon="trash"
+                  label={`Remove guard ${i + 1}`}
+                  onClick={() => {
+                    setDraft((d) => ({ ...d, guards: d.guards.filter((_, j) => j !== i) }));
+                    setErrors({});
+                  }}
+                />
+              </li>
+            ))}
+          </ol>
+          {draft.guards.length < LIMITS.rolloutGuards && (
+            <Button
+              variant="plain"
+              icon="plus"
+              onClick={() => {
+                setDraft((d) => ({ ...d, guards: [...d.guards, { ...NEW_GUARD }] }));
+              }}
+            >
+              Add a guard metric
             </Button>
           )}
         </fieldset>

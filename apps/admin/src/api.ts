@@ -3,6 +3,7 @@ import type {
   Flag,
   Lifecycle,
   LifecycleStage,
+  RolloutGuard,
   RolloutPlan,
   Rule,
   Ruleset,
@@ -149,7 +150,40 @@ export interface Schedule {
   createdBy: string;
 }
 
-export type RolloutStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
+export type RolloutStatus =
+  'active' | 'paused' | 'completed' | 'cancelled' | 'failed' | 'rolled_back';
+
+export interface GuardSide {
+  variant: string;
+  exposed: number;
+  mean: number | null;
+}
+
+/** What one guard metric of a rollout read in the rollup. */
+export interface GuardReading {
+  guard: RolloutGuard;
+  state: 'waiting' | 'ok' | 'breached';
+  variant: GuardSide;
+  baseline: GuardSide;
+  lift: number | null;
+  liftInterval: { lower: number; upper: number } | null;
+  difference: number | null;
+  differenceInterval: { lower: number; upper: number } | null;
+  pValue: number | null;
+}
+
+/** The readings that paused or rolled back a rollout. */
+export interface GuardBreach {
+  at: string;
+  step: number;
+  weight: number;
+  action: 'pause' | 'rollback';
+  rolledBack: boolean;
+  note: string | null;
+  from: string;
+  confidence: number;
+  readings: GuardReading[];
+}
 export type RolloutAction = 'pause' | 'resume' | 'cancel';
 
 export interface RolloutPlanView {
@@ -160,12 +194,14 @@ export interface RolloutPlanView {
   step: number;
   weight: number;
   nextAt: string | null;
-  pausedReason: 'manual' | 'kill_switch' | 'edited' | null;
+  pausedReason: 'manual' | 'kill_switch' | 'edited' | 'guard' | null;
   error: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+  guardCheckedAt?: string | null;
+  guardBreach?: GuardBreach | null;
 }
 
 export interface ApiKey {

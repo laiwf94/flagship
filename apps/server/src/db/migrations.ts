@@ -611,4 +611,25 @@ export const migrations: Record<string, Migration> = {
     `CREATE INDEX api_tokens_user_idx ON api_tokens (user_id, created_at DESC)`,
     `CREATE INDEX api_tokens_expires_idx ON api_tokens (expires_at)`,
   ]),
+  // Guarded rollouts: a plan's guards (in its plan document) are checked
+  // against contexts first exposed from `guard_from` on, which starts as the
+  // plan's creation and moves to the next whole hour when a person resumes a
+  // plan a guard paused, so the old evidence does not pause it again.
+  // `guard_breach` keeps the values that paused or rolled back the plan.
+  '018_rollout_guards': statements([
+    `ALTER TABLE rollout_plans
+      DROP CONSTRAINT rollout_plans_status_check,
+      ADD CONSTRAINT rollout_plans_status_check CHECK (status IN
+        ('active', 'paused', 'completed', 'cancelled', 'failed', 'rolled_back')),
+      DROP CONSTRAINT rollout_plans_paused_reason_check,
+      ADD CONSTRAINT rollout_plans_paused_reason_check CHECK (paused_reason IN
+        ('manual', 'kill_switch', 'edited', 'guard')),
+      ADD COLUMN guard_from timestamptz,
+      ADD COLUMN guard_checked_at timestamptz,
+      ADD COLUMN guard_breach jsonb`,
+    `UPDATE rollout_plans SET guard_from = created_at`,
+    `ALTER TABLE rollout_plans ALTER COLUMN guard_from SET NOT NULL`,
+    `CREATE INDEX rollout_plans_guarded_idx ON rollout_plans (guard_checked_at NULLS FIRST)
+      WHERE status = 'active' AND plan ? 'guards'`,
+  ]),
 };

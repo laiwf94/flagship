@@ -47,7 +47,9 @@ flags (cycles are rejected), and scheduled changes that apply on time and exactl
 many server instances are running. A progressive rollout steps a variant from a small share to
 everyone on its own (1%, 5%, 10%, 25%, 50%, 100% by default, each held as long as you choose),
 each step exactly once across instances; turning the flag off pauses it, and nobody who has the
-new variant loses it at a later step.
+new variant loses it at a later step. Guard metrics on a plan (an error rate, say) are checked after
+every hourly rollup: when the new variant is confidently worse than the baseline, the plan
+pauses or rolls the serve back to the baseline, and the audit log keeps the numbers.
 
 Server SDKs evaluate locally from a ruleset snapshot, kept current over SSE with resume
 (`Last-Event-ID`) and ETag polling as a fallback. Every snapshot and every patch carries a
@@ -184,6 +186,7 @@ Scopes: `flags`, `segments`, `change-requests` and `experiments` each `:read` an
 | `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                                                            |
 | `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step                                           |
 | `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout                                 |
+| `GET .../rollout-plans/:id/guards`                                          | what each guard metric reads now: both means, the lift with its 99% interval, the state      |
 | `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                                                           |
 | `GET/POST /api/projects/:p/experiments?environment=&flag=&status=`          | experiments; start one on a flag's live split, with a control and metrics                    |
 | `GET /api/projects/:p/experiments/:x`, `POST .../experiments/:x/stop`       | read or stop an experiment                                                                   |

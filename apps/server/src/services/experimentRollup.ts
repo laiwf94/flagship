@@ -175,16 +175,19 @@ export async function rollUpNext(db: Db): Promise<{ outcome: Outcome; slice?: Sl
 /**
  * A housekeeping job that resolves pending conversions and rolls up marked
  * cohort hours, at most `budget` hours per turn. Any number of instances can
- * run it at once. Returns how many hours it rolled up.
+ * run it at once. `after` runs at the end of every turn with the slices it
+ * rolled up (rollout guards read them). Returns how many hours it rolled up.
  */
 export function experimentRollup(o: {
   db: Db;
   metrics: Metrics;
   logger: Logger;
   budget?: number;
-}): () => Promise<number> {
+  after?: (slices: readonly Slice[], now: Date) => Promise<unknown>;
+}): (now?: Date) => Promise<number> {
   const budget = o.budget ?? 200;
-  return async () => {
+  return async (now = new Date()) => {
+    const slices: Slice[] = [];
     for (let i = 0; i < 100; i++) {
       if ((await resolvePendingConversions(o.db)) < RESOLVE_BATCH) break;
     }
@@ -200,7 +203,9 @@ export function experimentRollup(o: {
         break;
       }
       rolled++;
+      if (slice !== undefined) slices.push(slice);
     }
+    if (o.after !== undefined) await o.after(slices, now);
     return rolled;
   };
 }

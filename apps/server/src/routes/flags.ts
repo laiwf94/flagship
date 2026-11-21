@@ -17,6 +17,7 @@ import { actorOf } from './note.js';
 import { parse } from '../errors.js';
 import { decodeCursor, searchAudit } from '../services/audit.js';
 import { exposureSummary } from '../services/exposures.js';
+import { planGuards } from '../services/guards.js';
 import {
   archiveFlag,
   createFlag,
@@ -140,6 +141,7 @@ const envParams = z.object({ project: keySchema, environment: keySchema });
 const flagEnvParams = z.object({ project: keySchema, flag: keySchema, environment: keySchema });
 const segmentParams = z.object({ project: keySchema, environment: keySchema, segment: keySchema });
 const scheduleParams = flagEnvParams.extend({ id: z.uuid() });
+const planIdParams = flagEnvParams.extend({ id: z.uuid() });
 const planParams = flagEnvParams.extend({
   id: z.uuid(),
   action: z.enum(['pause', 'resume', 'cancel']),
@@ -323,6 +325,17 @@ export function flagRoutes(ctx: Context) {
           ctx.now(),
         );
         return reply.status(201).send(started);
+      },
+    );
+
+    api.get(
+      '/projects/:project/flags/:flag/environments/:environment/rollout-plans/:id/guards',
+      { config: { scope: 'flags:read' } },
+      async (request) => {
+        const p = parse(planIdParams, request.params, 'path');
+        const project = await getProject(ctx.db, p.project);
+        const e = await env(project.id, p.environment);
+        return planGuards(ctx.db, project.id, e.id, p.flag, p.id);
       },
     );
 

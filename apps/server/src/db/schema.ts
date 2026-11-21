@@ -8,9 +8,10 @@ type Json<T> = ColumnType<T, string, string>;
 export type Role = 'viewer' | 'editor' | 'admin';
 export type KeyKind = 'server' | 'client';
 export type ScheduleStatus = 'pending' | 'applied' | 'failed' | 'cancelled';
-export type RolloutStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
-/** Who paused a plan: a person, the kill switch, or an edit to the targeted serve. */
-export type PausedReason = 'manual' | 'kill_switch' | 'edited';
+export type RolloutStatus =
+  'active' | 'paused' | 'completed' | 'cancelled' | 'failed' | 'rolled_back';
+/** Who paused a plan: a person, the kill switch, an edit to the targeted serve, or a guard metric. */
+export type PausedReason = 'manual' | 'kill_switch' | 'edited' | 'guard';
 export type ExperimentStatus = 'running' | 'stopped';
 
 export interface UsersTable {
@@ -208,6 +209,11 @@ export interface RolloutPlansTable {
   /** Written from the app clock, like next_at, so holds are measured against one time source. */
   updated_at: ColumnType<Date, Date, Date>;
   finished_at: Date | null;
+  /** Guards judge contexts first exposed from this time on. */
+  guard_from: Date;
+  guard_checked_at: ColumnType<Date | null, never, Date | null>;
+  /** The values that paused or rolled back the plan. */
+  guard_breach: Json<unknown> | null;
 }
 
 export interface ExperimentsTable {

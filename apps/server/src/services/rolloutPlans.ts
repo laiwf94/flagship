@@ -13,6 +13,7 @@ import type { Database, PausedReason, RolloutStatus } from '../db/schema.js';
 import { AppError, notFound } from '../errors.js';
 import { recordAudit } from './audit.js';
 import { requireNote, requireUnprotected, writeConfig, type Scope } from './flags.js';
+import type { GuardBreach } from './guards.js';
 import { lockEnvironments } from './rulesets.js';
 
 export interface RolloutPlanView {
@@ -31,6 +32,10 @@ export interface RolloutPlanView {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+  /** When the guards last read the rollup; null before the first check or without guards. */
+  guardCheckedAt: string | null;
+  /** The guard readings that paused or rolled back the plan, until a person resumes it. */
+  guardBreach: GuardBreach | null;
 }
 
 const columns = [
@@ -47,6 +52,8 @@ const columns = [
   'created_at',
   'updated_at',
   'finished_at',
+  'guard_checked_at',
+  'guard_breach',
 ] as const;
 
 interface PlanRow {
@@ -63,6 +70,8 @@ interface PlanRow {
   created_at: Date;
   updated_at: Date;
   finished_at: Date | null;
+  guard_checked_at: Date | null;
+  guard_breach: unknown;
 }
 
 function view(r: PlanRow): RolloutPlanView {
@@ -80,7 +89,14 @@ function view(r: PlanRow): RolloutPlanView {
     createdAt: r.created_at.toISOString(),
     updatedAt: r.updated_at.toISOString(),
     finishedAt: r.finished_at?.toISOString() ?? null,
+    guardCheckedAt: r.guard_checked_at?.toISOString() ?? null,
+    guardBreach: (r.guard_breach as GuardBreach | null) ?? null,
   };
+}
+
+/** The start of the UTC hour after the one `now` falls in. */
+function nextHour(now: Date): Date {
+  return new Date((Math.floor(now.getTime() / 3_600_000) + 1) * 3_600_000);
 }
 
 /** When the step after `step` is due, or null when `step` is the last. */
@@ -90,7 +106,12 @@ function nextDue(plan: RolloutPlan, step: number, now: Date): Date | null {
   return new Date(now.getTime() + hold * 60_000);
 }
 
-async function flagWithConfig(db: Db, projectId: string, environmentId: string, key: string) {
+export async function flagWithConfig(
+  db: Db,
+  projectId: string,
+  environmentId: string,
+  key: string,
+) {
   const row = await db
     .selectFrom('flags')
     .innerJoin('flag_configs', 'flag_configs.flag_id', 'flags.id')
@@ -201,6 +222,7 @@ export async function startRolloutPlan(
         created_by_name: scope.actor.name,
         created_at: now,
         updated_at: now,
+        guard_from: now,
       })
       .returning(columns)
       .executeTakeFirstOrThrow();
@@ -276,6 +298,9 @@ export async function changeRolloutPlan(
       next_at: Date | null;
       paused_reason: PausedReason | null;
       finished_at: Date | null;
+      guard_from: Date;
+      guard_checked_at: Date | null;
+      guard_breach: string | null;
     }>;
     if (action === 'pause') {
       set = { status: 'paused', next_at: null, paused_reason: 'manual' };
@@ -302,6 +327,16 @@ export async function changeRolloutPlan(
         );
       }
       set = { status: 'active', next_at: nextDue(plan, row.step, now), paused_reason: null };
+      if (row.paused_reason === 'guard') {
+        // Judge the variant afresh: only contexts first exposed from the next
+        // whole hour count, so the evidence that paused it does not again.
+        set = {
+          ...set,
+          guard_from: nextHour(now),
+          guard_checked_at: null,
+          guard_breach: null,
+        };
+      }
     }
     const updated = await trx
       .updateTable('rollout_plans')
@@ -316,7 +351,12 @@ export async function changeRolloutPlan(
       action: `flag.rollout.${action}`,
       targetType: 'flag',
       targetKey: key,
-      after: { plan: row.id, step: row.step, weight: plan.steps[row.step]?.weight ?? 0 },
+      after: {
+        plan: row.id,
+        step: row.step,
+        weight: plan.steps[row.step]?.weight ?? 0,
+        ...(row.paused_reason === null ? {} : { pausedReason: row.paused_reason }),
+      },
     });
     return view(updated);
   });

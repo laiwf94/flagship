@@ -90,6 +90,51 @@ describe('rolloutPlanSchema', () => {
   });
 });
 
+describe('rollout guards', () => {
+  it('fills in the defaults and keeps what was given', () => {
+    const r = rolloutPlanSchema.parse({ ...plan(), guards: [{ event: 'error' }] });
+    expect(r.guards).toEqual([
+      {
+        event: 'error',
+        kind: 'conversion',
+        worse: 'higher',
+        threshold: 0,
+        minContexts: 100,
+        action: 'pause',
+      },
+    ]);
+    const given = {
+      event: 'checkout',
+      kind: 'value',
+      worse: 'lower',
+      threshold: 0.05,
+      minContexts: 500,
+      action: 'rollback',
+    } as const;
+    expect(rolloutPlanSchema.parse({ ...plan(), guards: [given] }).guards).toEqual([given]);
+    expect(rolloutPlanSchema.parse(plan()).guards).toBeUndefined();
+  });
+
+  it('rejects duplicates, unknown fields, bad ranges and too many guards', () => {
+    expect(
+      issuesOf({
+        ...plan(),
+        guards: [{ event: 'error' }, { event: 'error', kind: 'count' }, { event: 'error' }],
+      }),
+    ).toEqual(['guards.2.event: a guard on "error" (conversion) is already listed']);
+    expect(issuesOf({ ...plan(), guards: [{ event: 'error', extra: 1 }] }).length).toBe(1);
+    expect(issuesOf({ ...plan(), guards: [{ event: 'error', threshold: -0.1 }] }).length).toBe(1);
+    expect(issuesOf({ ...plan(), guards: [{ event: 'error', threshold: 11 }] }).length).toBe(1);
+    expect(issuesOf({ ...plan(), guards: [{ event: 'error', minContexts: 9 }] }).length).toBe(1);
+    expect(issuesOf({ ...plan(), guards: [{ event: 'error', minContexts: 10.5 }] }).length).toBe(1);
+    expect(issuesOf({ ...plan(), guards: [{ event: 'error', action: 'stop' }] }).length).toBe(1);
+    expect(issuesOf({ ...plan(), guards: [{ event: 'bad key!' }] }).length).toBe(1);
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((event) => ({ event }));
+    expect(issuesOf({ ...plan(), guards: six }).length).toBe(1);
+    expect(issuesOf({ ...plan(), guards: six.slice(0, 5) })).toEqual([]);
+  });
+});
+
 describe('stepServe', () => {
   it('splits rolled-out first, then serves the variant outright on the last step', () => {
     const p = plan({ bucketBy: 'org' });

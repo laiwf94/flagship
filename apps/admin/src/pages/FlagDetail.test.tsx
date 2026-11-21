@@ -667,6 +667,130 @@ describe('rollout tab', () => {
     expect(within(dialog).getByText('Pick a different variant')).toBeTruthy();
   });
 
+  it('adds guard metrics to a new rollout', async () => {
+    const { api } = setup();
+    let plans: unknown[] = [];
+    api.set(`GET ${R}`, () => ({ plans }));
+    api.set(`POST ${R}`, (body: unknown) => {
+      plans = [view({ plan: body })];
+      return plans[0];
+    });
+    const { user } = renderAt(`${URL}?tab=rollout`);
+    await user.click(await screen.findByRole('button', { name: 'Start a rollout' }));
+    const dialog = screen.getByRole('dialog', { name: 'Start a rollout' });
+    await user.click(within(dialog).getByRole('button', { name: 'Add a guard metric' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Start rollout' }));
+    expect(
+      within(dialog).getByText('Enter the event key the SDK tracks, such as "error"'),
+    ).toBeTruthy();
+    await user.type(within(dialog).getByLabelText('Guard 1 event'), 'error');
+    const tolerance = within(dialog).getByLabelText('Guard 1 tolerance in %');
+    await user.clear(tolerance);
+    await user.type(tolerance, '10');
+    await user.selectOptions(within(dialog).getByLabelText('Guard 1 on a breach'), 'rollback');
+    await user.click(within(dialog).getByRole('button', { name: 'Add a guard metric' }));
+    await user.type(within(dialog).getByLabelText('Guard 2 event'), 'checkout');
+    await user.selectOptions(within(dialog).getByLabelText('Guard 2 measures'), 'value');
+    await user.selectOptions(within(dialog).getByLabelText('Guard 2 is worse when'), 'lower');
+    const min = within(dialog).getByLabelText('Guard 2 minimum contexts');
+    await user.clear(min);
+    await user.type(min, '500');
+    await user.click(within(dialog).getByRole('button', { name: 'Add a guard metric' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Remove guard 3' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Start rollout' }));
+    expect(await screen.findByText(/Rollout started/)).toBeTruthy();
+    const body = api.calls.find((c) => c.method === 'POST')?.body as { guards: unknown };
+    expect(body.guards).toEqual([
+      {
+        event: 'error',
+        kind: 'conversion',
+        worse: 'higher',
+        threshold: 0.1,
+        minContexts: 100,
+        action: 'rollback',
+      },
+      {
+        event: 'checkout',
+        kind: 'value',
+        worse: 'lower',
+        threshold: 0,
+        minContexts: 500,
+        action: 'pause',
+      },
+    ]);
+    const guards = await screen.findByRole('list', { name: 'Guard metrics' });
+    expect(
+      within(guards)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual([
+      'Rolls back if share of contexts sending "error" is higher than on off by more than 10%, once 100 contexts have seen each variant.',
+      'Pauses if value per context of "checkout" is lower than on off, once 500 contexts have seen each variant.',
+    ]);
+  });
+
+  it('explains a guard pause with its readings, and a guard rollback in the history', async () => {
+    const guard = {
+      event: 'error',
+      kind: 'conversion',
+      worse: 'higher',
+      threshold: 0,
+      minContexts: 100,
+      action: 'pause',
+    };
+    const reading = {
+      guard,
+      state: 'breached',
+      variant: { variant: 'on', exposed: 300, mean: 0.2 },
+      baseline: { variant: 'off', exposed: 3000, mean: 0.05 },
+      lift: 3,
+      liftInterval: { lower: 1.5, upper: 4.5 },
+      difference: 0.15,
+      differenceInterval: { lower: 0.09, upper: 0.21 },
+      pValue: 0,
+    };
+    const breach = {
+      at: '2030-01-01T05:00:00Z',
+      step: 0,
+      weight: 2_000,
+      action: 'pause',
+      rolledBack: false,
+      note: null,
+      from: '2030-01-01T00:00:00Z',
+      confidence: 0.99,
+      readings: [reading],
+    };
+    const { api } = setup();
+    api.set(`GET ${R}`, {
+      plans: [
+        view({
+          plan: { ...view().plan, guards: [guard] },
+          status: 'paused',
+          pausedReason: 'guard',
+          nextAt: null,
+          guardBreach: breach,
+        }),
+        view({
+          id: 'plan0',
+          status: 'rolled_back',
+          finishedAt: '2030-01-01T01:00:00Z',
+          guardBreach: { ...breach, action: 'rollback', rolledBack: true },
+        }),
+      ],
+    });
+    renderAt(`${URL}?tab=rollout`);
+    expect(await screen.findByText(/Paused because a guard metric did worse/)).toBeTruthy();
+    const live = screen.getByLabelText('Current rollout');
+    expect(within(live).getByText('A guard metric paused this rollout')).toBeTruthy();
+    expect(
+      within(live).getByText(/20% on on \(300 contexts\) against 5% on off \(3,000\): \+300%/),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Resume' }).hasAttribute('disabled')).toBe(false);
+    const past = screen.getByRole('list', { name: 'Earlier rollouts' });
+    expect(within(past).getByText('Rolled back')).toBeTruthy();
+    expect(within(past).getByText(/Rolled back to off: "error" 20% on on/)).toBeTruthy();
+  });
+
   it('disables starting while the flag is off, and shows nothing to edit for viewers', async () => {
     const off = setup(makeFlag({ enabled: false }));
     off.api.set(`GET ${R}`, { plans: [] });
