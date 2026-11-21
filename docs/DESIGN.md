@@ -338,6 +338,28 @@ can't bounce a delivery inward either.
 `flagship_webhook_attempts_total{result}` counts attempts as `succeeded`, `retry`, `failed`
 (gave up) or `stale`, and `flagship_webhook_attempt_duration_seconds` times them.
 
+### Receiver demo against the Docker stack
+
+`examples/demo.sh` creates a webhook for `flag.*` in production pointing at
+`examples/node-app/receiver.mjs`, which runs on the Docker host. The compose stack maps
+`host.docker.internal` to the host gateway and lists that name in
+`FLAGSHIP_WEBHOOK_ALLOWED_TARGETS`: the host's bridge address is private, so without the
+entry every delivery would be refused, which is the SSRF rule working. The stack also sets a
+fixed `FLAGSHIP_SECRET_KEY` that is for the demo only.
+
+The receiver is the shape a real one should have. It reads the raw bytes (at most 1 MiB),
+calls `parseWebhook()` with the secret the create call showed once, answers `401` with the
+error code and acts on nothing when that throws, and remembers event ids so a retry or a
+replay of an event it already handled is acknowledged with `204` but not acted on again.
+The demo checks that:
+
+- the secret is in the create response and not in a later read;
+- a change saved on one instance reaches the receiver verified, in about 0.2 s here;
+- a request signed with a made-up `v1`, and one with no signature, both get `401`;
+- the delivery log has the delivery as `succeeded`, with one attempt answered `204`;
+- replaying it sends a new delivery id with the same event id, which the receiver reports
+  as a duplicate.
+
 ## Two people editing one flag
 
 Every segment has a `version`, and so does every flag, twice over: `flags.version` covers
@@ -698,7 +720,7 @@ matches. `POST` with `{"to", "baseVersion", "title"?, "description"?}` (editors)
 
 ### Incident drill
 
-`examples/demo.sh` ends by running the whole loop against the Docker stack, with the app on
+`examples/demo.sh` runs the whole loop against the Docker stack, with the app on
 the second instance watching the flag. Production is protected with one approval and a
 required reason and ticket link, and a second user (an editor) is created.
 
@@ -849,6 +871,32 @@ contexts first exposed after that.
 
 The breach rule is also tested on its own across kinds, directions, thresholds and zero
 baselines. `flagship_rollout_guard_checks_total{result}` counts the outcomes.
+
+### Rollback demo against the Docker stack
+
+The demo then starts a plan on a new flag in production: 20%, then 50%, then 100%, an hour
+per step, with one guard: `checkout-error` as a conversion, `worse: higher`, threshold 0.25,
+`minContexts` 100, `action: rollback`. `examples/node-app/checkout.mjs` sends 3,000 shoppers
+through the Node SDK on the second instance; as in the experiment demo the outcomes are
+fixed, not drawn, so exactly 10% of those served `on` and 1% of those served `off` track
+`checkout-error`. The next rollup turn (every 5 seconds in the compose stack) feeds the guard,
+which finds the error rate's lift interval far past +25% and writes `off` back to the default
+rule. A typical run reads 10.0% of about 600 against 1.0% of about 2,400, a lift of about
++900% with a 99% interval near [+290%, +1580%], and rolls back within 5 seconds of the
+checkouts being sent. The demo checks that:
+
+- the plan reads `rolled_back` with `rolledBack: true` and every reading's lower bound past
+  the threshold;
+- the checkout app, which keeps following the flag, serves `on` to 0 of its 3,000 shoppers;
+- both instances serve the same ruleset;
+- History has `flag.rollout.rollback` and `flag.rollout.guard` by "Rollout guard on a plan
+  by Admin";
+- the receiver verifies both events, the guard one with its readings;
+- a new plan can start on the flag (the demo cancels it again).
+
+The margin is wide: with about 600 contexts on the new path the 99% lower bound sits near
++290%, more than ten times the threshold, and bucketing variation of a few dozen contexts
+either way doesn't move it near the line.
 
 ## Exposure events
 
@@ -1090,7 +1138,7 @@ it detects broken splits, not small leaks, and needs more traffic for those.
 
 ### Demo against the Docker stack
 
-`examples/demo.sh` ends with two experiments on new 50/50 boolean flags in production
+After the incident drill `examples/demo.sh` runs two experiments on new 50/50 boolean flags in production
 (`examples/node-app/experiment.mjs`). The Node SDK runs against the second instance and the
 results are read from the first, so first exposures, conversions and the rollup cross
 instances. The outcomes are fixed rather than drawn: within each arm, an evenly spaced fixed

@@ -17,6 +17,14 @@ x-flagship: &flagship
     # Roll experiment results up every 5 s instead of every minute, so the
     # demo's results are ready right after its events are sent.
     FLAGSHIP_ROLLUP_INTERVAL_MS: '5000'
+    # Seals webhook secrets at rest (32 bytes, base64). Demo only: generate
+    # your own with `openssl rand -base64 32` and keep it out of the repo.
+    FLAGSHIP_SECRET_KEY: aZuSugg53F4nESgW0F13JGruF7ZDgToGN/U3AcJHPw4=
+    # The demo's webhook receiver runs on the Docker host. Webhooks refuse
+    # private addresses, so the host's name is allow-listed explicitly.
+    FLAGSHIP_WEBHOOK_ALLOWED_TARGETS: host.docker.internal
+  extra_hosts:
+    - host.docker.internal:host-gateway
   healthcheck:
     test:
       - CMD

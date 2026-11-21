@@ -4,6 +4,81 @@ Notable changes to flagship. Each entry links the roadmap issue it belongs to.
 
 ## Unreleased
 
+### Automation and integrations ([#29](https://github.com/laiwf94/flagship/issues/29), 2026-11-23 to 2026-11-29)
+
+Upgrading runs five migrations (`014_event_bus`, `015_webhooks`, `016_webhook_replays`,
+`017_api_tokens`, `018_rollout_guards`) on start. Webhooks need the new
+`FLAGSHIP_SECRET_KEY` (32 bytes, base64); without it everything else works and creating a
+webhook answers `409 failed_precondition`.
+
+#### Added
+
+- An internal event bus (`apps/server/src/events.ts`) on the audit log: each entry is
+  stamped with its writing transaction, a statement trigger sends `pg_notify` at commit, so a
+  rolled-back change publishes nothing, and readers take entries in `(tx, id)` order only
+  from transactions that can no longer commit behind them, so nothing is skipped. Live
+  handlers run on every instance; durable consumers keep a position in `event_consumers`
+  and handle each event exactly once across instances, in the transaction that advances
+  it. It reuses the stream hub's LISTEN connection. New metric
+  `flagship_bus_events_total{consumer,result}`.
+- Signed webhooks: `GET/POST/PATCH/DELETE /api/projects/:p/webhooks[/:id]` (admin), limited
+  to one environment and to action patterns such as `flag.*`, at most 50 per project. The
+  server generates each secret, shows it once and stores it sealed with AES-256-GCM;
+  `POST .../webhooks/:id/secret` rotates it, with the old one also signing for 24 hours.
+  A transactional outbox on the event bus writes one delivery per event and webhook, and a
+  worker on every instance sends it with `Flagship-Signature: t=<unix>,v1=<HMAC-SHA256 of
+"t.body">`, a 10-second deadline, no redirects and at most 64 KiB of response read,
+  retrying with backoff (10 s up to hourly, `Retry-After` honoured) for 24 hours. Settings
+  `FLAGSHIP_WEBHOOK_TIMEOUT_MS`, `_CONCURRENCY`, `_POLL_MS` and `_RETENTION_DAYS`; metrics
+  `flagship_webhook_attempts_total{result}` and `flagship_webhook_attempt_duration_seconds`.
+- A delivery log and replay: `GET .../webhooks/:id/deliveries` (keyset-paged, filtered by
+  status and event) and `.../deliveries/:d` with the payload and every attempt;
+  `POST .../deliveries/:d/replay` sends a finished delivery again as a new delivery with the
+  same event id, and `POST .../webhooks/:id/replay` replays a time window once, at most 1000
+  per call.
+- `verifyWebhookSignature()` and `parseWebhook()` in `@flagship/node`: the raw body, one
+  secret or several, a 5-minute tolerance either way, constant-time comparison, and a
+  `WebhookSignatureError` with a `code` on failure.
+- Scoped, expiring API tokens: `GET/POST /api/tokens` and `DELETE /api/tokens/:id`, managed
+  under Settings. A `fst_` token (stored hashed, shown once) carries scopes such as
+  `flags:write` or `audit:read`, an optional project and environments, and a required expiry
+  of 1 to 365 days. Bearer requests need no cookie or CSRF token; every `/api` route
+  declares its scope or that it is session-only, and the server refuses to start otherwise.
+  The owner's current role still applies, so demoting or disabling them narrows or ends
+  their tokens, and changes are audited as `<user> (token <name>)`.
+- Guarded rollouts: a rollout plan takes up to five guards, each an event tracked by the
+  SDKs, measured as a conversion, count or value per exposed context, with the bad
+  direction, a relative threshold, a minimum of contexts per side and `pause` or `rollback`.
+  After every rollup turn `services/guards.ts` checks guarded plans with 99% delta-method
+  intervals; on a breach it pauses the plan or writes the baseline back through the normal
+  write path and ends the plan as `rolled_back`, storing the readings on the plan and in a
+  `flag.rollout.guard` audit entry, which webhooks receive. A hand-edited serve is never
+  overwritten. `GET .../rollout-plans/:id/guards` reads them now; the Rollout tab edits and
+  explains them. New metric `flagship_rollout_guard_checks_total{result}`.
+- `examples/demo.sh` adds a webhook receiver on the Docker host
+  (`examples/node-app/receiver.mjs`) that verifies every delivery with `parseWebhook()`,
+  refuses forged and unsigned requests with `401` and recognises a replay by its event id,
+  and a guarded rollout whose checkout app (`examples/node-app/checkout.mjs`) fails ten
+  times as often on the new path, so the guard rolls the plan back within seconds and the
+  receiver verifies the guard and rollback events. The compose stack sets a demo-only
+  `FLAGSHIP_SECRET_KEY` and allow-lists `host.docker.internal` for webhooks.
+
+#### Security
+
+- Webhook targets are checked after DNS resolution, at connect time: loopback, private,
+  link-local (including cloud metadata), carrier-grade NAT, multicast, reserved and
+  documentation ranges, and IPv6 forms that embed them are refused, so DNS rebinding can't
+  reach them either. Literal addresses and `localhost` are refused with `400` when saving.
+  `FLAGSHIP_WEBHOOK_ALLOWED_TARGETS` lists addresses, CIDR ranges or host names to allow
+  for self-hosted receivers.
+
+#### Fixed
+
+- `welchTTest` returned non-finite degrees of freedom, and threw, at very small or very
+  large variances ([#83](https://github.com/laiwf94/flagship/issues/83)).
+- Live event handlers could receive events committed before they registered, behind an older
+  open transaction ([#86](https://github.com/laiwf94/flagship/issues/86)).
+
 ### Experiments ([#28](https://github.com/laiwf94/flagship/issues/28), 2026-11-16 to 2026-11-22)
 
 Upgrading runs four migrations (`010_rollout_plans`, `011_experiment_events`,
