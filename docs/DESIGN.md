@@ -599,6 +599,39 @@ issued without a counted attempt. Signed-in users are unaffected, since only sig
 Roles are `viewer` < `editor` < `admin`, set per route and enforced in one hook. Admins can't
 demote or disable themselves, so a project can't lose its last admin by accident.
 
+## The OpenAPI document and the admin client
+
+Every `/api` route declares its operation in its route config: an id, a summary, and the same
+Zod schemas its handler parses for the path, the query and the body, plus its success
+statuses. `apps/server/src/openapi.ts` collects them in an `onRoute` hook and refuses, at
+registration, a route with no declaration, a reused or non-camelCase id, more than one method,
+or path parameters that differ from the `:names` in its URL. So the server does not start with
+an undocumented route, and the document can't name a parameter the URL doesn't have.
+
+`GET /api/openapi.json` (public) is built once, on first request, by converting all the
+schemas in one pass with Zod's JSON Schema converter (draft 2020-12, which OpenAPI 3.1 uses,
+in input mode so defaulted fields are optional). Bodies become named components; the core
+model schemas many bodies share (`Key`, `Rule`, `Serve`, `Variant`, `RolloutPlan`, the
+recursive `JsonValue`, the `ProjectExport` document) are registered first, so they appear once
+and are referenced. Path and query objects are split into parameters with their constraints and
+defaults. Each operation states how it authenticates (session cookie, plus the CSRF header on
+writes, or a bearer token with the route's scope) and carries `x-flagship-scope` and
+`x-flagship-role`; every operation's `default` response is the shared error body. Response
+bodies are described as JSON objects only: the services return plain TypeScript values without
+schemas, and inventing them in a second place would drift.
+
+`packages/admin-client` is generated from a committed copy of the document.
+`codegen/generate.ts` turns each component into a TypeScript type and each operation into a
+method taking `{ path, query, body }`, where each part is present only when the operation has
+one, and returning `Promise<void>` for 204 responses. It handles exactly the JSON Schema
+subset the converter emits and throws on anything else, so a new construct can't quietly
+become `unknown`. `AdminClient` supplies the transport over `fetch`: a bearer token, or a
+session from `AdminClient.login` with the CSRF token added to writes, a 30 second timeout, and
+`AdminApiError` carrying the status, code, request id and details. Two tests hold it together:
+the server's live document must equal `openapi.json`, and the generator's formatted output must
+equal `src/operations.ts`; `pnpm openapi` rewrites both. Another test drives the generated client
+against the real server over HTTP.
+
 ## Change requests
 
 An environment can require approvals (`PUT .../environments/:env/approvals`, admins, zero to

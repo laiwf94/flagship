@@ -131,6 +131,9 @@ importers:
         specifier: 4.6.6
         version: 4.6.6
     devDependencies:
+      '@flagship/admin-client':
+        specifier: workspace:*
+        version: link:../../packages/admin-client
       '@flagship/browser':
         specifier: workspace:*
         version: link:../../packages/sdk-browser
@@ -155,6 +158,8 @@ importers:
       '@flagship/node':
         specifier: workspace:*
         version: link:../../packages/sdk-node
+
+  packages/admin-client: {}
 
   packages/conformance:
     dependencies:

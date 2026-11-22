@@ -8,6 +8,7 @@ COPY packages/stats/package.json packages/stats/
 COPY packages/conformance/package.json packages/conformance/
 COPY packages/sdk-node/package.json packages/sdk-node/
 COPY packages/sdk-browser/package.json packages/sdk-browser/
+COPY packages/admin-client/package.json packages/admin-client/
 COPY apps/server/package.json apps/server/
 COPY apps/admin/package.json apps/admin/
 RUN pnpm install --frozen-lockfile

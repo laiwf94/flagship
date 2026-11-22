@@ -13,6 +13,7 @@ import { EventBus, EVENTS_CHANNEL } from './events.js';
 import { AppError, errorHandler, sendError } from './errors.js';
 import { createLogger } from './log.js';
 import { createMetrics, type Metrics } from './metrics.js';
+import { API_VERSION, ApiCatalog, operations } from './openapi.js';
 import { sessionRoutes } from './routes/session.js';
 import { changeRequestRoutes } from './routes/changeRequests.js';
 import { experimentRoutes } from './routes/experiments.js';
@@ -73,6 +74,8 @@ export interface App {
   experiments: ExperimentEventQueue;
   /** Delivers webhook outbox rows. */
   webhooks: WebhookWorker;
+  /** Every /api operation, and the OpenAPI document built from them. */
+  api: ApiCatalog;
   /** Stops accepting work, drains streams and background jobs, closes the server. */
   close: () => Promise<void>;
 }
@@ -193,10 +196,23 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.registry.render());
   });
 
+  const catalog = new ApiCatalog('/api', API_VERSION);
   await server.register(
     async (api) => {
       api.addHook('onRoute', requireScopeDeclaration);
+      api.addHook('onRoute', catalog.onRoute);
       api.addHook('onRequest', sessionGuard(ctx));
+      api.get(
+        '/openapi.json',
+        {
+          config: {
+            public: true,
+            openapi: operations('meta')('getOpenApiDocument', 'This OpenAPI 3.1 document'),
+          },
+        },
+        async (_request, reply) =>
+          reply.header('cache-control', 'no-cache').send(catalog.document()),
+      );
       await api.register(sessionRoutes(ctx, limiter));
       await api.register(tokenRoutes(ctx));
       await api.register(userRoutes(ctx));
@@ -323,6 +339,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
     exposures,
     experiments,
     webhooks,
+    api: catalog,
     close: async () => {
       draining = true;
       for (const close of closers) await close();

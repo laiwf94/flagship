@@ -167,6 +167,7 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 | `@flagship/node/openfeature` | OpenFeature | `OpenFeature.setProvider(new FlagshipProvider({ sdkKey, baseUrl }))`                                                                                                 |
 | `@flagship/browser`          | web apps    | client key; the server evaluates the user's context and the SDK caches the values for synchronous reads; refetches when the version changes                          |
 | `@flagship/core`             | everything  | model, validation, evaluator; also used by the admin UI's preview                                                                                                    |
+| `@flagship/admin-client`     | tooling     | the admin API over `fetch`, one typed method per operation, generated from `GET /api/openapi.json`; errors are `AdminApiError` with the server's code                |
 
 ## HTTP API
 
@@ -181,6 +182,21 @@ audit entry. SDK routes take `Authorization: Bearer <key>`.
 curl -X POST "$FLAGSHIP/api/projects/default/flags/new-checkout/environments/production/kill-switch" \
   -H "Authorization: Bearer $FLAGSHIP_TOKEN" -H 'Content-Type: application/json' \
   -H 'Flagship-Reason: error%20rate%20alarm' -d '{"enabled": true}'
+```
+
+The contract is `GET /api/openapi.json`, an OpenAPI 3.1 document built from the Zod schemas the
+routes validate with; a route that doesn't declare its operation fails to register, and a copy
+is committed at `packages/admin-client/openapi.json`. After changing a route, run `pnpm openapi`
+to refresh it and the generated client; `pnpm test` fails until you do.
+
+```ts
+import { AdminClient } from '@flagship/admin-client';
+
+const api = new AdminClient({ baseUrl: process.env.FLAGSHIP!, token: process.env.FLAGSHIP_TOKEN });
+await api.setKillSwitch({
+  path: { project: 'default', flag: 'new-checkout', environment: 'production' },
+  body: { enabled: false },
+});
 ```
 
 Scopes: `flags`, `segments`, `change-requests` and `experiments` each `:read` and `:write`;
@@ -248,7 +264,7 @@ with stable codes: `invalid_argument` 400 (with field paths in `details`), `unau
 | Admin UI     | Component tests with Testing Library; Playwright against the built server for the main journeys, a two-editor conflict, a keyboard-only run, and axe (no serious or critical WCAG 2.1 AA findings) on every page at 1440 and 390 px and in dark mode.                                                                                                                                                                                                                                                                                                                                                 |
 | Whole stack  | `examples/demo.sh` against two containers of the Docker image: the shared sign-in budget, per-environment versions, checksums on both instances, an instance killed and restarted, an export imported as a copy, an incident drill (a bad change through a change request, found by search, restored through another), two seeded experiments, one with a known +50% effect and one with a known sample ratio mismatch, checked against the results route, a webhook receiver verifying signatures, refusing forgeries and recognising a replay, and a guarded rollout rolled back by its error rate. |
 
-1489 Vitest tests at 97.6% line coverage (the gate requires 90%), plus 8 Playwright tests.
+1529 Vitest tests at 97.7% line coverage (the gate requires 90%), plus 8 Playwright tests.
 
 ## Benchmarks
 

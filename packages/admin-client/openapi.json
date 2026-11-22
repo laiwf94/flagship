@@ -1,0 +1,3473 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "flagship admin API",
+    "version": "0.1.0",
+    "description": "Manage projects, flags, segments, change requests, experiments and webhooks. Authenticate with an API token (Authorization: Bearer fst_...) or a session cookie plus its CSRF token on state-changing requests. Errors share one body: {\"error\": {\"code\", \"message\", \"request_id\", \"details\"}}."
+  },
+  "servers": [{ "url": "/api" }],
+  "tags": [
+    { "name": "audit" },
+    { "name": "change-requests" },
+    { "name": "experiments" },
+    { "name": "flags" },
+    { "name": "meta" },
+    { "name": "projects" },
+    { "name": "segments" },
+    { "name": "session" },
+    { "name": "tokens" },
+    { "name": "users" },
+    { "name": "webhooks" }
+  ],
+  "paths": {
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "summary": "This OpenAPI 3.1 document",
+        "tags": ["meta"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [],
+        "x-flagship-role": "none"
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "summary": "List projects",
+        "tags": ["projects"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["projects:read"] }],
+        "x-flagship-scope": "projects:read",
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "createProject",
+        "summary": "Create a project with its environments",
+        "tags": ["projects"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateProjectBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["projects:write"] }],
+        "x-flagship-scope": "projects:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/import": {
+      "post": {
+        "operationId": "importProject",
+        "summary": "Create a project from an export document",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 100 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ProjectExport" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["projects:write"] }],
+        "x-flagship-scope": "projects:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/audit": {
+      "get": {
+        "operationId": "searchAudit",
+        "summary": "Search the audit log",
+        "tags": ["audit"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "segment",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 100 }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "maxLength": 200 }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["audit:read"] }],
+        "x-flagship-scope": "audit:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/audit/{id}/restore": {
+      "get": {
+        "operationId": "planRestore",
+        "summary": "Preview restoring the state before or after an audit entry",
+        "tags": ["audit"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": { "default": "after", "type": "string", "enum": ["before", "after"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["audit:read"] }],
+        "x-flagship-scope": "audit:read",
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "restoreAuditEntry",
+        "summary": "Restore the state before or after an audit entry, or propose it",
+        "tags": ["audit"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RestoreAuditEntryBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["audit:restore"] }],
+        "x-flagship-scope": "audit:restore",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/change-requests": {
+      "get": {
+        "operationId": "listChangeRequests",
+        "summary": "List change requests, newest first",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["open", "applied", "closed"] }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "segment",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["change-requests:read"] }],
+        "x-flagship-scope": "change-requests:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/change-requests/{id}": {
+      "get": {
+        "operationId": "getChangeRequest",
+        "summary": "A change request with its revisions and reviews",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["change-requests:read"] }],
+        "x-flagship-scope": "change-requests:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/change-requests/{id}/apply": {
+      "post": {
+        "operationId": "applyChangeRequest",
+        "summary": "Apply an approved revision",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ApplyChangeRequestBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["change-requests:write"] }],
+        "x-flagship-scope": "change-requests:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/change-requests/{id}/close": {
+      "post": {
+        "operationId": "closeChangeRequest",
+        "summary": "Close a change request without applying it",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CloseChangeRequestBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["change-requests:write"] }],
+        "x-flagship-scope": "change-requests:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/change-requests/{id}/rebase": {
+      "post": {
+        "operationId": "rebaseChangeRequest",
+        "summary": "Rebase a revision onto the current version",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ApplyChangeRequestBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["change-requests:write"] }],
+        "x-flagship-scope": "change-requests:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/change-requests/{id}/reviews": {
+      "post": {
+        "operationId": "reviewChangeRequest",
+        "summary": "Comment on, approve or request changes to a revision",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ReviewChangeRequestBody" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["change-requests:write"] }],
+        "x-flagship-scope": "change-requests:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/environments": {
+      "post": {
+        "operationId": "createEnvironment",
+        "summary": "Add an environment to a project",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateEnvironmentBody" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["projects:write"] }],
+        "x-flagship-scope": "projects:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/environments/{environment}/api-keys": {
+      "get": {
+        "operationId": "listSdkKeys",
+        "summary": "List an environment's SDK keys",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["sdk-keys:read"] }],
+        "x-flagship-scope": "sdk-keys:read",
+        "x-flagship-role": "admin"
+      },
+      "post": {
+        "operationId": "createSdkKey",
+        "summary": "Create an SDK key; the secret is shown once",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateSdkKeyBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["sdk-keys:write"] }],
+        "x-flagship-scope": "sdk-keys:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/environments/{environment}/api-keys/{id}": {
+      "delete": {
+        "operationId": "revokeSdkKey",
+        "summary": "Revoke an SDK key",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No content" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["sdk-keys:write"] }],
+        "x-flagship-scope": "sdk-keys:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/environments/{environment}/approvals": {
+      "put": {
+        "operationId": "setRequiredApprovals",
+        "summary": "Set how many approvals a change request needs",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SetRequiredApprovalsBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["projects:write"] }],
+        "x-flagship-scope": "projects:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/environments/{environment}/change-notes": {
+      "put": {
+        "operationId": "setChangeNotes",
+        "summary": "Require a reason or a ticket link on every change",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SetChangeNotesBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["projects:write"] }],
+        "x-flagship-scope": "projects:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/environments/{environment}/ruleset": {
+      "get": {
+        "operationId": "getRuleset",
+        "summary": "An environment's full ruleset, as SDKs receive it",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/environments/{environment}/segments": {
+      "get": {
+        "operationId": "listSegments",
+        "summary": "An environment's segments",
+        "tags": ["segments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["segments:read"] }],
+        "x-flagship-scope": "segments:read",
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "createSegment",
+        "summary": "Create a segment",
+        "tags": ["segments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateSegmentBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["segments:write"] }],
+        "x-flagship-scope": "segments:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/environments/{environment}/segments/{segment}": {
+      "get": {
+        "operationId": "getSegment",
+        "summary": "A segment",
+        "tags": ["segments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "segment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["segments:read"] }],
+        "x-flagship-scope": "segments:read",
+        "x-flagship-role": "viewer"
+      },
+      "put": {
+        "operationId": "updateSegment",
+        "summary": "Replace a segment",
+        "tags": ["segments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "segment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateSegmentBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["segments:write"] }],
+        "x-flagship-scope": "segments:write",
+        "x-flagship-role": "editor"
+      },
+      "delete": {
+        "operationId": "deleteSegment",
+        "summary": "Delete a segment no flag uses",
+        "tags": ["segments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "segment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No content" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["segments:write"] }],
+        "x-flagship-scope": "segments:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/environments/{environment}/segments/{segment}/change-requests": {
+      "post": {
+        "operationId": "proposeSegmentChange",
+        "summary": "Propose creating, editing or deleting a segment",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "segment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ProposeSegmentChangeBody" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["change-requests:write"] }],
+        "x-flagship-scope": "change-requests:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/environments/{environment}/stale-flags": {
+      "get": {
+        "operationId": "listStaleFlags",
+        "summary": "Flags that look finished or unused in an environment",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/experiments": {
+      "get": {
+        "operationId": "listExperiments",
+        "summary": "List experiments",
+        "tags": ["experiments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["running", "stopped"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 100, "type": "integer", "minimum": 1, "maximum": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["experiments:read"] }],
+        "x-flagship-scope": "experiments:read",
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "startExperiment",
+        "summary": "Start an experiment on a flag",
+        "tags": ["experiments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/StartExperimentBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["experiments:write"] }],
+        "x-flagship-scope": "experiments:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/experiments/{experiment}": {
+      "get": {
+        "operationId": "getExperiment",
+        "summary": "An experiment",
+        "tags": ["experiments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "experiment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["experiments:read"] }],
+        "x-flagship-scope": "experiments:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/experiments/{experiment}/results": {
+      "get": {
+        "operationId": "getExperimentResults",
+        "summary": "Per-variant results with intervals and the sample ratio check",
+        "tags": ["experiments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "experiment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "showMismatched",
+            "in": "query",
+            "required": false,
+            "schema": { "default": "false", "type": "string", "enum": ["true", "false"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["experiments:read"] }],
+        "x-flagship-scope": "experiments:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/experiments/{experiment}/stop": {
+      "post": {
+        "operationId": "stopExperiment",
+        "summary": "Stop an experiment",
+        "tags": ["experiments"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "experiment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["experiments:write"] }],
+        "x-flagship-scope": "experiments:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/export": {
+      "get": {
+        "operationId": "exportProject",
+        "summary": "Download a project as one JSON document",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "content-disposition": {
+                "description": "attachment; filename=\"<project>-<date>.flagship.json\"",
+                "schema": { "type": "string" }
+              }
+            },
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["projects:read"] }],
+        "x-flagship-scope": "projects:read",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/flags": {
+      "get": {
+        "operationId": "listFlags",
+        "summary": "List flags with their state in one environment",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "maxLength": 100 }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["on", "off", "rollout", "archived"] }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["boolean", "string", "number", "json"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 100, "type": "integer", "minimum": 1, "maximum": 500 }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "createFlag",
+        "summary": "Create a flag",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateFlagBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}": {
+      "get": {
+        "operationId": "getFlag",
+        "summary": "A flag with its targeting in every environment",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      },
+      "put": {
+        "operationId": "updateFlag",
+        "summary": "Change a flag's name, description, variants or client-side exposure",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateFlagBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/archive": {
+      "post": {
+        "operationId": "archiveFlag",
+        "summary": "Archive a flag",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ArchiveFlagBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}": {
+      "put": {
+        "operationId": "updateTargeting",
+        "summary": "Replace a flag's targeting in one environment",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateTargetingBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}/change-requests": {
+      "post": {
+        "operationId": "proposeFlagChange",
+        "summary": "Propose new targeting for a flag in a protected environment",
+        "tags": ["change-requests"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ProposeFlagChangeBody" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["change-requests:write"] }],
+        "x-flagship-scope": "change-requests:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}/kill-switch": {
+      "post": {
+        "operationId": "setKillSwitch",
+        "summary": "Turn a flag on or off in one environment",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SetKillSwitchBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}/rollout-plans": {
+      "get": {
+        "operationId": "listRolloutPlans",
+        "summary": "A flag's progressive rollout plans in one environment",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "startRolloutPlan",
+        "summary": "Start a progressive rollout",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RolloutPlan" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}/rollout-plans/{id}/guards": {
+      "get": {
+        "operationId": "getRolloutGuards",
+        "summary": "A rollout plan's guard metrics and their latest values",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}/rollout-plans/{id}/{action}": {
+      "post": {
+        "operationId": "changeRolloutPlan",
+        "summary": "Pause, resume or cancel a rollout plan",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "enum": ["pause", "resume", "cancel"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}/schedules": {
+      "get": {
+        "operationId": "listSchedules",
+        "summary": "A flag's scheduled changes in one environment",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "createSchedule",
+        "summary": "Schedule a change to a flag",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateScheduleBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/environments/{environment}/schedules/{id}": {
+      "delete": {
+        "operationId": "cancelSchedule",
+        "summary": "Cancel a scheduled change",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/exposures": {
+      "get": {
+        "operationId": "getExposures",
+        "summary": "Hourly exposure counts per variant",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 24, "type": "integer", "minimum": 1, "maximum": 720 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/projects/{project}/flags/{flag}/restore": {
+      "post": {
+        "operationId": "restoreFlag",
+        "summary": "Restore an archived flag",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ArchiveFlagBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/webhooks": {
+      "get": {
+        "operationId": "listWebhooks",
+        "summary": "A project's webhooks",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["webhooks:read"] }],
+        "x-flagship-scope": "webhooks:read",
+        "x-flagship-role": "admin"
+      },
+      "post": {
+        "operationId": "createWebhook",
+        "summary": "Create a webhook; the signing secret is shown once",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateWebhookBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["webhooks:write"] }],
+        "x-flagship-scope": "webhooks:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/webhooks/{id}": {
+      "get": {
+        "operationId": "getWebhook",
+        "summary": "A webhook",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["webhooks:read"] }],
+        "x-flagship-scope": "webhooks:read",
+        "x-flagship-role": "admin"
+      },
+      "patch": {
+        "operationId": "updateWebhook",
+        "summary": "Change a webhook",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateWebhookBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["webhooks:write"] }],
+        "x-flagship-scope": "webhooks:write",
+        "x-flagship-role": "admin"
+      },
+      "delete": {
+        "operationId": "deleteWebhook",
+        "summary": "Delete a webhook",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No content" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["webhooks:write"] }],
+        "x-flagship-scope": "webhooks:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/webhooks/{id}/deliveries": {
+      "get": {
+        "operationId": "listWebhookDeliveries",
+        "summary": "A webhook's delivery log",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["pending", "succeeded", "failed"] }
+          },
+          {
+            "name": "event",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "maxLength": 200 }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["webhooks:read"] }],
+        "x-flagship-scope": "webhooks:read",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/webhooks/{id}/deliveries/{delivery}": {
+      "get": {
+        "operationId": "getWebhookDelivery",
+        "summary": "One delivery with its attempts",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          },
+          {
+            "name": "delivery",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["webhooks:read"] }],
+        "x-flagship-scope": "webhooks:read",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/webhooks/{id}/deliveries/{delivery}/replay": {
+      "post": {
+        "operationId": "replayWebhookDelivery",
+        "summary": "Send one delivery again",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          },
+          {
+            "name": "delivery",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["webhooks:write"] }],
+        "x-flagship-scope": "webhooks:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/webhooks/{id}/replay": {
+      "post": {
+        "operationId": "replayWebhookDeliveries",
+        "summary": "Send failed deliveries in a time range again",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ReplayWebhookDeliveriesBody" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["webhooks:write"] }],
+        "x-flagship-scope": "webhooks:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/projects/{project}/webhooks/{id}/secret": {
+      "post": {
+        "operationId": "rotateWebhookSecret",
+        "summary": "Rotate the signing secret; the old one is honoured for 24 hours",
+        "tags": ["webhooks"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["webhooks:write"] }],
+        "x-flagship-scope": "webhooks:write",
+        "x-flagship-role": "admin"
+      }
+    },
+    "/session": {
+      "post": {
+        "operationId": "signIn",
+        "summary": "Sign in; sets the session cookie and returns the CSRF token",
+        "tags": ["session"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SignInBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [],
+        "x-flagship-role": "none"
+      },
+      "get": {
+        "operationId": "getSession",
+        "summary": "The signed-in user and CSRF token",
+        "tags": ["session"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }],
+        "x-flagship-role": "viewer"
+      },
+      "delete": {
+        "operationId": "signOut",
+        "summary": "Sign out",
+        "tags": ["session"],
+        "responses": {
+          "204": { "description": "No content" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }],
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/session/password": {
+      "put": {
+        "operationId": "changePassword",
+        "summary": "Change your password and end your other sessions",
+        "tags": ["session"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ChangePasswordBody" } }
+          }
+        },
+        "responses": {
+          "204": { "description": "No content" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }],
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/tokens": {
+      "get": {
+        "operationId": "listApiTokens",
+        "summary": "List your API tokens and the scopes they can hold",
+        "tags": ["tokens"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }],
+        "x-flagship-role": "viewer"
+      },
+      "post": {
+        "operationId": "createApiToken",
+        "summary": "Create an API token; the secret is shown once",
+        "tags": ["tokens"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateApiTokenBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }],
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/tokens/{id}": {
+      "delete": {
+        "operationId": "revokeApiToken",
+        "summary": "Revoke one of your API tokens",
+        "tags": ["tokens"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No content" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }],
+        "x-flagship-role": "viewer"
+      }
+    },
+    "/users": {
+      "get": {
+        "operationId": "listUsers",
+        "summary": "List users",
+        "tags": ["users"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }],
+        "x-flagship-role": "admin"
+      },
+      "post": {
+        "operationId": "createUser",
+        "summary": "Create a user",
+        "tags": ["users"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateUserBody" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }],
+        "x-flagship-role": "admin"
+      }
+    },
+    "/users/{id}": {
+      "patch": {
+        "operationId": "updateUser",
+        "summary": "Change a user's name or role, or disable them",
+        "tags": ["users"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateUserBody" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }],
+        "x-flagship-role": "admin"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApplyChangeRequestBody": {
+        "type": "object",
+        "properties": {
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        },
+        "required": ["revision"],
+        "additionalProperties": false
+      },
+      "ArchiveFlagBody": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+        },
+        "required": ["version"],
+        "additionalProperties": false
+      },
+      "ChangePasswordBody": {
+        "type": "object",
+        "properties": {
+          "currentPassword": { "type": "string", "maxLength": 256 },
+          "newPassword": { "type": "string", "minLength": 12, "maxLength": 256 }
+        },
+        "required": ["currentPassword", "newPassword"],
+        "additionalProperties": false
+      },
+      "CloseChangeRequestBody": {
+        "type": "object",
+        "properties": { "reason": { "type": "string", "maxLength": 4000 } },
+        "additionalProperties": false
+      },
+      "CreateApiTokenBody": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "scopes": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "flags:read",
+                "flags:write",
+                "segments:read",
+                "segments:write",
+                "change-requests:read",
+                "change-requests:write",
+                "experiments:read",
+                "experiments:write",
+                "audit:read",
+                "audit:restore",
+                "projects:read",
+                "projects:write",
+                "sdk-keys:read",
+                "sdk-keys:write",
+                "webhooks:read",
+                "webhooks:write"
+              ]
+            }
+          },
+          "project": { "$ref": "#/components/schemas/Key" },
+          "environments": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Key" }
+          },
+          "expiresInDays": { "type": "integer", "minimum": 1, "maximum": 365 }
+        },
+        "required": ["name", "scopes", "expiresInDays"],
+        "additionalProperties": false
+      },
+      "CreateEnvironmentBody": {
+        "type": "object",
+        "properties": {
+          "key": { "$ref": "#/components/schemas/Key" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "required": ["key", "name"],
+        "additionalProperties": false
+      },
+      "CreateFlagBody": {
+        "type": "object",
+        "properties": {
+          "key": { "$ref": "#/components/schemas/Key" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "description": { "type": "string", "maxLength": 500 },
+          "type": { "type": "string", "enum": ["boolean", "string", "number", "json"] },
+          "variants": {
+            "minItems": 2,
+            "maxItems": 20,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Variant" }
+          },
+          "clientSide": { "type": "boolean" }
+        },
+        "required": ["key", "name", "type"],
+        "additionalProperties": false
+      },
+      "CreateProjectBody": {
+        "type": "object",
+        "properties": {
+          "key": { "$ref": "#/components/schemas/Key" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "environments": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CreateEnvironmentBody" }
+          }
+        },
+        "required": ["key", "name"],
+        "additionalProperties": false
+      },
+      "CreateScheduleBody": {
+        "type": "object",
+        "properties": {
+          "runAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "change": { "$ref": "#/components/schemas/ScheduledChange" }
+        },
+        "required": ["runAt", "change"],
+        "additionalProperties": false
+      },
+      "CreateSdkKeyBody": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "enum": ["server", "client"] },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "required": ["kind", "name"],
+        "additionalProperties": false
+      },
+      "CreateSegmentBody": {
+        "type": "object",
+        "properties": {
+          "key": { "$ref": "#/components/schemas/Key" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "description": { "type": "string", "maxLength": 500 },
+          "included": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "excluded": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "rules": {
+            "maxItems": 50,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SegmentRule" }
+          }
+        },
+        "required": ["key", "name", "included", "excluded", "rules"],
+        "additionalProperties": false
+      },
+      "CreateUserBody": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "format": "email",
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "role": { "type": "string", "enum": ["viewer", "editor", "admin"] },
+          "password": { "type": "string", "minLength": 12, "maxLength": 256 }
+        },
+        "required": ["email", "name", "role", "password"],
+        "additionalProperties": false
+      },
+      "CreateWebhookBody": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "url": { "type": "string" },
+          "environment": { "anyOf": [{ "$ref": "#/components/schemas/Key" }, { "type": "null" }] },
+          "events": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^(\\*|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*(\\.\\*)?)$"
+            }
+          },
+          "enabled": { "type": "boolean" }
+        },
+        "required": ["name", "url"],
+        "additionalProperties": false
+      },
+      "JsonValue": {
+        "anyOf": [
+          { "type": "string" },
+          { "type": "number" },
+          { "type": "boolean" },
+          { "type": "null" },
+          { "type": "array", "items": { "$ref": "#/components/schemas/JsonValue" } },
+          {
+            "type": "object",
+            "propertyNames": { "type": "string" },
+            "additionalProperties": { "$ref": "#/components/schemas/JsonValue" }
+          }
+        ]
+      },
+      "Key": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "Prerequisite": {
+        "type": "object",
+        "properties": {
+          "flag": { "$ref": "#/components/schemas/Key" },
+          "variant": { "$ref": "#/components/schemas/Key" }
+        },
+        "required": ["flag", "variant"],
+        "additionalProperties": false
+      },
+      "ProjectExport": {
+        "type": "object",
+        "properties": {
+          "format": { "type": "string", "const": "flagship.project" },
+          "formatVersion": { "type": "number", "const": 1 },
+          "exportedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "project": {
+            "type": "object",
+            "properties": {
+              "key": { "$ref": "#/components/schemas/Key" },
+              "name": { "type": "string", "minLength": 1, "maxLength": 100 }
+            },
+            "required": ["key", "name"],
+            "additionalProperties": false
+          },
+          "environments": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": { "$ref": "#/components/schemas/Key" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "requiredApprovals": { "type": "integer", "minimum": 0, "maximum": 5 },
+                "requireReason": { "type": "boolean" },
+                "requireLink": { "type": "boolean" }
+              },
+              "required": ["key", "name"],
+              "additionalProperties": false
+            }
+          },
+          "flags": {
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": { "$ref": "#/components/schemas/Key" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "description": { "default": "", "type": "string", "maxLength": 500 },
+                "type": { "type": "string", "enum": ["boolean", "string", "number", "json"] },
+                "variants": {
+                  "minItems": 2,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Variant" }
+                },
+                "salt": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "clientSide": { "default": false, "type": "boolean" },
+                "archived": { "default": false, "type": "boolean" },
+                "version": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+                "environments": {
+                  "type": "object",
+                  "propertyNames": { "$ref": "#/components/schemas/Key" },
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": { "type": "boolean" },
+                      "offVariant": { "$ref": "#/components/schemas/Key" },
+                      "prerequisites": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/Prerequisite" }
+                      },
+                      "rules": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/Rule" }
+                      },
+                      "fallthrough": { "$ref": "#/components/schemas/Serve" },
+                      "version": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+                    },
+                    "required": ["enabled", "offVariant", "prerequisites", "rules", "fallthrough"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["key", "name", "type", "variants", "environments"],
+              "additionalProperties": false
+            }
+          },
+          "segments": {
+            "maxItems": 20000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "environment": { "$ref": "#/components/schemas/Key" },
+                "key": { "$ref": "#/components/schemas/Key" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "description": { "default": "", "type": "string", "maxLength": 500 },
+                "included": {
+                  "maxItems": 10000,
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+                },
+                "excluded": {
+                  "maxItems": 10000,
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+                },
+                "rules": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/SegmentRule" }
+                },
+                "version": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+              },
+              "required": ["environment", "key", "name", "included", "excluded", "rules"],
+              "additionalProperties": false
+            }
+          },
+          "checksums": {
+            "type": "object",
+            "propertyNames": { "$ref": "#/components/schemas/Key" },
+            "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "required": ["format", "formatVersion", "project", "environments", "flags", "segments"],
+        "additionalProperties": false
+      },
+      "ProposeFlagChangeBody": {
+        "type": "object",
+        "properties": {
+          "baseVersion": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "maxLength": 4000 },
+          "enabled": { "type": "boolean" },
+          "offVariant": { "$ref": "#/components/schemas/Key" },
+          "prerequisites": {
+            "maxItems": 10,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Prerequisite" }
+          },
+          "rules": {
+            "maxItems": 100,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Rule" }
+          },
+          "fallthrough": { "$ref": "#/components/schemas/Serve" }
+        },
+        "required": [
+          "baseVersion",
+          "title",
+          "enabled",
+          "offVariant",
+          "prerequisites",
+          "rules",
+          "fallthrough"
+        ],
+        "additionalProperties": false
+      },
+      "ProposeSegmentChangeBody": {
+        "type": "object",
+        "properties": {
+          "baseVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "maxLength": 4000 },
+          "segment": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "description": { "type": "string", "maxLength": 500 },
+                  "included": {
+                    "maxItems": 10000,
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+                  },
+                  "excluded": {
+                    "maxItems": 10000,
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+                  },
+                  "rules": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/SegmentRule" }
+                  }
+                },
+                "required": ["name", "included", "excluded", "rules"],
+                "additionalProperties": false
+              },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": ["baseVersion", "title", "segment"],
+        "additionalProperties": false
+      },
+      "ReplayWebhookDeliveriesBody": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "status": {
+            "default": ["failed"],
+            "minItems": 1,
+            "maxItems": 2,
+            "type": "array",
+            "items": { "type": "string", "enum": ["succeeded", "failed"] }
+          }
+        },
+        "required": ["from"],
+        "additionalProperties": false
+      },
+      "RestoreAuditEntryBody": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string", "enum": ["before", "after"] },
+          "baseVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "maxLength": 4000 }
+        },
+        "required": ["to", "baseVersion"],
+        "additionalProperties": false
+      },
+      "ReviewChangeRequestBody": {
+        "type": "object",
+        "properties": {
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "decision": { "type": "string", "enum": ["comment", "approve", "request_changes"] },
+          "body": { "type": "string", "maxLength": 4000 }
+        },
+        "required": ["revision", "decision"],
+        "additionalProperties": false
+      },
+      "RolloutPlan": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              { "type": "string", "const": "fallthrough" },
+              {
+                "type": "object",
+                "properties": { "rule": { "maxLength": 64, "$ref": "#/components/schemas/Key" } },
+                "required": ["rule"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "variant": { "$ref": "#/components/schemas/Key" },
+          "baseline": { "$ref": "#/components/schemas/Key" },
+          "bucketBy": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$"
+          },
+          "steps": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "weight": { "type": "integer", "minimum": 1, "maximum": 100000 },
+                "holdMinutes": { "type": "integer", "minimum": 1, "maximum": 43200 }
+              },
+              "required": ["weight"],
+              "additionalProperties": false
+            }
+          },
+          "guards": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "event": { "$ref": "#/components/schemas/Key" },
+                "kind": {
+                  "default": "conversion",
+                  "type": "string",
+                  "enum": ["conversion", "count", "value"]
+                },
+                "worse": { "default": "higher", "type": "string", "enum": ["higher", "lower"] },
+                "threshold": { "default": 0, "type": "number", "minimum": 0, "maximum": 10 },
+                "minContexts": {
+                  "default": 100,
+                  "type": "integer",
+                  "minimum": 10,
+                  "maximum": 1000000
+                },
+                "action": { "default": "pause", "type": "string", "enum": ["pause", "rollback"] }
+              },
+              "required": ["event"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["target", "variant", "baseline", "steps"],
+        "additionalProperties": false
+      },
+      "Rule": {
+        "type": "object",
+        "properties": {
+          "id": { "maxLength": 64, "$ref": "#/components/schemas/Key" },
+          "description": { "type": "string", "maxLength": 500 },
+          "clauses": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "operator": { "type": "string", "const": "inSegment" },
+                    "segments": {
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Key" }
+                    },
+                    "negate": { "type": "boolean" }
+                  },
+                  "required": ["operator", "segments"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "attribute": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                    },
+                    "operator": {
+                      "type": "string",
+                      "enum": [
+                        "equals",
+                        "in",
+                        "contains",
+                        "startsWith",
+                        "endsWith",
+                        "matches",
+                        "lt",
+                        "lte",
+                        "gt",
+                        "gte",
+                        "semverEq",
+                        "semverLt",
+                        "semverGt"
+                      ]
+                    },
+                    "values": {
+                      "minItems": 1,
+                      "maxItems": 1000,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          { "type": "string", "maxLength": 1024 },
+                          { "type": "number" },
+                          { "type": "boolean" }
+                        ]
+                      }
+                    },
+                    "negate": { "type": "boolean" }
+                  },
+                  "required": ["attribute", "operator", "values"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "serve": { "$ref": "#/components/schemas/Serve" }
+        },
+        "required": ["id", "clauses", "serve"],
+        "additionalProperties": false
+      },
+      "ScheduledChange": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "fallthrough": { "$ref": "#/components/schemas/Serve" },
+          "rules": {
+            "maxItems": 100,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Rule" }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SegmentRule": {
+        "type": "object",
+        "properties": {
+          "id": { "maxLength": 64, "$ref": "#/components/schemas/Key" },
+          "clauses": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "attribute": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                },
+                "operator": {
+                  "type": "string",
+                  "enum": [
+                    "equals",
+                    "in",
+                    "contains",
+                    "startsWith",
+                    "endsWith",
+                    "matches",
+                    "lt",
+                    "lte",
+                    "gt",
+                    "gte",
+                    "semverEq",
+                    "semverLt",
+                    "semverGt"
+                  ]
+                },
+                "values": {
+                  "minItems": 1,
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      { "type": "string", "maxLength": 1024 },
+                      { "type": "number" },
+                      { "type": "boolean" }
+                    ]
+                  }
+                },
+                "negate": { "type": "boolean" }
+              },
+              "required": ["attribute", "operator", "values"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["id", "clauses"],
+        "additionalProperties": false
+      },
+      "Serve": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": { "variant": { "$ref": "#/components/schemas/Key" } },
+            "required": ["variant"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "rollout": {
+                "type": "object",
+                "properties": {
+                  "bucketBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                  },
+                  "variants": {
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "variant": { "$ref": "#/components/schemas/Key" },
+                        "weight": { "type": "integer", "minimum": 0, "maximum": 100000 }
+                      },
+                      "required": ["variant", "weight"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["variants"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["rollout"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "SetChangeNotesBody": {
+        "type": "object",
+        "properties": {
+          "requireReason": { "type": "boolean" },
+          "requireLink": { "type": "boolean" }
+        },
+        "required": ["requireReason", "requireLink"],
+        "additionalProperties": false
+      },
+      "SetKillSwitchBody": {
+        "type": "object",
+        "properties": { "enabled": { "type": "boolean" } },
+        "required": ["enabled"],
+        "additionalProperties": false
+      },
+      "SetRequiredApprovalsBody": {
+        "type": "object",
+        "properties": { "requiredApprovals": { "type": "integer", "minimum": 0, "maximum": 5 } },
+        "required": ["requiredApprovals"],
+        "additionalProperties": false
+      },
+      "SignInBody": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "maxLength": 254 },
+          "password": { "type": "string", "maxLength": 256 }
+        },
+        "required": ["email", "password"],
+        "additionalProperties": false
+      },
+      "StartExperimentBody": {
+        "type": "object",
+        "properties": {
+          "key": { "$ref": "#/components/schemas/Key" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "hypothesis": { "type": "string", "maxLength": 2000 },
+          "flag": { "$ref": "#/components/schemas/Key" },
+          "environment": { "$ref": "#/components/schemas/Key" },
+          "target": {
+            "default": "fallthrough",
+            "anyOf": [
+              { "type": "string", "const": "fallthrough" },
+              {
+                "type": "object",
+                "properties": { "rule": { "maxLength": 64, "$ref": "#/components/schemas/Key" } },
+                "required": ["rule"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "control": { "$ref": "#/components/schemas/Key" },
+          "metrics": {
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "event": { "$ref": "#/components/schemas/Key" },
+                "kind": {
+                  "default": "conversion",
+                  "type": "string",
+                  "enum": ["conversion", "count", "value"]
+                }
+              },
+              "required": ["event"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["key", "name", "flag", "environment", "control", "metrics"],
+        "additionalProperties": false
+      },
+      "UpdateFlagBody": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "description": { "type": "string", "maxLength": 500 },
+          "variants": {
+            "minItems": 2,
+            "maxItems": 20,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Variant" }
+          },
+          "clientSide": { "type": "boolean" }
+        },
+        "required": ["version"],
+        "additionalProperties": false
+      },
+      "UpdateSegmentBody": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "description": { "type": "string", "maxLength": 500 },
+          "included": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "excluded": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "rules": {
+            "maxItems": 50,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SegmentRule" }
+          }
+        },
+        "required": ["version", "name", "included", "excluded", "rules"],
+        "additionalProperties": false
+      },
+      "UpdateTargetingBody": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "enabled": { "type": "boolean" },
+          "offVariant": { "$ref": "#/components/schemas/Key" },
+          "prerequisites": {
+            "maxItems": 10,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Prerequisite" }
+          },
+          "rules": {
+            "maxItems": 100,
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Rule" }
+          },
+          "fallthrough": { "$ref": "#/components/schemas/Serve" }
+        },
+        "required": ["version", "enabled", "offVariant", "prerequisites", "rules", "fallthrough"],
+        "additionalProperties": false
+      },
+      "UpdateUserBody": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "role": { "type": "string", "enum": ["viewer", "editor", "admin"] },
+          "disabled": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
+      "UpdateWebhookBody": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "url": { "type": "string" },
+          "environment": { "anyOf": [{ "$ref": "#/components/schemas/Key" }, { "type": "null" }] },
+          "events": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^(\\*|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*(\\.\\*)?)$"
+            }
+          },
+          "enabled": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
+      "Variant": {
+        "type": "object",
+        "properties": {
+          "key": { "$ref": "#/components/schemas/Key" },
+          "value": { "$ref": "#/components/schemas/JsonValue" },
+          "name": { "type": "string", "maxLength": 100 }
+        },
+        "required": ["key", "value"],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_argument",
+                  "unauthenticated",
+                  "permission_denied",
+                  "not_found",
+                  "already_exists",
+                  "version_conflict",
+                  "failed_precondition",
+                  "payload_too_large",
+                  "unsupported_media_type",
+                  "resource_exhausted",
+                  "internal",
+                  "unavailable"
+                ]
+              },
+              "message": { "type": "string" },
+              "request_id": { "type": "string" },
+              "details": {
+                "description": "For invalid_argument, one {path, message} entry per problem; other codes may carry an object describing the conflict.",
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["path", "message"]
+                    }
+                  },
+                  { "type": "object" }
+                ]
+              }
+            },
+            "required": ["code", "message", "request_id"]
+          }
+        },
+        "required": ["error"]
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "The request failed; see error.code.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "securitySchemes": {
+      "session": { "type": "apiKey", "in": "cookie", "name": "flagship_session" },
+      "csrf": { "type": "apiKey", "in": "header", "name": "x-csrf-token" },
+      "token": { "type": "http", "scheme": "bearer", "bearerFormat": "fst_..." }
+    }
+  }
+}

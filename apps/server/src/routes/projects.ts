@@ -14,7 +14,13 @@ import {
   setChangeNotes,
   setRequiredApprovals,
 } from '../services/projects.js';
-import { exportProject, importProject, MAX_REQUIRED_APPROVALS } from '../services/transfer.js';
+import {
+  exportDocumentSchema,
+  exportProject,
+  importProject,
+  MAX_REQUIRED_APPROVALS,
+} from '../services/transfer.js';
+import { operations } from '../openapi.js';
 import { actorOf } from './note.js';
 
 const name = z.string().trim().min(1).max(100);
@@ -36,6 +42,9 @@ const keyInput = z.strictObject({ kind: z.enum(['server', 'client']), name });
 
 export const projectParams = z.object({ project: keySchema });
 export const envParams = z.object({ project: keySchema, environment: keySchema });
+const keyParams = envParams.extend({ id: z.uuid() });
+
+const op = operations('projects');
 
 export function projectRoutes(ctx: Context) {
   const environment = async (params: unknown) => {
@@ -46,13 +55,26 @@ export function projectRoutes(ctx: Context) {
   };
 
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/projects', { config: { scope: 'projects:read' } }, async () => ({
-      projects: await listProjects(ctx.db),
-    }));
+    api.get(
+      '/projects',
+      { config: { scope: 'projects:read', openapi: op('listProjects', 'List projects') } },
+      async () => ({
+        projects: await listProjects(ctx.db),
+      }),
+    );
 
     api.post(
       '/projects',
-      { config: { role: 'admin', scope: 'projects:write' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'projects:write',
+          openapi: op('createProject', 'Create a project with its environments', {
+            body: projectInput,
+            status: [201],
+          }),
+        },
+      },
       async (request, reply) => {
         const user = actorOf(request);
         const body = parse(projectInput, request.body, 'project');
@@ -62,7 +84,16 @@ export function projectRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/export',
-      { config: { role: 'admin', scope: 'projects:read' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'projects:read',
+          openapi: op('exportProject', 'Download a project as one JSON document', {
+            params: projectParams,
+            download: true,
+          }),
+        },
+      },
       async (request, reply) => {
         const { project } = parse(projectParams, request.params, 'path');
         const chunks = exportProject(ctx.db, project, ctx.now);
@@ -88,7 +119,18 @@ export function projectRoutes(ctx: Context) {
 
     api.post(
       '/projects/import',
-      { config: { role: 'admin', scope: 'projects:write' }, bodyLimit: ctx.config.importMaxBytes },
+      {
+        config: {
+          role: 'admin',
+          scope: 'projects:write',
+          openapi: op('importProject', 'Create a project from an export document', {
+            query: importQuery,
+            body: exportDocumentSchema,
+            status: [201],
+          }),
+        },
+        bodyLimit: ctx.config.importMaxBytes,
+      },
       async (request, reply) => {
         const user = actorOf(request);
         const as = parse(importQuery, request.query, 'query');
@@ -99,7 +141,17 @@ export function projectRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/environments',
-      { config: { role: 'admin', scope: 'projects:write' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'projects:write',
+          openapi: op('createEnvironment', 'Add an environment to a project', {
+            params: projectParams,
+            body: envInput,
+            status: [201],
+          }),
+        },
+      },
       async (request, reply) => {
         const user = actorOf(request);
         const { project } = parse(projectParams, request.params, 'path');
@@ -110,7 +162,16 @@ export function projectRoutes(ctx: Context) {
 
     api.put(
       '/projects/:project/environments/:environment/approvals',
-      { config: { role: 'admin', scope: 'projects:write' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'projects:write',
+          openapi: op('setRequiredApprovals', 'Set how many approvals a change request needs', {
+            params: envParams,
+            body: approvalsInput,
+          }),
+        },
+      },
       async (request) => {
         const user = actorOf(request);
         const env = await environment(request.params);
@@ -121,7 +182,16 @@ export function projectRoutes(ctx: Context) {
 
     api.put(
       '/projects/:project/environments/:environment/change-notes',
-      { config: { role: 'admin', scope: 'projects:write' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'projects:write',
+          openapi: op('setChangeNotes', 'Require a reason or a ticket link on every change', {
+            params: envParams,
+            body: changeNotesInput,
+          }),
+        },
+      },
       async (request) => {
         const user = actorOf(request);
         const env = await environment(request.params);
@@ -132,7 +202,13 @@ export function projectRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/environments/:environment/api-keys',
-      { config: { role: 'admin', scope: 'sdk-keys:read' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'sdk-keys:read',
+          openapi: op('listSdkKeys', "List an environment's SDK keys", { params: envParams }),
+        },
+      },
       async (request) => ({
         keys: await listApiKeys(ctx.db, (await environment(request.params)).id),
       }),
@@ -140,7 +216,17 @@ export function projectRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/environments/:environment/api-keys',
-      { config: { role: 'admin', scope: 'sdk-keys:write' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'sdk-keys:write',
+          openapi: op('createSdkKey', 'Create an SDK key; the secret is shown once', {
+            params: envParams,
+            body: keyInput,
+            status: [201],
+          }),
+        },
+      },
       async (request, reply) => {
         const user = actorOf(request);
         const env = await environment(request.params);
@@ -151,11 +237,17 @@ export function projectRoutes(ctx: Context) {
 
     api.delete(
       '/projects/:project/environments/:environment/api-keys/:id',
-      { config: { role: 'admin', scope: 'sdk-keys:write' } },
+      {
+        config: {
+          role: 'admin',
+          scope: 'sdk-keys:write',
+          openapi: op('revokeSdkKey', 'Revoke an SDK key', { params: keyParams, status: [204] }),
+        },
+      },
       async (request, reply) => {
         const user = actorOf(request);
         const env = await environment(request.params);
-        const { id } = parse(z.object({ id: z.uuid() }), request.params, 'path');
+        const { id } = parse(keyParams, request.params, 'path');
         await revokeApiKey(ctx.db, env, id, user);
         return reply.status(204).send();
       },

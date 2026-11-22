@@ -11,6 +11,7 @@ import {
   MAX_TOKEN_DAYS,
   revokeApiToken,
 } from '../services/apitokens.js';
+import { operations } from '../openapi.js';
 import { actorOf } from './note.js';
 
 const tokenInput = z.strictObject({
@@ -25,26 +26,61 @@ const tokenInput = z.strictObject({
  * API token management. Session-only: a token can't list, mint or revoke
  * tokens, so a leaked one can't extend itself.
  */
+const tokenParams = z.object({ id: z.uuid() });
+const op = operations('tokens');
+
 export function tokenRoutes(ctx: Context) {
-  const session = { config: { sessionOnly: true } };
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/tokens', session, async (request) => ({
-      tokens: await listApiTokens(ctx.db, currentUser(request).id, ctx.now()),
-      scopes: SCOPES,
-    }));
+    api.get(
+      '/tokens',
+      {
+        config: {
+          sessionOnly: true,
+          openapi: op('listApiTokens', 'List your API tokens and the scopes they can hold'),
+        },
+      },
+      async (request) => ({
+        tokens: await listApiTokens(ctx.db, currentUser(request).id, ctx.now()),
+        scopes: SCOPES,
+      }),
+    );
 
-    api.post('/tokens', session, async (request, reply) => {
-      const user = currentUser(request);
-      const body = parse(tokenInput, request.body, 'API token');
-      const created = await createApiToken(ctx.db, user, body, ctx.now(), actorOf(request));
-      return reply.status(201).send(created);
-    });
+    api.post(
+      '/tokens',
+      {
+        config: {
+          sessionOnly: true,
+          openapi: op('createApiToken', 'Create an API token; the secret is shown once', {
+            body: tokenInput,
+            status: [201],
+          }),
+        },
+      },
+      async (request, reply) => {
+        const user = currentUser(request);
+        const body = parse(tokenInput, request.body, 'API token');
+        const created = await createApiToken(ctx.db, user, body, ctx.now(), actorOf(request));
+        return reply.status(201).send(created);
+      },
+    );
 
-    api.delete('/tokens/:id', session, async (request, reply) => {
-      const user = currentUser(request);
-      const { id } = parse(z.object({ id: z.uuid() }), request.params, 'path');
-      await revokeApiToken(ctx.db, user, id, ctx.now(), actorOf(request));
-      return reply.status(204).send();
-    });
+    api.delete(
+      '/tokens/:id',
+      {
+        config: {
+          sessionOnly: true,
+          openapi: op('revokeApiToken', 'Revoke one of your API tokens', {
+            params: tokenParams,
+            status: [204],
+          }),
+        },
+      },
+      async (request, reply) => {
+        const user = currentUser(request);
+        const { id } = parse(tokenParams, request.params, 'path');
+        await revokeApiToken(ctx.db, user, id, ctx.now(), actorOf(request));
+        return reply.status(204).send();
+      },
+    );
   };
 }

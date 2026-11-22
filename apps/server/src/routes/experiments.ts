@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Context } from '../context.js';
 import { parse } from '../errors.js';
+import { operations } from '../openapi.js';
 import {
   experimentInput,
   experimentResults,
@@ -27,11 +28,21 @@ const resultsQuery = z.object({
   showMismatched: z.enum(['true', 'false']).default('false'),
 });
 
+const op = operations('experiments');
+
 export function experimentRoutes(ctx: Context) {
   return async (api: FastifyInstance): Promise<void> => {
     api.get(
       '/projects/:project/experiments',
-      { config: { scope: 'experiments:read' } },
+      {
+        config: {
+          scope: 'experiments:read',
+          openapi: op('listExperiments', 'List experiments', {
+            params: projectParams,
+            query: listQuery,
+          }),
+        },
+      },
       async (request) => {
         const { project } = parse(projectParams, request.params, 'path');
         const q = parse(listQuery, request.query, 'query');
@@ -53,7 +64,17 @@ export function experimentRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/experiments',
-      { config: { role: 'editor', scope: 'experiments:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'experiments:write',
+          openapi: op('startExperiment', 'Start an experiment on a flag', {
+            params: projectParams,
+            body: experimentInput,
+            status: [201],
+          }),
+        },
+      },
       async (request, reply) => {
         const { project } = parse(projectParams, request.params, 'path');
         const body = parse(experimentInput, request.body, 'experiment');
@@ -76,7 +97,12 @@ export function experimentRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/experiments/:experiment',
-      { config: { scope: 'experiments:read' } },
+      {
+        config: {
+          scope: 'experiments:read',
+          openapi: op('getExperiment', 'An experiment', { params: experimentParams }),
+        },
+      },
       async (request) => {
         const p = parse(experimentParams, request.params, 'path');
         const project = await getProject(ctx.db, p.project);
@@ -86,7 +112,13 @@ export function experimentRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/experiments/:experiment/stop',
-      { config: { role: 'editor', scope: 'experiments:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'experiments:write',
+          openapi: op('stopExperiment', 'Stop an experiment', { params: experimentParams }),
+        },
+      },
       async (request) => {
         const p = parse(experimentParams, request.params, 'path');
         const project = await getProject(ctx.db, p.project);
@@ -100,7 +132,16 @@ export function experimentRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/experiments/:experiment/results',
-      { config: { scope: 'experiments:read' } },
+      {
+        config: {
+          scope: 'experiments:read',
+          openapi: op(
+            'getExperimentResults',
+            'Per-variant results with intervals and the sample ratio check',
+            { params: experimentParams, query: resultsQuery },
+          ),
+        },
+      },
       async (request) => {
         const p = parse(experimentParams, request.params, 'path');
         const q = parse(resultsQuery, request.query, 'query');

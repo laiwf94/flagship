@@ -4,6 +4,7 @@ import { currentUser } from '../auth/guard.js';
 import type { Context } from '../context.js';
 import { parse } from '../errors.js';
 import { createUser, listUsers, updateUser } from '../services/users.js';
+import { operations } from '../openapi.js';
 import { passwordSchema } from './session.js';
 
 const role = z.enum(['viewer', 'editor', 'admin']);
@@ -23,25 +24,53 @@ const updateSchema = z.strictObject({
 });
 
 const idParams = z.object({ id: z.uuid() });
+const op = operations('users');
 
 export function userRoutes(ctx: Context) {
   return async (api: FastifyInstance): Promise<void> => {
-    api.get('/users', { config: { role: 'admin', sessionOnly: true } }, async () => ({
-      users: await listUsers(ctx.db),
-    }));
+    api.get(
+      '/users',
+      { config: { role: 'admin', sessionOnly: true, openapi: op('listUsers', 'List users') } },
+      async () => ({
+        users: await listUsers(ctx.db),
+      }),
+    );
 
-    api.post('/users', { config: { role: 'admin', sessionOnly: true } }, async (request, reply) => {
-      const actor = currentUser(request);
-      const body = parse(createSchema, request.body, 'user');
-      const user = await createUser(ctx.db, body, { id: actor.id, name: actor.name });
-      return reply.status(201).send(user);
-    });
+    api.post(
+      '/users',
+      {
+        config: {
+          role: 'admin',
+          sessionOnly: true,
+          openapi: op('createUser', 'Create a user', { body: createSchema, status: [201] }),
+        },
+      },
+      async (request, reply) => {
+        const actor = currentUser(request);
+        const body = parse(createSchema, request.body, 'user');
+        const user = await createUser(ctx.db, body, { id: actor.id, name: actor.name });
+        return reply.status(201).send(user);
+      },
+    );
 
-    api.patch('/users/:id', { config: { role: 'admin', sessionOnly: true } }, async (request) => {
-      const actor = currentUser(request);
-      const { id } = parse(idParams, request.params, 'user id');
-      const body = parse(updateSchema, request.body, 'user');
-      return updateUser(ctx.db, id, body, { id: actor.id, name: actor.name });
-    });
+    api.patch(
+      '/users/:id',
+      {
+        config: {
+          role: 'admin',
+          sessionOnly: true,
+          openapi: op('updateUser', "Change a user's name or role, or disable them", {
+            params: idParams,
+            body: updateSchema,
+          }),
+        },
+      },
+      async (request) => {
+        const actor = currentUser(request);
+        const { id } = parse(idParams, request.params, 'user id');
+        const body = parse(updateSchema, request.body, 'user');
+        return updateUser(ctx.db, id, body, { id: actor.id, name: actor.name });
+      },
+    );
   };
 }

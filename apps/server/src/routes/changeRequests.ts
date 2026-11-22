@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { currentUser, hasRole } from '../auth/guard.js';
 import type { Context } from '../context.js';
 import { parse } from '../errors.js';
+import { operations } from '../openapi.js';
 import {
   applyChange,
   closeChange,
@@ -63,6 +64,9 @@ const segmentParams = z.object({
   environment: keySchema,
   segment: keySchema,
 });
+const closeInput = z.strictObject({ reason: text.optional() });
+
+const op = operations('change-requests');
 
 export function changeRequestRoutes(ctx: Context) {
   const scope = async (request: FastifyRequest, projectKey: string): Promise<Scope> => {
@@ -77,7 +81,15 @@ export function changeRequestRoutes(ctx: Context) {
   return async (api: FastifyInstance): Promise<void> => {
     api.get(
       '/projects/:project/change-requests',
-      { config: { scope: 'change-requests:read' } },
+      {
+        config: {
+          scope: 'change-requests:read',
+          openapi: op('listChangeRequests', 'List change requests, newest first', {
+            params: projectParams,
+            query: listQuery,
+          }),
+        },
+      },
       async (request) => {
         const { project } = parse(projectParams, request.params, 'path');
         const q = parse(listQuery, request.query, 'query');
@@ -97,7 +109,17 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/flags/:flag/environments/:environment/change-requests',
-      { config: { role: 'editor', scope: 'change-requests:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'change-requests:write',
+          openapi: op(
+            'proposeFlagChange',
+            'Propose new targeting for a flag in a protected environment',
+            { params: targetParams, body: proposalInput, status: [201] },
+          ),
+        },
+      },
       async (request, reply) => {
         const p = parse(targetParams, request.params, 'path');
         const { baseVersion, title, description, ...config } = parse(
@@ -119,7 +141,17 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/environments/:environment/segments/:segment/change-requests',
-      { config: { role: 'editor', scope: 'change-requests:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'change-requests:write',
+          openapi: op('proposeSegmentChange', 'Propose creating, editing or deleting a segment', {
+            params: segmentParams,
+            body: segmentProposalInput,
+            status: [201],
+          }),
+        },
+      },
       async (request, reply) => {
         const p = parse(segmentParams, request.params, 'path');
         const { segment, ...rest } = parse(segmentProposalInput, request.body, 'change request');
@@ -144,7 +176,14 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.get(
       '/projects/:project/change-requests/:id',
-      { config: { scope: 'change-requests:read' } },
+      {
+        config: {
+          scope: 'change-requests:read',
+          openapi: op('getChangeRequest', 'A change request with its revisions and reviews', {
+            params: requestParams,
+          }),
+        },
+      },
       async (request) => {
         const p = parse(requestParams, request.params, 'path');
         const project = await getProject(ctx.db, p.project);
@@ -154,7 +193,17 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/change-requests/:id/reviews',
-      { config: { role: 'editor', scope: 'change-requests:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'change-requests:write',
+          openapi: op(
+            'reviewChangeRequest',
+            'Comment on, approve or request changes to a revision',
+            { params: requestParams, body: reviewInput, status: [201] },
+          ),
+        },
+      },
       async (request, reply) => {
         const p = parse(requestParams, request.params, 'path');
         const body = parse(reviewInput, request.body, 'review');
@@ -166,7 +215,16 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/change-requests/:id/apply',
-      { config: { role: 'editor', scope: 'change-requests:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'change-requests:write',
+          openapi: op('applyChangeRequest', 'Apply an approved revision', {
+            params: requestParams,
+            body: revision,
+          }),
+        },
+      },
       async (request) => {
         const p = parse(requestParams, request.params, 'path');
         const body = parse(revision, request.body, 'apply');
@@ -176,7 +234,16 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/change-requests/:id/rebase',
-      { config: { role: 'editor', scope: 'change-requests:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'change-requests:write',
+          openapi: op('rebaseChangeRequest', 'Rebase a revision onto the current version', {
+            params: requestParams,
+            body: revision,
+          }),
+        },
+      },
       async (request) => {
         const p = parse(requestParams, request.params, 'path');
         const body = parse(revision, request.body, 'rebase');
@@ -186,14 +253,20 @@ export function changeRequestRoutes(ctx: Context) {
 
     api.post(
       '/projects/:project/change-requests/:id/close',
-      { config: { role: 'editor', scope: 'change-requests:write' } },
+      {
+        config: {
+          role: 'editor',
+          scope: 'change-requests:write',
+          openapi: op('closeChangeRequest', 'Close a change request without applying it', {
+            params: requestParams,
+            body: closeInput,
+            bodyOptional: true,
+          }),
+        },
+      },
       async (request) => {
         const p = parse(requestParams, request.params, 'path');
-        const body = parse(
-          z.strictObject({ reason: text.optional() }),
-          request.body ?? {},
-          'close',
-        );
+        const body = parse(closeInput, request.body ?? {}, 'close');
         const s = await scope(request, p.project);
         return closeChange(s, p.id, hasRole(currentUser(request), 'admin'), body);
       },
