@@ -168,6 +168,44 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 | `@flagship/browser`          | web apps    | client key; the server evaluates the user's context and the SDK caches the values for synchronous reads; refetches when the version changes                          |
 | `@flagship/core`             | everything  | model, validation, evaluator; also used by the admin UI's preview                                                                                                    |
 | `@flagship/admin-client`     | tooling     | the admin API over `fetch`, one typed method per operation, generated from `GET /api/openapi.json`; errors are `AdminApiError` with the server's code                |
+| `@flagship/cli`              | terminals   | the `flagship` command: profiles, flags, segments, change requests, `eval` with a trace, `export`; `--json` everywhere                                               |
+
+## Command line
+
+`@flagship/cli` installs a `flagship` command (Node 22.12 or later) over the admin API. Every
+command takes `--json` for machine-readable output, with errors as JSON on stderr; the exit
+status is 0, 1 when the server or the command failed, and 2 for bad arguments.
+
+```console
+$ flagship login --server https://flags.internal --email me@example.com -p shop -e production
+Password for me@example.com:
+$ flagship flag list
+$ flagship flag off new-checkout --reason 'error rate alarm' --link https://tickets/42
+$ flagship flag get new-checkout -e production --json | jq .environments.production > t.json
+$ flagship cr propose flag new-checkout --file t.json --title 'Roll out to 25%'
+$ flagship eval new-checkout --key user-1 --attr country=gb --attr plan=pro
+new-checkout = true (variant on, TARGETING_MATCH by rule uk-pro)
+  in shop/production for {"country":"gb","plan":"pro","key":"user-1"}
+
+  1. kill switch: on
+  2. rule uk-pro: matched, serves on
+      yes  country in "gb", "ie"
+      yes  plan equals "pro"
+```
+
+`login` saves a session (or, with `--token-stdin`, an API token) in a profile in
+`~/.config/flagship/config.json`, written with mode 0600; the CLI refuses to read the file if
+other users can. `--profile`, `flagship profile use` and `flagship profile set` switch between
+servers and set a default project and environment. In CI, `FLAGSHIP_TOKEN`, `FLAGSHIP_SERVER`,
+`FLAGSHIP_PROJECT` and `FLAGSHIP_ENVIRONMENT` work without any config file. There are commands
+for flags (`list`, `get`, `create`, `update`, `on`, `off`, `target`, `archive`, `restore`),
+segments (`list`, `get`, `create`, `update`, `delete`), change requests (`cr list`, `get`,
+`propose`, `approve`, `request-changes`, `comment`, `apply`, `rebase`, `close`), `eval` and
+`export`. Edits send the version just read, or the one given with `--if-version`, so a
+concurrent change gets `409` instead of being overwritten. `eval` fetches the ruleset (or reads
+a saved one with `--ruleset`) and evaluates it locally with `@flagship/core`, showing each rule
+tried, each clause's result and the bucket of a split. `flagship <command> --help` lists the
+options.
 
 ## HTTP API
 
@@ -331,6 +369,8 @@ packages/conformance   JSON cases every evaluator must pass, and the runner
 packages/stats         distributions, Welch's t-test, delta-method lift and the sample ratio check
 packages/sdk-node      Node SDK and OpenFeature provider
 packages/sdk-browser   browser SDK
+packages/admin-client  typed admin API client, generated from the OpenAPI document
+packages/cli           the flagship command line
 apps/server            Fastify server: admin API, SDK endpoints, streaming hub, scheduler, exposures
 apps/admin             React admin UI
 e2e                    Playwright and axe tests

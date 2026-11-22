@@ -1,0 +1,32 @@
+{
+  "name": "@flagship/cli",
+  "version": "0.1.0",
+  "description": "The flagship command line: sign in, manage flags, segments and change requests, and trace evaluations.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "flagship": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "@flagship/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@flagship/admin-client": "workspace:*",
+    "@flagship/core": "workspace:*"
+  }
+}

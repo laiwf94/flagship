@@ -137,6 +137,9 @@ importers:
       '@flagship/browser':
         specifier: workspace:*
         version: link:../../packages/sdk-browser
+      '@flagship/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
       '@flagship/conformance':
         specifier: workspace:*
         version: link:../../packages/conformance
@@ -160,6 +163,15 @@ importers:
         version: link:../../packages/sdk-node
 
   packages/admin-client: {}
+
+  packages/cli:
+    dependencies:
+      '@flagship/admin-client':
+        specifier: workspace:*
+        version: link:../admin-client
+      '@flagship/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/conformance:
     dependencies:

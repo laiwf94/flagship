@@ -13,6 +13,7 @@
   "devDependencies": {
     "@flagship/admin-client": "workspace:*",
     "@flagship/browser": "workspace:*",
+    "@flagship/cli": "workspace:*",
     "@flagship/conformance": "workspace:*",
     "@flagship/node": "workspace:*",
     "@testcontainers/postgresql": "12.2.0",

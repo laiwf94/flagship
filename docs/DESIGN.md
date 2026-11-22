@@ -632,6 +632,55 @@ the server's live document must equal `openapi.json`, and the generator's format
 equal `src/operations.ts`; `pnpm openapi` rewrites both. Another test drives the generated client
 against the real server over HTTP.
 
+## The command line
+
+`packages/cli` is the `flagship` command, built on `node:util` `parseArgs` and the generated
+admin client, with no other dependencies. Each command is a small declaration (its words, its
+options with help text, how many arguments it takes, and a `run` function returning both a JSON
+value and text), so help, strict option parsing and `--json` work the same everywhere. The
+runner finds the command by its leading words, skipping the values of global options, then
+parses the whole line strictly: an unknown option or a stray argument is exit status 2, a
+failure from the server or the command is 1. With `--json`, stdout holds only the result and
+errors go to stderr as `{"error":{"code","message","status","requestId","details"}}`, the
+server's own body passed through.
+
+Credentials live in profiles in one JSON file (`FLAGSHIP_CONFIG`, else
+`$XDG_CONFIG_HOME/flagship/config.json`, else `~/.config/flagship/config.json`). It holds session
+cookies and tokens, so it is written like a private key: a temporary file is created with mode
+0600 in a 0700 directory, set to 0600 again in case of an odd umask, synced and renamed over the
+old one, so no reader ever sees it world-readable or half-written. Reading refuses a file other
+users can access, as ssh does, and refuses fields and profile names it doesn't know rather than
+guessing. A password comes from `--password-stdin`, `FLAGSHIP_PASSWORD` or a prompt with echo off,
+never from an argument that would end up in shell history; a token likewise comes from
+`--token-stdin` or `FLAGSHIP_TOKEN`. `login` checks a token with `GET /api/projects`: `401` means
+it is no good, while `403` means it is valid but scoped to one project, which is fine. Output
+never prints a token or cookie. `logout` ends the session on the server (`DELETE /api/session`)
+before forgetting it, so a copied config file stops working too. A `401` later on becomes advice
+to run `flagship login` again.
+
+Precedence is the command line, then the environment (`FLAGSHIP_SERVER`, `FLAGSHIP_TOKEN`,
+`FLAGSHIP_PROJECT`, `FLAGSHIP_ENVIRONMENT`, `FLAGSHIP_PROFILE`), then the profile, so CI needs no
+file at all. `--reason` and `--link` become the `Flagship-Reason` (percent-encoded) and
+`Flagship-Link` headers on every request of the command.
+
+Edits keep optimistic locking. A command that changes something reads the current version and
+sends it, so a change made by someone else in between gets `409 version_conflict`; `--if-version`
+pins the version you looked at instead. Targeting and segment files may carry extra fields, so
+the JSON `flag get` prints for one environment can be edited and passed back to `flag target` or
+`cr propose`. Segment edits start from the live segment and apply `--include`, `--exclude` and
+`--unlist`, and a key added to one list leaves the other, so it is never on both.
+
+`flagship eval` fetches the environment's ruleset (`GET .../ruleset`, the `flags:read` scope),
+validates it as an SDK would and evaluates it locally with `explain()` from `packages/core`.
+`explain()` takes the same steps as `evaluate()` and records them: the kill switch, each
+prerequisite with the variant it served, every rule tried with each clause's result (including
+clauses after the first that failed, and which segments matched), and the bucket a percentage
+split put the context in. Rules after the first match are not tried, as in `evaluate()`. It
+lives beside `evaluate()` and reuses its helpers, so the two can't drift; tests check that its
+evaluation equals `evaluate()` on 500 random rulesets and on every conformance case. It is not
+used on the SDK hot path. `--ruleset` evaluates a saved snapshot
+with no server at all.
+
 ## Change requests
 
 An environment can require approvals (`PUT .../environments/:env/approvals`, admins, zero to
