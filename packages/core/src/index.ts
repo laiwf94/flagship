@@ -10,3 +10,4 @@ export * from './evaluate.js';
 export * from './diff.js';
 export * from './lifecycle.js';
 export * from './plan.js';
+export * from './yaml.js';

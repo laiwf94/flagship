@@ -1,6 +1,7 @@
 import type { Command } from '../command.js';
 import { authCommands } from './auth.js';
 import { changeRequestCommands } from './changeRequests.js';
+import { codeCommands } from './code.js';
 import { evalCommands } from './evaluate.js';
 import { flagCommands } from './flags.js';
 import { segmentCommands } from './segments.js';
@@ -12,6 +13,7 @@ export const COMMANDS: readonly Command[] = [
   ...segmentCommands,
   ...changeRequestCommands,
   ...evalCommands,
+  ...codeCommands,
 ];
 
 /** Short names for command groups. */

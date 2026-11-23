@@ -343,6 +343,62 @@ describe('flag editor', () => {
     expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
   });
 
+  it('locks editing of a flag managed as code but keeps the kill switch, and can unlock it', async () => {
+    const managed = {
+      ...makeFlag(),
+      managedBy: {
+        source: 'github.com/acme/web/flags.yaml',
+        metadataVersion: 7,
+        environments: { production: 3 },
+        appliedAt: '2030-01-01T00:00:00Z',
+        appliedBy: 'ci',
+      },
+    };
+    const { api } = setup(managed);
+    api.set('DELETE /api/projects/default/flags/new-checkout/managed-by', () => ({
+      ...managed,
+      managedBy: null,
+    }));
+    const { user } = renderAt(URL);
+    const banner = await screen.findByText(/Managed as code by/);
+    expect(banner.textContent).toContain('github.com/acme/web/flags.yaml');
+    const sw = await screen.findByRole('switch', { name: 'On in Production' });
+    expect(sw).toHaveProperty('disabled', false);
+    expect(screen.getByLabelText('Serve when off or a prerequisite fails')).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Edit here instead' }));
+    await waitFor(() => {
+      expect(screen.queryByText(/Managed as code by/)).toBeNull();
+    });
+    expect(api.calls.some((c) => c.method === 'DELETE' && c.path.endsWith('/managed-by'))).toBe(
+      true,
+    );
+    expect(await screen.findByRole('button', { name: 'Add rule' })).toBeTruthy();
+  });
+
+  it('reports a failure to unlock a flag managed as code', async () => {
+    const { api } = setup({
+      ...makeFlag(),
+      managedBy: {
+        source: 'flags.yaml',
+        metadataVersion: 7,
+        environments: {},
+        appliedAt: '2030-01-01T00:00:00Z',
+        appliedBy: 'ci',
+      },
+    });
+    api.set('DELETE /api/projects/default/flags/new-checkout/managed-by', () =>
+      apiError(403, 'permission_denied', 'editors only'),
+    );
+    const { user } = renderAt(URL);
+    await user.click(await screen.findByRole('button', { name: 'Edit here instead' }));
+    expect(await screen.findByText('editors only')).toBeTruthy();
+    expect(screen.getByText(/Managed as code by/)).toBeTruthy();
+  });
+
   it('edits multi-variant weights and catches totals that are off', async () => {
     const flag = makeFlag();
     flag.type = 'string';

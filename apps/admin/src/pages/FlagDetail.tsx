@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router';
-import { api, type FlagDetail as Detail } from '../api';
+import { api, ApiError, type FlagDetail as Detail } from '../api';
 import { Icon } from '../components/icons';
-import { ErrorState, Loading } from '../components/ui';
+import { useToast } from '../components/toast';
+import { Button, ErrorState, Loading } from '../components/ui';
 import { Exposures } from '../flags/Exposures';
 import { FlagSettings } from '../flags/FlagSettings';
 import { History } from '../flags/History';
@@ -37,6 +39,8 @@ export function FlagDetail() {
   const { flag: key = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const { can } = useSession();
+  const toast = useToast();
+  const [releasing, setReleasing] = useState(false);
   const tab: TabKey = TABS.some((t) => t.key === params.get('tab'))
     ? (params.get('tab') as TabKey)
     : 'targeting';
@@ -64,7 +68,10 @@ export function FlagDetail() {
   }
   if (flag.data === undefined) return <Loading rows={6} label="Loading flag" />;
   const f = flag.data;
-  const canEdit = can('editor') && !f.archived;
+  const managed = f.managedBy ?? null;
+  // A flag managed as code is edited in its file; the kill switch still works here.
+  const canToggle = can('editor') && !f.archived;
+  const canEdit = canToggle && managed === null;
 
   return (
     <div className="page">
@@ -94,6 +101,43 @@ export function FlagDetail() {
             This flag is archived: SDKs no longer receive it. Restore it from Settings to edit it
             again.
           </p>
+        </div>
+      )}
+
+      {managed !== null && (
+        <div className="banner banner-info" role="status">
+          <Icon name="diff" />
+          <div>
+            <p>
+              Managed as code by <span className="mono">{managed.source}</span>: edit the file and
+              run <span className="mono">flagship apply</span>. Editing is locked here; the on and
+              off switch still works for incidents, and the next plan reports it as drift.
+            </p>
+            {can('editor') && (
+              <Button
+                busy={releasing}
+                onClick={() => {
+                  setReleasing(true);
+                  void api
+                    .releaseManagedBy(project.key, f.key)
+                    .then((next) => {
+                      flag.set(next);
+                      toast(`${f.key} is now edited here. Remove it from ${managed.source} too.`);
+                    })
+                    .catch((err: unknown) => {
+                      toast(err instanceof ApiError ? err.message : 'Could not unlock the flag.', {
+                        tone: 'critical',
+                      });
+                    })
+                    .finally(() => {
+                      setReleasing(false);
+                    });
+                }}
+              >
+                Edit here instead
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
@@ -142,6 +186,7 @@ export function FlagDetail() {
               envName={envName}
               ruleset={ruleset.data}
               canEdit={canEdit}
+              canToggle={canToggle}
               onSaved={(next) => {
                 flag.set(next);
                 ruleset.reload();
@@ -177,7 +222,7 @@ export function FlagDetail() {
             key={f.version}
             project={project.key}
             flag={f}
-            canEdit={can('editor')}
+            canEdit={can('editor') && managed === null}
             onSaved={(next) => {
               flag.set(next);
               ruleset.reload();

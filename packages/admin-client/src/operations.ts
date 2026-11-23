@@ -328,6 +328,12 @@ export type SetChangeNotesBody = {
   requireLink: boolean;
 };
 
+export type SetFlagManagedByBody = {
+  version: number;
+  source: string;
+  environments: { [key: string]: number };
+};
+
 export type SetKillSwitchBody = {
   enabled: boolean;
 };
@@ -516,6 +522,10 @@ export type GetFlagPath = {
   flag: Key;
 };
 
+export type GetProjectPath = {
+  project: Key;
+};
+
 export type GetRolloutGuardsPath = {
   project: Key;
   flag: Key;
@@ -656,6 +666,11 @@ export type RebaseChangeRequestPath = {
   id: string;
 };
 
+export type ReleaseFlagManagedByPath = {
+  project: Key;
+  flag: Key;
+};
+
 export type ReplayWebhookDeliveriesPath = {
   project: Key;
   id: string;
@@ -715,6 +730,11 @@ export type SearchAuditQuery = {
 export type SetChangeNotesPath = {
   project: Key;
   environment: Key;
+};
+
+export type SetFlagManagedByPath = {
+  project: Key;
+  flag: Key;
 };
 
 export type SetKillSwitchPath = {
@@ -900,6 +920,7 @@ export const OPERATIONS = {
     empty: false,
   },
   getOpenApiDocument: { method: 'GET', path: '/openapi.json', params: [], empty: false },
+  getProject: { method: 'GET', path: '/projects/{project}', params: ['project'], empty: false },
   getRolloutGuards: {
     method: 'GET',
     path: '/projects/{project}/flags/{flag}/environments/{environment}/rollout-plans/{id}/guards',
@@ -1019,6 +1040,12 @@ export const OPERATIONS = {
     params: ['project', 'id'],
     empty: false,
   },
+  releaseFlagManagedBy: {
+    method: 'DELETE',
+    path: '/projects/{project}/flags/{flag}/managed-by',
+    params: ['project', 'flag'],
+    empty: false,
+  },
   replayWebhookDeliveries: {
     method: 'POST',
     path: '/projects/{project}/webhooks/{id}/replay',
@@ -1072,6 +1099,12 @@ export const OPERATIONS = {
     method: 'PUT',
     path: '/projects/{project}/environments/{environment}/change-notes',
     params: ['project', 'environment'],
+    empty: false,
+  },
+  setFlagManagedBy: {
+    method: 'PUT',
+    path: '/projects/{project}/flags/{flag}/managed-by',
+    params: ['project', 'flag'],
     empty: false,
   },
   setKillSwitch: {
@@ -1415,6 +1448,17 @@ export abstract class AdminOperations {
   }
 
   /**
+   * A project with its environments and their protection
+   *
+   * GET /projects/{project}
+   *
+   * Token scope: projects:read.
+   */
+  getProject(args: { path: GetProjectPath }): Promise<unknown> {
+    return this.send(OPERATIONS.getProject, args);
+  }
+
+  /**
    * A rollout plan's guard metrics and their latest values
    *
    * GET /projects/{project}/flags/{flag}/environments/{environment}/rollout-plans/{id}/guards
@@ -1691,6 +1735,17 @@ export abstract class AdminOperations {
   }
 
   /**
+   * Hand a flag managed by code back to the console
+   *
+   * DELETE /projects/{project}/flags/{flag}/managed-by
+   *
+   * Token scope: flags:write.
+   */
+  releaseFlagManagedBy(args: { path: ReleaseFlagManagedByPath }): Promise<unknown> {
+    return this.send(OPERATIONS.releaseFlagManagedBy, args);
+  }
+
+  /**
    * Send failed deliveries in a time range again
    *
    * POST /projects/{project}/webhooks/{id}/replay
@@ -1805,6 +1860,20 @@ export abstract class AdminOperations {
    */
   setChangeNotes(args: { path: SetChangeNotesPath; body: SetChangeNotesBody }): Promise<unknown> {
     return this.send(OPERATIONS.setChangeNotes, args);
+  }
+
+  /**
+   * Mark a flag as managed by a flags file, with the versions its apply left
+   *
+   * PUT /projects/{project}/flags/{flag}/managed-by
+   *
+   * Token scope: flags:write.
+   */
+  setFlagManagedBy(args: {
+    path: SetFlagManagedByPath;
+    body: SetFlagManagedByBody;
+  }): Promise<unknown> {
+    return this.send(OPERATIONS.setFlagManagedBy, args);
   }
 
   /**

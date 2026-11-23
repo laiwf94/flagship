@@ -43,6 +43,7 @@ describe('migrations', () => {
       '016_webhook_replays',
       '017_api_tokens',
       '018_rollout_guards',
+      '019_flags_managed_by',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 

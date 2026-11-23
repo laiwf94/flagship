@@ -7,6 +7,7 @@ import {
 } from '@flagship/core';
 import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
+import type { ManagedBy } from '../db/schema.js';
 import { AppError, notFound } from '../errors.js';
 import { stopExperimentsForArchive } from './experiments.js';
 import { recordAudit, type Actor, type ChangeNote } from './audit.js';
@@ -47,6 +48,8 @@ export interface FlagView {
   updatedAt: string;
   /** Each environment's targeting, with its own version. */
   environments: Record<string, EnvConfig & { version: number; updatedAt: string }>;
+  /** The flags file that manages it, or null when the console does. */
+  managedBy: ManagedBy | null;
 }
 
 export interface FlagSummary {
@@ -67,6 +70,8 @@ export interface FlagSummary {
   lifecycle: Lifecycle;
   /** Start of the latest hour it was evaluated in the listed environment. */
   lastEvaluatedAt: string | null;
+  /** The source of the flags file that manages it, or null. */
+  managedBy: string | null;
 }
 
 export interface FlagInput {
@@ -235,6 +240,7 @@ export async function listFlags(
       'flags.type',
       'flags.client_side',
       'flags.version',
+      sql<string | null>`flags.managed_by->>'source'`.as('managed_source'),
       'flag_configs.version as targeting_version',
       sql<Date>`greatest(flags.updated_at, flag_configs.updated_at)`.as('updated_at'),
       STATUS.as('status'),
@@ -266,6 +272,7 @@ export async function listFlags(
     ruleCount: r.rule_count,
     lifecycle: lifecycleFromRow(r, now),
     lastEvaluatedAt: r.last_evaluated_at?.toISOString() ?? null,
+    managedBy: r.managed_source,
   }));
 }
 
@@ -313,6 +320,7 @@ export async function getFlag(db: Db, projectId: string, key: string): Promise<F
         { ...configView(c), version: c.version, updatedAt: c.updated_at.toISOString() },
       ]),
     ),
+    managedBy: flag.managed_by,
   };
 }
 
@@ -740,3 +748,94 @@ export const archiveFlag = (scope: Scope, key: string, version: number) =>
   setArchived(scope, key, true, version);
 export const restoreFlag = (scope: Scope, key: string, version: number) =>
   setArchived(scope, key, false, version);
+
+export interface ManagedByInput {
+  /** The flag's metadata version the caller last saw. */
+  version: number;
+  source: string;
+  environments: Record<string, number>;
+}
+
+/**
+ * Marks a flag as managed by a flags file, recording the versions the apply
+ * left. The flag's metadata version must still be the one the caller saw, and
+ * each environment must exist with a targeting version no newer than the
+ * one recorded could have seen. It does not bump the flag's version: nothing
+ * SDKs evaluate changes.
+ */
+export async function setManagedBy(
+  scope: Scope,
+  key: string,
+  input: ManagedByInput,
+): Promise<FlagView> {
+  await scope.db.transaction().execute(async (trx) => {
+    const flag = await lockFlag(trx, scope.project.id, key);
+    if (flag.version !== input.version) throw versionConflict(`flag "${key}"`, flag.version);
+    const configs = await trx
+      .selectFrom('flag_configs')
+      .innerJoin('environments', 'environments.id', 'flag_configs.environment_id')
+      .select(['environments.key', 'flag_configs.version'])
+      .where('flag_configs.flag_id', '=', flag.id)
+      .execute();
+    const live = new Map(configs.map((c) => [c.key, c.version]));
+    const issues = Object.entries(input.environments).flatMap(([env, version]) => {
+      const current = live.get(env);
+      if (current === undefined) {
+        return [{ path: `environments.${env}`, message: `no environment "${env}"` }];
+      }
+      if (version > current) {
+        return [
+          {
+            path: `environments.${env}`,
+            message: `targeting in ${env} is at version ${current}, not ${version}`,
+          },
+        ];
+      }
+      return [];
+    });
+    if (issues.length > 0) {
+      throw new AppError('invalid_argument', 'the recorded versions do not match the flag', issues);
+    }
+    const record: ManagedBy = {
+      source: input.source,
+      metadataVersion: input.version,
+      environments: input.environments,
+      appliedAt: new Date().toISOString(),
+      appliedBy: scope.actor.name,
+    };
+    await trx
+      .updateTable('flags')
+      .set({ managed_by: JSON.stringify(record) })
+      .where('id', '=', flag.id)
+      .execute();
+    await recordAudit(trx, {
+      projectId: scope.project.id,
+      actor: scope.actor,
+      action: 'flag.code.manage',
+      targetType: 'flag',
+      targetKey: key,
+      before: { managedBy: flag.managed_by?.source ?? null },
+      after: { managedBy: record.source },
+    });
+  });
+  return getFlag(scope.db, scope.project.id, key);
+}
+
+/** Hands a flag back to the console. Releasing a flag nothing manages is a no-op. */
+export async function releaseManagedBy(scope: Scope, key: string): Promise<FlagView> {
+  await scope.db.transaction().execute(async (trx) => {
+    const flag = await lockFlag(trx, scope.project.id, key);
+    if (flag.managed_by === null) return;
+    await trx.updateTable('flags').set({ managed_by: null }).where('id', '=', flag.id).execute();
+    await recordAudit(trx, {
+      projectId: scope.project.id,
+      actor: scope.actor,
+      action: 'flag.code.release',
+      targetType: 'flag',
+      targetKey: key,
+      before: { managedBy: flag.managed_by.source },
+      after: { managedBy: null },
+    });
+  });
+  return getFlag(scope.db, scope.project.id, key);
+}

@@ -24,7 +24,9 @@ import {
   createFlag,
   getFlag,
   listFlags,
+  releaseManagedBy,
   restoreFlag,
+  setManagedBy,
   setKillSwitch,
   updateConfig,
   updateFlag,
@@ -152,6 +154,11 @@ const scheduleInput = z.strictObject({
   change: changeSchema,
 });
 const versionInput = z.strictObject({ version });
+const managedByInput = z.strictObject({
+  version,
+  source: z.string().trim().min(1).max(200),
+  environments: z.record(keySchema, z.int().min(1)),
+});
 const killSwitchInput = z.strictObject({ enabled: z.boolean() });
 const exposureQuery = z.object({
   environment: keySchema,
@@ -308,6 +315,43 @@ export function flagRoutes(ctx: Context) {
         const { project, flag } = parse(flagParams, request.params, 'path');
         const body = parse(versionInput, request.body, 'restore');
         return restoreFlag(await scope(request, project), flag, body.version);
+      },
+    );
+
+    api.put(
+      '/projects/:project/flags/:flag/managed-by',
+      {
+        config: {
+          role: 'editor',
+          scope: 'flags:write',
+          openapi: op(
+            'setFlagManagedBy',
+            'Mark a flag as managed by a flags file, with the versions its apply left',
+            { params: flagParams, body: managedByInput },
+          ),
+        },
+      },
+      async (request) => {
+        const { project, flag } = parse(flagParams, request.params, 'path');
+        const body = parse(managedByInput, request.body, 'managedBy');
+        return setManagedBy(await scope(request, project), flag, body);
+      },
+    );
+
+    api.delete(
+      '/projects/:project/flags/:flag/managed-by',
+      {
+        config: {
+          role: 'editor',
+          scope: 'flags:write',
+          openapi: op('releaseFlagManagedBy', 'Hand a flag managed by code back to the console', {
+            params: flagParams,
+          }),
+        },
+      },
+      async (request) => {
+        const { project, flag } = parse(flagParams, request.params, 'path');
+        return releaseManagedBy(await scope(request, project), flag);
       },
     );
 

@@ -90,6 +90,7 @@ export function Targeting({
   envName,
   ruleset,
   canEdit,
+  canToggle = canEdit,
   onSaved,
   onReload,
 }: {
@@ -99,6 +100,8 @@ export function Targeting({
   envName: string;
   ruleset: Ruleset;
   canEdit: boolean;
+  /** Whether the on and off switch works; it stays available where editing is locked. */
+  canToggle?: boolean;
   onSaved: (flag: FlagDetail) => void;
   onReload: () => void;
 }) {
@@ -309,7 +312,7 @@ export function Targeting({
         <Card>
           <Switch
             checked={draft.enabled}
-            disabled={!canEdit || busy}
+            disabled={!canToggle || busy}
             onChange={(next) => {
               setNoteErrors({});
               setConfirmKill(next);

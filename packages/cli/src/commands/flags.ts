@@ -41,9 +41,19 @@ export interface FlagView {
   createdAt: string;
   updatedAt: string;
   environments: Record<string, EnvTargeting>;
+  managedBy: ManagedBy | null;
 }
 
-interface FlagSummary {
+/** The flags file that manages a flag, and the versions its last apply left. */
+export interface ManagedBy {
+  source: string;
+  metadataVersion: number;
+  environments: Record<string, number>;
+  appliedAt: string;
+  appliedBy: string;
+}
+
+export interface FlagSummary {
   key: string;
   name: string;
   type: Flag['type'];
@@ -54,6 +64,7 @@ interface FlagSummary {
   ruleCount: number;
   lifecycle: Lifecycle;
   lastEvaluatedAt: string | null;
+  managedBy: string | null;
 }
 
 export const TARGETING_FIELDS = [

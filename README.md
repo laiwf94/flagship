@@ -168,7 +168,7 @@ $ pnpm --filter @flagship/admin dev   # UI on :5173, proxying to a server on :80
 | `@flagship/browser`          | web apps    | client key; the server evaluates the user's context and the SDK caches the values for synchronous reads; refetches when the version changes                          |
 | `@flagship/core`             | everything  | model, validation, evaluator; also used by the admin UI's preview                                                                                                    |
 | `@flagship/admin-client`     | tooling     | the admin API over `fetch`, one typed method per operation, generated from `GET /api/openapi.json`; errors are `AdminApiError` with the server's code                |
-| `@flagship/cli`              | terminals   | the `flagship` command: profiles, flags, segments, change requests, `eval` with a trace, `export`; `--json` everywhere                                               |
+| `@flagship/cli`              | terminals   | the `flagship` command: profiles, flags, segments, change requests, `eval` with a trace, `export`, flags as code; `--json` everywhere                                |
 
 ## Command line
 
@@ -206,6 +206,41 @@ concurrent change gets `409` instead of being overwritten. `eval` fetches the ru
 a saved one with `--ruleset`) and evaluates it locally with `@flagship/core`, showing each rule
 tried, each clause's result and the bucket of a split. `flagship <command> --help` lists the
 options.
+
+### Flags as code
+
+Flags can live in a YAML file in your repository instead of the console. `flagship plan` shows
+what the file would change, marking anything edited outside the file since the last apply as
+drift; `flagship apply` makes the server match, sending the version the plan read with every
+write, and proposes a change request (once) where an environment is protected. `flagship pull`
+writes existing flags out as a file to start from.
+
+```yaml
+version: 1
+project: shop
+source: github.com/acme/shop/flags.yaml
+flags:
+  new-checkout:
+    name: New checkout
+    environments:
+      development:
+        enabled: true
+        rules:
+          - id: staff
+            clauses: [{ attribute: email, operator: endsWith, values: ['@acme.com'] }]
+            serve: on
+        fallthrough: off
+```
+
+```console
+$ flagship plan                 # flags.yaml by default; --check exits 3 when there are changes
+$ flagship plan --out plan.json && flagship apply --plan plan.json
+$ flagship apply --prune        # also archive flags the file no longer lists
+```
+
+Mistakes are reported with the file's line numbers before anything is written, including what
+the server would refuse: unknown variants or segments and prerequisite cycles. A flag the file
+manages is locked in the console, apart from the kill switch.
 
 ## HTTP API
 
@@ -247,6 +282,7 @@ Scopes: `flags`, `segments`, `change-requests` and `experiments` each `:read` an
 | `GET/POST /api/users`, `PATCH /api/users/:id`                               | people and roles (admin)                                                                     |
 | `GET/POST /api/tokens`, `DELETE /api/tokens/:id`                            | your API tokens; the secret is returned once (an admin can revoke anyone's)                  |
 | `GET/POST /api/projects`, `POST /api/projects/:p/environments`              | projects and environments                                                                    |
+| `GET /api/projects/:p`                                                      | one project with its environments and their protection                                       |
 | `GET/POST/DELETE /api/projects/:p/environments/:e/api-keys[/:id]`           | SDK keys; the secret is returned once (admin)                                                |
 | `GET /api/projects/:p/export`                                               | the whole project as one JSON document, streamed (admin)                                     |
 | `POST /api/projects/import?key=&name=`                                      | create a project from an export, validated first (admin)                                     |
@@ -255,6 +291,7 @@ Scopes: `flags`, `segments`, `change-requests` and `experiments` each `:read` an
 | `PUT /api/projects/:p/flags/:f/environments/:e`                             | replace targeting (with that environment's `version`)                                        |
 | `POST /api/projects/:p/flags/:f/environments/:e/kill-switch`                | `{"enabled": false}`, no version needed                                                      |
 | `POST /api/projects/:p/flags/:f/archive`, `/restore`                        | archive and restore                                                                          |
+| `PUT/DELETE /api/projects/:p/flags/:f/managed-by`                           | mark a flag as managed by a flags file (with the versions an apply left), or release it      |
 | `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                                                            |
 | `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step                                           |
 | `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout                                 |

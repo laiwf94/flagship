@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { own, rulesetChecksum, type Flag, type Ruleset, type Segment } from '@flagship/core';
 import { sql } from 'kysely';
 import type { Db } from '../db/database.js';
+import type { ManagedBy } from '../db/schema.js';
 
 export const CHANGES_CHANNEL = 'flagship_changes';
 
@@ -26,6 +27,7 @@ export interface FlagRow {
   client_side: boolean;
   version: number;
   archived_at: Date | null;
+  managed_by: ManagedBy | null;
   created_at: Date;
   updated_at: Date;
 }

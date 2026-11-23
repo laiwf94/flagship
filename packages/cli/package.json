@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@flagship/admin-client": "workspace:*",
-    "@flagship/core": "workspace:*"
+    "@flagship/core": "workspace:*",
+    "zod": "4.6.6"
   }
 }

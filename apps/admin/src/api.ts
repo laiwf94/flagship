@@ -89,6 +89,16 @@ export interface FlagDetail {
   updatedAt: string;
   /** Each environment's targeting, with its own version. */
   environments: Record<string, EnvConfig & { version: number; updatedAt: string }>;
+  /** The flags file that manages it (flagship apply), or null when the console does. */
+  managedBy?: ManagedBy | null;
+}
+
+export interface ManagedBy {
+  source: string;
+  metadataVersion: number;
+  environments: Record<string, number>;
+  appliedAt: string;
+  appliedBy: string;
 }
 
 export interface SegmentView {
@@ -505,6 +515,8 @@ export const api = {
     request<FlagDetail>('POST', `/api/projects/${enc(project)}/flags/${enc(key)}/restore`, {
       version,
     }),
+  releaseManagedBy: (project: string, key: string) =>
+    request<FlagDetail>('DELETE', `/api/projects/${enc(project)}/flags/${enc(key)}/managed-by`),
   ruleset: (project: string, env: string) =>
     request<Ruleset>('GET', `/api/projects/${enc(project)}/environments/${enc(env)}/ruleset`),
 

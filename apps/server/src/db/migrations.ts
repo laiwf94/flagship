@@ -632,4 +632,13 @@ export const migrations: Record<string, Migration> = {
     `CREATE INDEX rollout_plans_guarded_idx ON rollout_plans (guard_checked_at NULLS FIRST)
       WHERE status = 'active' AND plan ? 'guards'`,
   ]),
+  // Flags as code: a flag `flagship apply` manages carries the file it came
+  // from and the versions that apply left, so a later plan can tell a change
+  // made outside the file (drift) from one made in it. NULL means the console
+  // owns the flag. It is not part of what SDKs evaluate, so setting it does
+  // not bump the flag's version.
+  '019_flags_managed_by': statements([
+    `ALTER TABLE flags ADD COLUMN managed_by jsonb
+      CHECK (managed_by IS NULL OR jsonb_typeof(managed_by) = 'object')`,
+  ]),
 };

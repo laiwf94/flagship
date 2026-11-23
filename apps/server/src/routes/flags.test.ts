@@ -650,3 +650,95 @@ describe('audit', () => {
     }
   });
 });
+
+describe('managed by code', () => {
+  const managed = (flag: string) => `${P}/flags/${flag}/managed-by`;
+
+  it('records the file and versions without bumping the flag, and lists the source', async () => {
+    const flag = await create('code-managed');
+    const before = await rulesetVersion();
+    const res = await editor.request('PUT', managed('code-managed'), {
+      version: flag.version,
+      source: 'github.com/acme/web/flags.yaml',
+      environments: { production: 1, development: 1 },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({
+      version: flag.version,
+      managedBy: {
+        source: 'github.com/acme/web/flags.yaml',
+        metadataVersion: flag.version,
+        environments: { development: 1, production: 1 },
+        appliedBy: 'eddie',
+      },
+    });
+    expect(await rulesetVersion()).toBe(before);
+    const list = await editor.request('GET', `${P}/flags?environment=production&q=code-managed`);
+    expect(list.json().flags[0].managedBy).toBe('github.com/acme/web/flags.yaml');
+    const entry = await t.db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('target_key', '=', 'code-managed')
+      .orderBy('id', 'desc')
+      .executeTakeFirstOrThrow();
+    expect(entry).toMatchObject({
+      action: 'flag.code.manage',
+      before: { managedBy: null },
+      after: { managedBy: 'github.com/acme/web/flags.yaml' },
+    });
+  });
+
+  it('refuses a stale version, unknown environments and versions from the future', async () => {
+    const flag = await create('code-checks');
+    const stale = await editor.request('PUT', managed('code-checks'), {
+      version: flag.version + 1,
+      source: 'flags.yaml',
+      environments: {},
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe('version_conflict');
+    const bad = await editor.request('PUT', managed('code-checks'), {
+      version: flag.version,
+      source: 'flags.yaml',
+      environments: { staging: 1, production: 5 },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.details).toEqual([
+      { path: 'environments.staging', message: 'no environment "staging"' },
+      {
+        path: 'environments.production',
+        message: 'targeting in production is at version 1, not 5',
+      },
+    ]);
+    const empty = await editor.request('PUT', managed('code-checks'), {
+      version: flag.version,
+      source: '  ',
+      environments: {},
+    });
+    expect(empty.statusCode).toBe(400);
+    const viewerRes = await viewer.request('PUT', managed('code-checks'), {
+      version: flag.version,
+      source: 'flags.yaml',
+      environments: {},
+    });
+    expect(viewerRes.statusCode).toBe(403);
+  });
+
+  it('hands a flag back to the console, once', async () => {
+    const flag = await create('code-release');
+    await editor.request('PUT', managed('code-release'), {
+      version: flag.version,
+      source: 'flags.yaml',
+      environments: { production: 1 },
+    });
+    const count = await auditCount();
+    const res = await editor.request('DELETE', managed('code-release'));
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().managedBy).toBeNull();
+    expect(await auditCount()).toBe(count + 1);
+    const again = await editor.request('DELETE', managed('code-release'));
+    expect(again.statusCode).toBe(200);
+    expect(await auditCount()).toBe(count + 1);
+    expect((await editor.request('DELETE', managed('missing-flag'))).statusCode).toBe(404);
+  });
+});

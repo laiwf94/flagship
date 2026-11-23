@@ -10,6 +10,7 @@ import {
   createProject,
   getEnvironment,
   getProject,
+  getProjectView,
   listProjects,
   setChangeNotes,
   setRequiredApprovals,
@@ -61,6 +62,22 @@ export function projectRoutes(ctx: Context) {
       async () => ({
         projects: await listProjects(ctx.db),
       }),
+    );
+
+    api.get(
+      '/projects/:project',
+      {
+        config: {
+          scope: 'projects:read',
+          openapi: op('getProject', 'A project with its environments and their protection', {
+            params: projectParams,
+          }),
+        },
+      },
+      async (request) => {
+        const { project } = parse(projectParams, request.params, 'path');
+        return getProjectView(ctx.db, project);
+      },
     );
 
     api.post(

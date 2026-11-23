@@ -125,9 +125,15 @@ function detailLines(details: unknown): string[] {
   if (!Array.isArray(details)) return [];
   return details.flatMap((d: unknown) => {
     if (typeof d !== 'object' || d === null) return [];
-    const { path, message } = d as { path?: unknown; message?: unknown };
+    const { path, message, file, line } = d as {
+      path?: unknown;
+      message?: unknown;
+      file?: unknown;
+      line?: unknown;
+    };
     if (typeof message !== 'string') return [];
-    return [`  ${typeof path === 'string' && path !== '' ? `${path}: ` : ''}${message}`];
+    const where = typeof file === 'string' && typeof line === 'number' ? `${file}:${line}: ` : '';
+    return [`  ${where}${typeof path === 'string' && path !== '' ? `${path}: ` : ''}${message}`];
   });
 }
 

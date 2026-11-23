@@ -98,8 +98,22 @@ export interface FlagsTable {
   client_side: boolean;
   version: Generated<number>;
   archived_at: Date | null;
+  /** Set while flags-as-code manages the flag; see ManagedBy. */
+  managed_by: ColumnType<ManagedBy | null, string | null | undefined, string | null>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
+}
+
+/** Which flags file manages a flag, and the versions its last apply left. */
+export interface ManagedBy {
+  /** What the file calls itself, e.g. "github.com/acme/web/flags.yaml". */
+  source: string;
+  /** The flag's metadata version after the last apply. */
+  metadataVersion: number;
+  /** Targeting version per environment key after the last apply, for the environments the file manages. */
+  environments: Record<string, number>;
+  appliedAt: string;
+  appliedBy: string;
 }
 
 export interface FlagConfigsTable {

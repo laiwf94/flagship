@@ -49,6 +49,16 @@ describe('projects and environments', () => {
     });
   });
 
+  it('shows one project with its environments', async () => {
+    const all = (await editor.request('GET', '/api/projects')).json().projects[0];
+    const one = await editor.request('GET', '/api/projects/default');
+    expect(one.statusCode).toBe(200);
+    expect(one.json()).toEqual(all);
+    const missing = await editor.request('GET', '/api/projects/nope');
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error.code).toBe('not_found');
+  });
+
   it('lets admins create projects and environments, and nobody else', async () => {
     const denied = await editor.request('POST', '/api/projects', { key: 'shop', name: 'Shop' });
     expect(denied.statusCode).toBe(403);

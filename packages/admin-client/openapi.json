@@ -111,6 +111,31 @@
         "x-flagship-role": "admin"
       }
     },
+    "/projects/{project}": {
+      "get": {
+        "operationId": "getProject",
+        "summary": "A project with its environments and their protection",
+        "tags": ["projects"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["projects:read"] }],
+        "x-flagship-scope": "projects:read",
+        "x-flagship-role": "viewer"
+      }
+    },
     "/projects/{project}/audit": {
       "get": {
         "operationId": "searchAudit",
@@ -1922,6 +1947,74 @@
         "x-flagship-role": "viewer"
       }
     },
+    "/projects/{project}/flags/{flag}/managed-by": {
+      "put": {
+        "operationId": "setFlagManagedBy",
+        "summary": "Mark a flag as managed by a flags file, with the versions its apply left",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SetFlagManagedByBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      },
+      "delete": {
+        "operationId": "releaseFlagManagedBy",
+        "summary": "Hand a flag managed by code back to the console",
+        "tags": ["flags"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
+        "x-flagship-scope": "flags:write",
+        "x-flagship-role": "editor"
+      }
+    },
     "/projects/{project}/flags/{flag}/restore": {
       "post": {
         "operationId": "restoreFlag",
@@ -3241,6 +3334,20 @@
           "requireLink": { "type": "boolean" }
         },
         "required": ["requireReason", "requireLink"],
+        "additionalProperties": false
+      },
+      "SetFlagManagedByBody": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "source": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "environments": {
+            "type": "object",
+            "propertyNames": { "$ref": "#/components/schemas/Key" },
+            "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+          }
+        },
+        "required": ["version", "source", "environments"],
         "additionalProperties": false
       },
       "SetKillSwitchBody": {

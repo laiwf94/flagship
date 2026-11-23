@@ -634,8 +634,9 @@ against the real server over HTTP.
 
 ## The command line
 
-`packages/cli` is the `flagship` command, built on `node:util` `parseArgs` and the generated
-admin client, with no other dependencies. Each command is a small declaration (its words, its
+`packages/cli` is the `flagship` command, built on `node:util` `parseArgs`, the generated
+admin client and `@flagship/core`, plus Zod for the flags-file schema (already the core's only
+dependency). Each command is a small declaration (its words, its
 options with help text, how many arguments it takes, and a `run` function returning both a JSON
 value and text), so help, strict option parsing and `--json` work the same everywhere. The
 runner finds the command by its leading words, skipping the values of global options, then
@@ -680,6 +681,64 @@ lives beside `evaluate()` and reuses its helpers, so the two can't drift; tests 
 evaluation equals `evaluate()` on 500 random rulesets and on every conformance case. It is not
 used on the SDK hot path. `--ruleset` evaluates a saved snapshot
 with no server at all.
+
+## Flags as code
+
+A flags file is YAML read by `parseYaml` in `packages/core/src/yaml.ts`, a strict subset written
+for this rather than a general YAML library: block mappings and sequences, one-line flow
+collections, plain, quoted and block scalars, and comments. Scalars resolve as in the YAML 1.2
+JSON schema, so `on`, `off` and `yes` are strings, which matters when variants are called `on`
+and `off`. Anchors, aliases, tags, merge keys, complex keys, multi-line plain scalars,
+multi-line flow collections, tabs in indentation and second documents are refused with their
+line and column instead of being half supported; duplicate keys are errors, and a `__proto__`
+key is ordinary data. The parser records the line every path starts on, and `stringifyYaml`
+writes any JSON value back so that it parses to the same value (a property test checks 500
+random values).
+
+`packages/cli/src/flagsfile.ts` checks the document against a Zod schema built from the core's
+own rule, serve, variant and prerequisite schemas, and fills in what the server would: a name
+equal to the key, `on`/`off` variants for boolean flags, the off variant whose value is `false`.
+A variant key may stand for `{variant: key}` wherever a serve goes. Every issue carries the file,
+the line and the path; unknown fields point at their own line, and for a union no branch
+matched (a serve) the branch that got furthest explains the problem. Only the environments a
+flag lists are managed; others keep whatever they have.
+
+`flagship plan` reads the project (`GET /api/projects/:p`, which a project-scoped CI token may
+call), each flag the file names, the flags that file managed before, and every environment's
+ruleset. It compares metadata and each listed environment's targeting with `diff()` from
+`packages/core`, then builds each environment's ruleset as it would be afterwards and runs
+`validateRuleset` on it, so unknown variants and segments, prerequisites on missing flags and
+cycles are reported at the file's lines before anything is written. A problem in live targeting
+the file leaves alone (a variant removed that another environment still serves) is reported on
+the flag's `variants`.
+
+A flag an apply touched records `managedBy` (`PUT .../flags/:f/managed-by`): the file's
+`source`, the metadata version and each managed environment's targeting version after the
+apply. It is a column beside the flag, not part of what SDKs evaluate, so it doesn't bump the
+flag's version. Drift is a difference whose live side has a newer version than the record: it
+was changed outside the file, by the console's kill switch or the API. A difference at the
+recorded version is just an edit to the file. A flag the record names under this source but the
+file no longer lists is reported, and archived with `--prune`. A flag another source manages is
+refused unless `--take-over`.
+
+`flagship apply` plans and then writes, or applies a plan saved with `plan --out` exactly as
+reviewed. Every write sends the version the plan read (or the version the previous write
+returned), so anything changed in between stops apply with `409 version_conflict` and the advice
+to plan again; nothing is overwritten. Writes run in phases that are each valid on their own:
+creates and restores; metadata, keeping any variants the file drops while targeting still
+serves them; targeting; then removing those variants; archives; and the record. Protected
+environments get a change request instead of a write, and a plan first looks for an open request
+for that flag and environment that already proposes the same targeting, so applying twice
+proposes once. Changes are recorded with the reason `flagship apply from <source>` unless
+`--reason` gives one. A second apply with nothing to change writes nothing at all, not even an
+audit entry. `plan --check` exits with status 3 when applying would change something, for a
+scheduled drift check.
+
+The console locks a flag that has a record: targeting, rules and settings are read-only, with a
+banner naming the file. The kill switch stays available for incidents (the next plan shows that
+as drift), and an editor can hand the flag back to the console (`DELETE .../managed-by`). The
+lock is in the console, not the API: the API's own version checks already protect edits, and
+the record lets plan report anything that went around the file.
 
 ## Change requests
 

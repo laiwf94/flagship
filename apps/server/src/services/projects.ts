@@ -72,15 +72,19 @@ export async function getEnvironment(
   return row;
 }
 
-export async function listProjects(db: Db): Promise<ProjectView[]> {
-  const projects = await db
-    .selectFrom('projects')
-    .select(['id', 'key', 'name'])
-    .orderBy('key')
-    .execute();
+export async function listProjects(db: Db, only?: string): Promise<ProjectView[]> {
+  let query = db.selectFrom('projects').select(['id', 'key', 'name']).orderBy('key');
+  if (only !== undefined) query = query.where('key', '=', only);
+  const projects = await query.execute();
+  if (projects.length === 0) return [];
   const envs = await db
     .selectFrom('environments')
     .select(['project_id', 'key', 'name', 'required_approvals', 'require_reason', 'require_link'])
+    .where(
+      'project_id',
+      'in',
+      projects.map((p) => p.id),
+    )
     .orderBy('created_at')
     .orderBy('key')
     .execute();
@@ -97,6 +101,13 @@ export async function listProjects(db: Db): Promise<ProjectView[]> {
         requireLink: e.require_link,
       })),
   }));
+}
+
+/** One project with its environments and their protection settings. */
+export async function getProjectView(db: Db, key: string): Promise<ProjectView> {
+  const [project] = await listProjects(db, key);
+  if (project === undefined) throw notFound(`project "${key}"`);
+  return project;
 }
 
 async function insertEnvironment(
