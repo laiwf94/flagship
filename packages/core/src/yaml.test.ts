@@ -306,7 +306,7 @@ describe('parseYaml', () => {
     });
 
     it('fails cleanly on input far deeper than the stack allows', () => {
-      expect(errorOf(blockMapping(20000)).message).toContain('nesting is deeper');
+      expect(errorOf(`${'- '.repeat(50000)}x`).message).toContain('nesting is deeper');
       expect(errorOf(`a: ${'['.repeat(100000)}`).message).toContain('nesting is deeper');
     });
   });
