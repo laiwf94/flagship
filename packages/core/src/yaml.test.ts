@@ -272,6 +272,45 @@ describe('parseYaml', () => {
     expect(e.message).toMatch(/^line \d+, column \d+: /);
   });
 
+  describe('nesting depth', () => {
+    const deepest = (v: YamlValue, key: string | number): number => {
+      let n = 0;
+      for (let cur: YamlValue | undefined = v; cur !== null && typeof cur === 'object'; n++) {
+        cur = (cur as Record<string | number, YamlValue>)[key];
+      }
+      return n;
+    };
+    const blockMapping = (n: number) =>
+      Array.from({ length: n }, (_, i) => `${' '.repeat(i * 2)}a:`).join('\n') + ' 1';
+    const blockList = (n: number) =>
+      Array.from({ length: n }, (_, i) => `${' '.repeat(i * 2)}-`).join('\n') + ' 1';
+
+    it('reads collections nested up to the limit', () => {
+      expect(deepest(value(blockMapping(64)), 'a')).toBe(64);
+      expect(deepest(value(blockList(64)), 0)).toBe(64);
+      const flow = value(`a: ${'['.repeat(63)}${']'.repeat(63)}`) as { a: YamlValue };
+      expect(deepest(flow.a, 0)).toBe(63);
+      expect(deepest(value(`${'- '.repeat(64)}x`), 0)).toBe(64);
+    });
+
+    it.each([
+      ['block mappings', blockMapping(65), 65],
+      ['block lists', blockList(65), 65],
+      ['compact lists', `${'- '.repeat(65)}x`, 1],
+      ['flow lists', `a: ${'['.repeat(65)}${']'.repeat(65)}`, 1],
+      ['flow mappings', `a: ${'{b: '.repeat(65)}1${'}'.repeat(65)}`, 1],
+    ])('refuses %s nested past the limit with a YamlError', (_name, text, line) => {
+      const e = errorOf(text);
+      expect(e.line).toBe(line);
+      expect(e.message).toContain('nesting is deeper than 64 levels');
+    });
+
+    it('fails cleanly on input far deeper than the stack allows', () => {
+      expect(errorOf(blockMapping(20000)).message).toContain('nesting is deeper');
+      expect(errorOf(`a: ${'['.repeat(100000)}`).message).toContain('nesting is deeper');
+    });
+  });
+
   it('reports the column of the problem', () => {
     const e = errorOf('flags:\n  a: [1, 2\n');
     expect([e.line, e.column]).toEqual([2, 6]);

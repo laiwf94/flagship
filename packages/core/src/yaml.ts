@@ -45,6 +45,8 @@ interface Line {
 const NUMBER = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?$/;
 const INDICATORS = new Set(['&', '*', '!', '|', '>', '%', '@', '`', '?']);
 const FLOW_END = new Set([',', ']', '}']);
+/** How deep collections may nest; parsing recurses, so this keeps a hostile file from overflowing the stack. */
+const MAX_DEPTH = 64;
 
 /** Resolves a plain scalar as the YAML 1.2 JSON schema does, with `~` and empty as null. */
 function resolvePlain(s: string): YamlValue {
@@ -113,6 +115,7 @@ function parentPath(path: string): string | undefined {
 /** A cursor over one line's text, for keys, quoted scalars and flow collections. */
 class Inline {
   pos = 0;
+  depth = 0;
   constructor(
     readonly s: string,
     readonly line: number,
@@ -251,6 +254,19 @@ class Inline {
 
   flowSequence(path: string): YamlValue[] {
     const start = this.pos;
+    this.enter(start);
+    try {
+      return this.flowItems(path, start);
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private enter(at: number): void {
+    if (++this.depth > MAX_DEPTH) this.fail(`nesting is deeper than ${MAX_DEPTH} levels`, at);
+  }
+
+  private flowItems(path: string, start: number): YamlValue[] {
     this.pos++;
     const out: YamlValue[] = [];
     for (;;) {
@@ -285,6 +301,15 @@ class Inline {
 
   flowMapping(path: string): Record<string, YamlValue> {
     const start = this.pos;
+    this.enter(start);
+    try {
+      return this.flowEntries(path, start);
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private flowEntries(path: string, start: number): Record<string, YamlValue> {
     this.pos++;
     const out: Record<string, YamlValue> = {};
     let first = true;
@@ -361,6 +386,7 @@ function isMarker(line: Line): boolean {
 
 class Parser {
   i = 0;
+  depth = 0;
   readonly paths = new Map<string, number>();
 
   constructor(readonly lines: Line[]) {}
@@ -408,6 +434,17 @@ class Parser {
   block(indent: number, path: string): YamlValue {
     const line = this.peek();
     if (line === undefined || isMarker(line)) return null;
+    if (++this.depth > MAX_DEPTH) {
+      this.fail(`nesting is deeper than ${MAX_DEPTH} levels`, line);
+    }
+    try {
+      return this.node(line, indent, path);
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private node(line: Line, indent: number, path: string): YamlValue {
     this.checkIndent(line);
     if (line.text === '-' || line.text.startsWith('- ')) return this.sequence(indent, path);
     if (mappingKey(line, this.paths) !== undefined) return this.mapping(indent, path);

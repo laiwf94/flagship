@@ -186,6 +186,14 @@ describe('readFlagsFile', () => {
         message: 'column 8: a [ list ] must close on the same line',
       },
     ]);
+    expect(issues(['version: 1', `flags: ${'['.repeat(100000)}`])).toEqual([
+      {
+        file: 'flags.yaml',
+        line: 2,
+        path: '',
+        message: 'column 72: nesting is deeper than 64 levels',
+      },
+    ]);
     expect(issues(['- just', '- a list'])[0]?.message).toContain('must be a mapping');
     expect(issues([])[0]?.message).toContain('must be a mapping');
     const e = (() => {
