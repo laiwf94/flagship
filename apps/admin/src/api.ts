@@ -74,6 +74,27 @@ export interface EnvConfig {
   fallthrough: Serve;
 }
 
+/** A run of source lines around references to a flag; lines is empty when the scan sent no source. */
+export interface CodeHunk {
+  path: string;
+  startLine: number;
+  lines: string[];
+  matchLines: number[];
+}
+
+export interface FlagCodeBranch {
+  repository: string;
+  branch: string;
+  commit: string | null;
+  urlTemplate: string | null;
+  filesScanned: number;
+  scannedAt: string;
+  uploadedBy: string;
+  /** Every reference found, which may be more than the hunks kept. */
+  count: number;
+  hunks: CodeHunk[];
+}
+
 export interface FlagDetail {
   key: string;
   name: string;
@@ -240,7 +261,8 @@ export type TokenScope =
   | 'sdk-keys:read'
   | 'sdk-keys:write'
   | 'webhooks:read'
-  | 'webhooks:write';
+  | 'webhooks:write'
+  | 'code-references:write';
 
 export interface ApiToken {
   id: string;
@@ -574,6 +596,11 @@ export const api = {
       `/api/projects/${enc(project)}/flags/${enc(key)}/environments/${enc(env)}/rollout-plans/${enc(id)}/${action}`,
       {},
       note,
+    ),
+  codeReferences: (project: string, key: string) =>
+    request<{ branches: FlagCodeBranch[] }>(
+      'GET',
+      `/api/projects/${enc(project)}/flags/${enc(key)}/code-references`,
     ),
   exposures: (project: string, key: string, env: string, hours: number) =>
     request<ExposureSummary>(

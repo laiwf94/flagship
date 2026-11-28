@@ -740,6 +740,48 @@ as drift), and an editor can hand the flag back to the console (`DELETE .../mana
 lock is in the console, not the API: the API's own version checks already protect edits, and
 the record lets plan report anything that went around the file.
 
+## Code references
+
+`flagship scan` walks the repository on the main thread and hands batches of 128 paths to worker
+threads, which read each file, skip binary ones (a NUL in the first 8,000 bytes, as git decides)
+and ones over 1 MiB, and find candidates with one pattern: a key-shaped token between matching
+quotes or backticks. A set lookup decides whether it is a flag, so the cost does not grow with
+the number of flags, and a key inside a longer string (`"new-checkout-2"`) is not a reference.
+One worker starts at first; another starts whenever every running worker has four batches
+queued, up to the CPU count (at most 8), so a small repository costs one thread. Results are
+merged in walk order and the walk is sorted, so the same tree always gives the same upload.
+
+The walk honours `.gitignore` files the way git does, without running git:
+`packages/cli/src/gitignore.ts` compiles each pattern (anchoring, `**`, bracket expressions
+with ranges and POSIX classes, `!`, directory-only patterns and escapes) to a regular
+expression, deeper files override shallower ones, the last match wins, and an ignored directory
+is never entered, so nothing under it can be re-included. `.git/info/exclude` and `--exclude`
+patterns apply too; `.git` and symbolic links are never followed. A test compares the walk with
+`git ls-files --others --exclude-standard` on a tree built to exercise each rule.
+
+References near each other merge into hunks: the matching lines with up to five lines of context
+on each side (two by default), at most 50 lines a hunk, each line cut to 500 characters. An upload
+keeps at most 100 hunks per flag and 20,000 in total, every count in full; the scanner trims to
+fit and the server's schema (`packages/core/src/codeRefs.ts`, shared by both) refuses anything
+past it, including absolute or `..` paths and match lines outside their hunk. `--no-source`
+sends only paths and line numbers, for code that should not leave the repository.
+
+The server keeps one row per branch of a repository (`code_reference_branches`) and one per flag
+in it (`code_references`, by key, since flags are archived rather than deleted). `PUT
+/api/projects/:p/code-references` replaces a branch in one transaction, so the flag page shows
+the old scan or the new one, never a mix. Uploads to a project take turns on the project row, so
+the limit of 500 branches holds; past it an upload for a new branch is refused rather than
+evicting one, and `flagship refs delete` (or `DELETE` with the repository and branch) removes
+merged ones. Keys that name no flag are refused. Uploading needs the `code-references:write`
+scope (editor), and reading needs only `flags:read`, so a scanning token can't change flags.
+Uploads are not audited: they describe the code, not the flag, and CI makes one per push.
+
+The repository, branch and commit come from the options, then the GitHub Actions environment
+(`GITHUB_HEAD_REF` on pull requests, `GITHUB_REF_NAME` on pushes), then git; the repository
+name drops any credentials from the origin URL. For GitHub, GitLab and Bitbucket a link template
+(`{commit}`, `{branch}`, `{path}`, `{line}`) is filled in by default; the server accepts only
+http and https templates, and the console opens links with `noopener`.
+
 ## Change requests
 
 An environment can require approvals (`PUT .../environments/:env/approvals`, admins, zero to

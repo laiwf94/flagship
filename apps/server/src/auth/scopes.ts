@@ -22,6 +22,7 @@ export const SCOPES = [
   'sdk-keys:write',
   'webhooks:read',
   'webhooks:write',
+  'code-references:write',
 ] as const;
 
 export type Scope = (typeof SCOPES)[number];
@@ -48,6 +49,7 @@ export const SCOPE_ROLE: Record<Scope, Role> = {
   'sdk-keys:write': 'admin',
   'webhooks:read': 'admin',
   'webhooks:write': 'admin',
+  'code-references:write': 'editor',
 };
 
 export function isScope(value: string): value is Scope {

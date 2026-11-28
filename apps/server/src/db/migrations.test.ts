@@ -44,6 +44,7 @@ describe('migrations', () => {
       '017_api_tokens',
       '018_rollout_guards',
       '019_flags_managed_by',
+      '020_code_references',
     ]);
     await Promise.all(others.map((d) => d.destroy()));
 
@@ -63,6 +64,8 @@ describe('migrations', () => {
       'audit_log',
       'change_request_reviews',
       'change_requests',
+      'code_reference_branches',
+      'code_references',
       'conversion_events',
       'environments',
       'event_consumers',
@@ -102,6 +105,9 @@ describe('migrations', () => {
         'change_requests_project_idx',
         'change_requests_segment_idx',
         'change_requests_target_idx',
+        'code_reference_branches_project_id_repository_branch_key',
+        'code_references_flag_idx',
+        'code_references_pkey',
         'conversion_events_context_idx',
         'conversion_events_pkey',
         'experiment_exposures_context_idx',

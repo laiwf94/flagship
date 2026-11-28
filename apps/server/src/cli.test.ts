@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync, chmodSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -421,6 +421,49 @@ describe('the flagship CLI against the server', () => {
     const doc = JSON.parse(readFileSync(join(dir, 'shop.json'), 'utf8'));
     expect(doc).toMatchObject({ format: 'flagship.project', project: { key: 'shop' } });
     expect((await ok(['export', '--json'])).json().flags).toHaveLength(2);
+  });
+
+  it('scans a repository with a scoped token and shows the references', async () => {
+    const minted = (await root.createApiToken({
+      body: {
+        name: 'scan',
+        scopes: ['flags:read', 'code-references:write'],
+        project: 'shop',
+        expiresInDays: 1,
+      },
+    })) as { secret: string };
+    const env = {
+      FLAGSHIP_SERVER: server,
+      FLAGSHIP_TOKEN: minted.secret,
+      FLAGSHIP_PROJECT: 'shop',
+    };
+    const repo = join(dir, 'repo');
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    mkdirSync(join(repo, 'vendor'), { recursive: true });
+    writeFileSync(join(repo, '.gitignore'), 'vendor/\n');
+    writeFileSync(join(repo, 'src', 'app.ts'), "if (flags.get('new-checkout')) {}\n");
+    writeFileSync(join(repo, 'vendor', 'lib.js'), "'new-checkout'");
+    const scanned = await ok(
+      ['scan', 'repo', '--repository', 'acme/shop', '--branch', 'main', '--json'],
+      { env },
+    );
+    expect(scanned.json()).toMatchObject({ uploaded: true, filesScanned: 2 });
+    const refs = await ok(['refs', 'get', 'new-checkout', '--json'], { env });
+    expect(refs.json().branches).toMatchObject([
+      {
+        repository: 'acme/shop',
+        branch: 'main',
+        uploadedBy: 'Admin (token scan)',
+        count: 1,
+        hunks: [{ path: 'src/app.ts', matchLines: [1] }],
+      },
+    ]);
+    const list = await ok(['refs', 'list'], { env });
+    expect(list.stdout).toContain('acme/shop   main');
+    await ok(['refs', 'delete', '--repository', 'acme/shop', '--branch', 'main'], { env });
+    expect((await ok(['refs', 'get', 'new-checkout'], { env })).stdout).toBe(
+      'No code references to new-checkout.',
+    );
   });
 
   it('works with an API token from the environment, without a profile', async () => {

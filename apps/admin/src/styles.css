@@ -1726,3 +1726,70 @@ input[type='range'] {
     display: none;
   }
 }
+
+/* Code references */
+
+.code-files {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.code-files > li {
+  min-width: 0;
+}
+
+.code-path {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.code-hunk {
+  margin: 0;
+  max-width: 100%;
+  padding: var(--space-2) 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.code-hunk + .code-hunk {
+  margin-top: var(--space-2);
+}
+
+.code-line {
+  display: grid;
+  grid-template-columns: 4.5em max-content;
+}
+
+.code-match {
+  background: var(--warning-soft);
+}
+
+.code-no {
+  padding-right: var(--space-3);
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+}
+
+.code-match .code-no {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.code-line code {
+  white-space: pre;
+}
+
+.code-lines {
+  margin: 0;
+}

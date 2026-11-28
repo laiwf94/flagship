@@ -27,6 +27,7 @@ const PATHS = {
     'M12 9v4m0 4h.01M10.3 3.9 2 18a2 2 0 0 0 1.7 3h16.6A2 2 0 0 0 22 18L13.7 3.9a2 2 0 0 0-3.4 0z',
   back: 'M15 18l-6-6 6-6',
   menu: 'M4 6h16M4 12h16M4 18h16',
+  code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 5l-3 14',
 } as const;
 
 export type IconName = keyof typeof PATHS;

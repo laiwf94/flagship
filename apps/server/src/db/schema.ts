@@ -438,6 +438,39 @@ export interface WebhookAttemptsTable {
   response_truncated: Generated<boolean>;
 }
 
+/** One branch of one repository as `flagship scan` last uploaded it. */
+export interface CodeReferenceBranchesTable {
+  id: Generated<string>;
+  project_id: string;
+  repository: string;
+  branch: string;
+  commit_sha: string | null;
+  /** Link to a line, with {commit}, {branch}, {path} and {line} placeholders. */
+  url_template: string | null;
+  files_scanned: number;
+  scanned_at: ColumnType<Date, Date | undefined, Date>;
+  uploaded_by: string;
+}
+
+/** A run of lines around one or more references, with line numbers counted from 1. */
+export interface CodeHunk {
+  path: string;
+  /** The line number of lines[0]; lines is empty when the scan sent no source. */
+  startLine: number;
+  lines: string[];
+  /** The lines that reference the flag. */
+  matchLines: number[];
+}
+
+export interface CodeReferencesTable {
+  branch_id: string;
+  project_id: string;
+  flag_key: string;
+  /** Every reference found, which may be more than the hunks kept. */
+  count: number;
+  hunks: Json<CodeHunk[]>;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -468,4 +501,6 @@ export interface Database {
   webhooks: WebhooksTable;
   webhook_deliveries: WebhookDeliveriesTable;
   webhook_attempts: WebhookAttemptsTable;
+  code_reference_branches: CodeReferenceBranchesTable;
+  code_references: CodeReferencesTable;
 }

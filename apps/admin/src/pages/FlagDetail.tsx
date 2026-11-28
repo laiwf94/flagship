@@ -4,6 +4,7 @@ import { api, ApiError, type FlagDetail as Detail } from '../api';
 import { Icon } from '../components/icons';
 import { useToast } from '../components/toast';
 import { Button, ErrorState, Loading } from '../components/ui';
+import { CodeReferences } from '../flags/CodeReferences';
 import { Exposures } from '../flags/Exposures';
 import { FlagSettings } from '../flags/FlagSettings';
 import { History } from '../flags/History';
@@ -20,6 +21,7 @@ const TABS = [
   { key: 'schedules', label: 'Schedules' },
   { key: 'rollout', label: 'Rollout' },
   { key: 'exposures', label: 'Evaluations' },
+  { key: 'code', label: 'Code' },
   { key: 'history', label: 'History' },
   { key: 'settings', label: 'Settings' },
 ] as const;
@@ -216,6 +218,7 @@ export function FlagDetail() {
         {tab === 'exposures' && (
           <Exposures project={project.key} flag={f} env={env} envName={envName} />
         )}
+        {tab === 'code' && <CodeReferences project={project.key} flag={f} />}
         {tab === 'history' && <History project={project.key} flag={f.key} />}
         {tab === 'settings' && (
           <FlagSettings

@@ -4,6 +4,7 @@ import { changeRequestCommands } from './changeRequests.js';
 import { codeCommands } from './code.js';
 import { evalCommands } from './evaluate.js';
 import { flagCommands } from './flags.js';
+import { scanCommands } from './scan.js';
 import { segmentCommands } from './segments.js';
 
 /** Every command, in the order help lists them. */
@@ -14,6 +15,7 @@ export const COMMANDS: readonly Command[] = [
   ...changeRequestCommands,
   ...evalCommands,
   ...codeCommands,
+  ...scanCommands,
 ];
 
 /** Short names for command groups. */

@@ -16,6 +16,7 @@ import { createMetrics, type Metrics } from './metrics.js';
 import { API_VERSION, ApiCatalog, operations } from './openapi.js';
 import { sessionRoutes } from './routes/session.js';
 import { changeRequestRoutes } from './routes/changeRequests.js';
+import { codeReferenceRoutes } from './routes/codeReferences.js';
 import { experimentRoutes } from './routes/experiments.js';
 import { flagRoutes } from './routes/flags.js';
 import { projectRoutes } from './routes/projects.js';
@@ -221,6 +222,7 @@ export async function buildApp(deps: AppDeps): Promise<App> {
       await api.register(changeRequestRoutes(ctx));
       await api.register(experimentRoutes(ctx));
       await api.register(webhookRoutes(ctx));
+      await api.register(codeReferenceRoutes(ctx));
     },
     { prefix: '/api' },
   );

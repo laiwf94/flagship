@@ -9,6 +9,7 @@
   "tags": [
     { "name": "audit" },
     { "name": "change-requests" },
+    { "name": "code-references" },
     { "name": "experiments" },
     { "name": "flags" },
     { "name": "meta" },
@@ -564,6 +565,94 @@
         },
         "security": [{ "session": [], "csrf": [] }, { "token": ["change-requests:write"] }],
         "x-flagship-scope": "change-requests:write",
+        "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/code-references": {
+      "get": {
+        "operationId": "listCodeReferenceBranches",
+        "summary": "Branches with uploaded code references, and every flag key a scan should look for",
+        "tags": ["code-references"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
+      },
+      "put": {
+        "operationId": "uploadCodeReferences",
+        "summary": "Replace one branch's code references with a scan",
+        "tags": ["code-references"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UploadCodeReferencesBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["code-references:write"] }],
+        "x-flagship-scope": "code-references:write",
+        "x-flagship-role": "editor"
+      },
+      "delete": {
+        "operationId": "deleteCodeReferenceBranch",
+        "summary": "Forget one branch's code references",
+        "tags": ["code-references"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "repository",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 255 }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No content" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [], "csrf": [] }, { "token": ["code-references:write"] }],
+        "x-flagship-scope": "code-references:write",
         "x-flagship-role": "editor"
       }
     },
@@ -1468,6 +1557,37 @@
         "security": [{ "session": [], "csrf": [] }, { "token": ["flags:write"] }],
         "x-flagship-scope": "flags:write",
         "x-flagship-role": "editor"
+      }
+    },
+    "/projects/{project}/flags/{flag}/code-references": {
+      "get": {
+        "operationId": "getFlagCodeReferences",
+        "summary": "Where a flag is referenced in code, per branch",
+        "tags": ["code-references"],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          },
+          {
+            "name": "flag",
+            "in": "path",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Key" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "session": [] }, { "token": ["flags:read"] }],
+        "x-flagship-scope": "flags:read",
+        "x-flagship-role": "viewer"
       }
     },
     "/projects/{project}/flags/{flag}/environments/{environment}": {
@@ -2637,7 +2757,7 @@
           "name": { "type": "string", "minLength": 1, "maxLength": 100 },
           "scopes": {
             "minItems": 1,
-            "maxItems": 16,
+            "maxItems": 17,
             "type": "array",
             "items": {
               "type": "string",
@@ -2657,7 +2777,8 @@
                 "sdk-keys:read",
                 "sdk-keys:write",
                 "webhooks:read",
-                "webhooks:write"
+                "webhooks:write",
+                "code-references:write"
               ]
             }
           },
@@ -3504,6 +3625,61 @@
           },
           "enabled": { "type": "boolean" }
         },
+        "additionalProperties": false
+      },
+      "UploadCodeReferencesBody": {
+        "type": "object",
+        "properties": {
+          "repository": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "branch": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "commit": {
+            "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{7,64}$" }, { "type": "null" }]
+          },
+          "urlTemplate": {
+            "anyOf": [
+              { "type": "string", "maxLength": 500, "pattern": "^https?:\\/\\/[^\\s]+$" },
+              { "type": "null" }
+            ]
+          },
+          "filesScanned": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "references": {
+            "type": "object",
+            "propertyNames": { "$ref": "#/components/schemas/Key" },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "count": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                "hunks": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                      "startLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "lines": {
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": { "type": "string", "maxLength": 500 }
+                      },
+                      "matchLines": {
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+                      }
+                    },
+                    "required": ["path", "startLine", "lines", "matchLines"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["count", "hunks"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["repository", "branch", "filesScanned", "references"],
         "additionalProperties": false
       },
       "Variant": {

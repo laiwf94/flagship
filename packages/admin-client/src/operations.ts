@@ -36,6 +36,7 @@ export type CreateApiTokenBody = {
     | 'sdk-keys:write'
     | 'webhooks:read'
     | 'webhooks:write'
+    | 'code-references:write'
   )[];
   project?: Key;
   environments?: Key[];
@@ -405,6 +406,25 @@ export type UpdateWebhookBody = {
   enabled?: boolean;
 };
 
+export type UploadCodeReferencesBody = {
+  repository: string;
+  branch: string;
+  commit?: string | null;
+  urlTemplate?: string | null;
+  filesScanned: number;
+  references: {
+    [key: string]: {
+      count: number;
+      hunks: {
+        path: string;
+        startLine: number;
+        lines: string[];
+        matchLines: number[];
+      }[];
+    };
+  };
+};
+
 export type Variant = {
   key: Key;
   value: JsonValue;
@@ -469,6 +489,15 @@ export type CreateWebhookPath = {
   project: Key;
 };
 
+export type DeleteCodeReferenceBranchPath = {
+  project: Key;
+};
+
+export type DeleteCodeReferenceBranchQuery = {
+  repository: string;
+  branch: string;
+};
+
 export type DeleteSegmentPath = {
   project: Key;
   environment: Key;
@@ -522,6 +551,11 @@ export type GetFlagPath = {
   flag: Key;
 };
 
+export type GetFlagCodeReferencesPath = {
+  project: Key;
+  flag: Key;
+};
+
 export type GetProjectPath = {
   project: Key;
 };
@@ -571,6 +605,10 @@ export type ListChangeRequestsQuery = {
   segment?: Key | undefined;
   before?: string | undefined;
   limit?: number | undefined;
+};
+
+export type ListCodeReferenceBranchesPath = {
+  project: Key;
 };
 
 export type ListExperimentsPath = {
@@ -789,6 +827,10 @@ export type UpdateWebhookPath = {
   id: string;
 };
 
+export type UploadCodeReferencesPath = {
+  project: Key;
+};
+
 /** How each operation is sent. */
 export interface OperationSpec {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -871,6 +913,12 @@ export const OPERATIONS = {
     params: ['project'],
     empty: false,
   },
+  deleteCodeReferenceBranch: {
+    method: 'DELETE',
+    path: '/projects/{project}/code-references',
+    params: ['project'],
+    empty: true,
+  },
   deleteSegment: {
     method: 'DELETE',
     path: '/projects/{project}/environments/{environment}/segments/{segment}',
@@ -919,6 +967,12 @@ export const OPERATIONS = {
     params: ['project', 'flag'],
     empty: false,
   },
+  getFlagCodeReferences: {
+    method: 'GET',
+    path: '/projects/{project}/flags/{flag}/code-references',
+    params: ['project', 'flag'],
+    empty: false,
+  },
   getOpenApiDocument: { method: 'GET', path: '/openapi.json', params: [], empty: false },
   getProject: { method: 'GET', path: '/projects/{project}', params: ['project'], empty: false },
   getRolloutGuards: {
@@ -957,6 +1011,12 @@ export const OPERATIONS = {
   listChangeRequests: {
     method: 'GET',
     path: '/projects/{project}/change-requests',
+    params: ['project'],
+    empty: false,
+  },
+  listCodeReferenceBranches: {
+    method: 'GET',
+    path: '/projects/{project}/code-references',
     params: ['project'],
     empty: false,
   },
@@ -1164,6 +1224,12 @@ export const OPERATIONS = {
     params: ['project', 'id'],
     empty: false,
   },
+  uploadCodeReferences: {
+    method: 'PUT',
+    path: '/projects/{project}/code-references',
+    params: ['project'],
+    empty: false,
+  },
 } as const satisfies Record<string, OperationSpec>;
 
 export type OperationId = keyof typeof OPERATIONS;
@@ -1348,6 +1414,20 @@ export abstract class AdminOperations {
   }
 
   /**
+   * Forget one branch's code references
+   *
+   * DELETE /projects/{project}/code-references
+   *
+   * Token scope: code-references:write.
+   */
+  deleteCodeReferenceBranch(args: {
+    path: DeleteCodeReferenceBranchPath;
+    query: DeleteCodeReferenceBranchQuery;
+  }): Promise<void> {
+    return this.send(OPERATIONS.deleteCodeReferenceBranch, args).then(() => undefined);
+  }
+
+  /**
    * Delete a segment no flag uses
    *
    * DELETE /projects/{project}/environments/{environment}/segments/{segment}
@@ -1436,6 +1516,17 @@ export abstract class AdminOperations {
    */
   getFlag(args: { path: GetFlagPath }): Promise<unknown> {
     return this.send(OPERATIONS.getFlag, args);
+  }
+
+  /**
+   * Where a flag is referenced in code, per branch
+   *
+   * GET /projects/{project}/flags/{flag}/code-references
+   *
+   * Token scope: flags:read.
+   */
+  getFlagCodeReferences(args: { path: GetFlagCodeReferencesPath }): Promise<unknown> {
+    return this.send(OPERATIONS.getFlagCodeReferences, args);
   }
 
   /**
@@ -1554,6 +1645,17 @@ export abstract class AdminOperations {
     query?: ListChangeRequestsQuery;
   }): Promise<unknown> {
     return this.send(OPERATIONS.listChangeRequests, args);
+  }
+
+  /**
+   * Branches with uploaded code references, and every flag key a scan should look for
+   *
+   * GET /projects/{project}/code-references
+   *
+   * Token scope: flags:read.
+   */
+  listCodeReferenceBranches(args: { path: ListCodeReferenceBranchesPath }): Promise<unknown> {
+    return this.send(OPERATIONS.listCodeReferenceBranches, args);
   }
 
   /**
@@ -2009,5 +2111,19 @@ export abstract class AdminOperations {
    */
   updateWebhook(args: { path: UpdateWebhookPath; body: UpdateWebhookBody }): Promise<unknown> {
     return this.send(OPERATIONS.updateWebhook, args);
+  }
+
+  /**
+   * Replace one branch's code references with a scan
+   *
+   * PUT /projects/{project}/code-references
+   *
+   * Token scope: code-references:write.
+   */
+  uploadCodeReferences(args: {
+    path: UploadCodeReferencesPath;
+    body: UploadCodeReferencesBody;
+  }): Promise<unknown> {
+    return this.send(OPERATIONS.uploadCodeReferences, args);
   }
 }

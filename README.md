@@ -242,6 +242,24 @@ Mistakes are reported with the file's line numbers before anything is written, i
 the server would refuse: unknown variants or segments and prerequisite cycles. A flag the file
 manages is locked in the console, apart from the kill switch.
 
+### Code references
+
+`flagship scan` finds every flag key of the project in quotes or backticks across a repository,
+honouring `.gitignore`, on worker threads, and uploads where each one is used for the current
+branch. The flag page's Code tab shows the lines with links to them, so you can see what uses a
+flag before changing it and what still needs cleaning up after archiving it.
+
+```console
+$ flagship scan                 # repository, branch and commit from GitHub Actions or git
+Scanned 842 files in 0.3 s on 1 thread: 4 references to 1 of 12 flags.
+$ flagship refs get new-checkout
+$ flagship refs delete --repository github.com/acme/shop --branch feature/x   # once merged
+```
+
+A CI token for scanning needs the `flags:read` and `code-references:write` scopes. `--context`
+sets the lines of source kept around each reference (0 to 5, default 2) and `--no-source` uploads
+only paths and line numbers.
+
 ## HTTP API
 
 Admin routes use the session cookie and need `X-CSRF-Token` on writes, or an API token in
@@ -275,48 +293,50 @@ await api.setKillSwitch({
 Scopes: `flags`, `segments`, `change-requests` and `experiments` each `:read` and `:write`;
 `audit:read`, `audit:restore`; `projects`, `sdk-keys` and `webhooks` each `:read` and `:write`.
 
-| Endpoint                                                                    | Purpose                                                                                      |
-| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `POST /api/session`, `GET /api/session`, `DELETE /api/session`              | sign in (returns the CSRF token), current user, sign out                                     |
-| `PUT /api/session/password`                                                 | change password, ending other sessions                                                       |
-| `GET/POST /api/users`, `PATCH /api/users/:id`                               | people and roles (admin)                                                                     |
-| `GET/POST /api/tokens`, `DELETE /api/tokens/:id`                            | your API tokens; the secret is returned once (an admin can revoke anyone's)                  |
-| `GET/POST /api/projects`, `POST /api/projects/:p/environments`              | projects and environments                                                                    |
-| `GET /api/projects/:p`                                                      | one project with its environments and their protection                                       |
-| `GET/POST/DELETE /api/projects/:p/environments/:e/api-keys[/:id]`           | SDK keys; the secret is returned once (admin)                                                |
-| `GET /api/projects/:p/export`                                               | the whole project as one JSON document, streamed (admin)                                     |
-| `POST /api/projects/import?key=&name=`                                      | create a project from an export, validated first (admin)                                     |
-| `GET/POST /api/projects/:p/flags`                                           | list with `q`, `status`, `type` filters; create                                              |
-| `GET/PUT /api/projects/:p/flags/:f`                                         | read; edit name, description, variants (with `version`)                                      |
-| `PUT /api/projects/:p/flags/:f/environments/:e`                             | replace targeting (with that environment's `version`)                                        |
-| `POST /api/projects/:p/flags/:f/environments/:e/kill-switch`                | `{"enabled": false}`, no version needed                                                      |
-| `POST /api/projects/:p/flags/:f/archive`, `/restore`                        | archive and restore                                                                          |
-| `PUT/DELETE /api/projects/:p/flags/:f/managed-by`                           | mark a flag as managed by a flags file (with the versions an apply left), or release it      |
-| `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                                                            |
-| `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step                                           |
-| `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout                                 |
-| `GET .../rollout-plans/:id/guards`                                          | what each guard metric reads now: both means, the lift with its 99% interval, the state      |
-| `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                                                           |
-| `GET/POST /api/projects/:p/experiments?environment=&flag=&status=`          | experiments; start one on a flag's live split, with a control and metrics                    |
-| `GET /api/projects/:p/experiments/:x`, `POST .../experiments/:x/stop`       | read or stop an experiment                                                                   |
-| `GET /api/projects/:p/experiments/:x/results?showMismatched=`               | per-variant rates, intervals and lift; hidden behind a warning on a failed SRM check         |
-| `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                                                    |
-| `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI                                            |
-| `GET /api/projects/:p/audit?flag=&segment=&actor=&q=&from=&to=&cursor=`     | change history with diffs, searchable, keyset-paged                                          |
-| `GET /api/projects/:p/audit/:id/restore?to=before\|after`                   | what restoring an entry would change, against what is live                                   |
-| `POST /api/projects/:p/audit/:id/restore`                                   | restore it, or open a change request in a protected env                                      |
-| `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)                                  |
-| `GET/POST/PATCH/DELETE /api/projects/:p/webhooks[/:id]`                     | signed webhooks for change events; the secret is shown once (admin, needs a secret key)      |
-| `POST /api/projects/:p/webhooks/:id/secret`                                 | rotate the signing secret; the old one also signs for 24 hours (admin)                       |
-| `GET /api/projects/:p/webhooks/:id/deliveries?status=&event=&cursor=`       | the delivery log, newest first, keyset-paged (admin)                                         |
-| `GET /api/projects/:p/webhooks/:id/deliveries/:d`                           | one delivery with its payload and every attempt (admin)                                      |
-| `POST .../deliveries/:d/replay, POST .../webhooks/:id/replay`               | send one finished delivery again, or every one in a window not yet replayed (admin)          |
-| `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)                                              |
-| `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`                                    |
-| `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only)                                |
-| `GET /sdk/v1/client-stream?key=`                                            | SSE of version numbers for browsers                                                          |
-| `POST /sdk/v1/events`                                                       | exposure counts, first exposures and conversions; `429` + `Retry-After` when a queue is full |
-| `GET /healthz`, `GET /readyz`, `GET /metrics`                               | liveness, readiness (checks Postgres), Prometheus                                            |
+| Endpoint                                                                    | Purpose                                                                                                    |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `POST /api/session`, `GET /api/session`, `DELETE /api/session`              | sign in (returns the CSRF token), current user, sign out                                                   |
+| `PUT /api/session/password`                                                 | change password, ending other sessions                                                                     |
+| `GET/POST /api/users`, `PATCH /api/users/:id`                               | people and roles (admin)                                                                                   |
+| `GET/POST /api/tokens`, `DELETE /api/tokens/:id`                            | your API tokens; the secret is returned once (an admin can revoke anyone's)                                |
+| `GET/POST /api/projects`, `POST /api/projects/:p/environments`              | projects and environments                                                                                  |
+| `GET /api/projects/:p`                                                      | one project with its environments and their protection                                                     |
+| `GET/POST/DELETE /api/projects/:p/environments/:e/api-keys[/:id]`           | SDK keys; the secret is returned once (admin)                                                              |
+| `GET /api/projects/:p/export`                                               | the whole project as one JSON document, streamed (admin)                                                   |
+| `POST /api/projects/import?key=&name=`                                      | create a project from an export, validated first (admin)                                                   |
+| `GET/POST /api/projects/:p/flags`                                           | list with `q`, `status`, `type` filters; create                                                            |
+| `GET/PUT /api/projects/:p/flags/:f`                                         | read; edit name, description, variants (with `version`)                                                    |
+| `PUT /api/projects/:p/flags/:f/environments/:e`                             | replace targeting (with that environment's `version`)                                                      |
+| `POST /api/projects/:p/flags/:f/environments/:e/kill-switch`                | `{"enabled": false}`, no version needed                                                                    |
+| `POST /api/projects/:p/flags/:f/archive`, `/restore`                        | archive and restore                                                                                        |
+| `PUT/DELETE /api/projects/:p/flags/:f/managed-by`                           | mark a flag as managed by a flags file (with the versions an apply left), or release it                    |
+| `GET/POST/DELETE /api/projects/:p/flags/:f/environments/:e/schedules[/:id]` | scheduled changes                                                                                          |
+| `GET/POST /api/projects/:p/flags/:f/environments/:e/rollout-plans`          | progressive rollouts; start applies the first step                                                         |
+| `POST .../rollout-plans/:id/pause`, `/resume`, `/cancel`                    | pause, resume (restarts the step's hold) or cancel a rollout                                               |
+| `GET .../rollout-plans/:id/guards`                                          | what each guard metric reads now: both means, the lift with its 99% interval, the state                    |
+| `GET /api/projects/:p/flags/:f/exposures?environment=&hours=`               | per-variant counts                                                                                         |
+| `GET /api/projects/:p/flags/:f/code-references`                             | where a flag is used in code, per branch, from `flagship scan`                                             |
+| `GET/PUT/DELETE /api/projects/:p/code-references`                           | list scanned branches (and the flag keys to look for), replace one branch's references, or forget a branch |
+| `GET/POST /api/projects/:p/experiments?environment=&flag=&status=`          | experiments; start one on a flag's live split, with a control and metrics                                  |
+| `GET /api/projects/:p/experiments/:x`, `POST .../experiments/:x/stop`       | read or stop an experiment                                                                                 |
+| `GET /api/projects/:p/experiments/:x/results?showMismatched=`               | per-variant rates, intervals and lift; hidden behind a warning on a failed SRM check                       |
+| `GET/POST/PUT/DELETE /api/projects/:p/environments/:e/segments[/:s]`        | segments (with `version`)                                                                                  |
+| `GET /api/projects/:p/environments/:e/ruleset`                              | the environment's ruleset, for tooling and the UI                                                          |
+| `GET /api/projects/:p/audit?flag=&segment=&actor=&q=&from=&to=&cursor=`     | change history with diffs, searchable, keyset-paged                                                        |
+| `GET /api/projects/:p/audit/:id/restore?to=before\|after`                   | what restoring an entry would change, against what is live                                                 |
+| `POST /api/projects/:p/audit/:id/restore`                                   | restore it, or open a change request in a protected env                                                    |
+| `PUT /api/projects/:p/environments/:e/change-notes`                         | require a reason and/or ticket link on every change (admin)                                                |
+| `GET/POST/PATCH/DELETE /api/projects/:p/webhooks[/:id]`                     | signed webhooks for change events; the secret is shown once (admin, needs a secret key)                    |
+| `POST /api/projects/:p/webhooks/:id/secret`                                 | rotate the signing secret; the old one also signs for 24 hours (admin)                                     |
+| `GET /api/projects/:p/webhooks/:id/deliveries?status=&event=&cursor=`       | the delivery log, newest first, keyset-paged (admin)                                                       |
+| `GET /api/projects/:p/webhooks/:id/deliveries/:d`                           | one delivery with its payload and every attempt (admin)                                                    |
+| `POST .../deliveries/:d/replay, POST .../webhooks/:id/replay`               | send one finished delivery again, or every one in a window not yet replayed (admin)                        |
+| `GET /sdk/v1/ruleset`                                                       | snapshot with ETag and `checksum` (server keys)                                                            |
+| `GET /sdk/v1/stream`                                                        | SSE: `put`, then `patch` per change, each with `checksum`                                                  |
+| `POST /sdk/v1/evaluate`                                                     | values for a context (client keys see client-side flags only)                                              |
+| `GET /sdk/v1/client-stream?key=`                                            | SSE of version numbers for browsers                                                                        |
+| `POST /sdk/v1/events`                                                       | exposure counts, first exposures and conversions; `429` + `Retry-After` when a queue is full               |
+| `GET /healthz`, `GET /readyz`, `GET /metrics`                               | liveness, readiness (checks Postgres), Prometheus                                                          |
 
 Errors look like `{"error":{"code":"version_conflict","message":"...","request_id":"...","details":{...}}}`
 with stable codes: `invalid_argument` 400 (with field paths in `details`), `unauthenticated` 401,

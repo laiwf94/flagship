@@ -295,6 +295,12 @@ const PAGES: { name: string; path: string; ready: (page: Page) => Promise<void> 
       expect(p.getByRole('list', { name: 'Evaluations by variant' })).toBeVisible(),
   },
   {
+    name: 'flag-code',
+    path: `${P}/flags/new-checkout?tab=code`,
+    ready: async (p) =>
+      expect(p.getByRole('list', { name: 'Files referencing new-checkout' })).toBeVisible(),
+  },
+  {
     name: 'flag-history',
     path: `${P}/flags/new-checkout?tab=history`,
     ready: async (p) => expect(p.getByRole('list', { name: 'Change history' })).toBeVisible(),

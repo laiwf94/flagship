@@ -641,4 +641,32 @@ export const migrations: Record<string, Migration> = {
     `ALTER TABLE flags ADD COLUMN managed_by jsonb
       CHECK (managed_by IS NULL OR jsonb_typeof(managed_by) = 'object')`,
   ]),
+  // Code references: \`flagship scan\` uploads where each flag key appears in
+  // one branch of one repository, replacing that branch's previous upload.
+  // References are kept by flag key rather than flag id so a branch can be
+  // replaced in one statement; flags are archived, never deleted, so a key
+  // always names the same flag.
+  '020_code_references': statements([
+    `CREATE TABLE code_reference_branches (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      project_id uuid NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+      repository text NOT NULL CHECK (length(repository) BETWEEN 1 AND 200),
+      branch text NOT NULL CHECK (length(branch) BETWEEN 1 AND 255),
+      commit_sha text CHECK (commit_sha ~ '^[0-9a-f]{7,64}$'),
+      url_template text CHECK (length(url_template) <= 500),
+      files_scanned integer NOT NULL CHECK (files_scanned >= 0),
+      scanned_at timestamptz NOT NULL DEFAULT now(),
+      uploaded_by text NOT NULL,
+      UNIQUE (project_id, repository, branch)
+    )`,
+    `CREATE TABLE code_references (
+      branch_id uuid NOT NULL REFERENCES code_reference_branches (id) ON DELETE CASCADE,
+      project_id uuid NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+      flag_key text NOT NULL,
+      count integer NOT NULL CHECK (count >= 1),
+      hunks jsonb NOT NULL CHECK (jsonb_typeof(hunks) = 'array'),
+      PRIMARY KEY (branch_id, flag_key)
+    )`,
+    `CREATE INDEX code_references_flag_idx ON code_references (project_id, flag_key)`,
+  ]),
 };

@@ -37,6 +37,7 @@ export const SCOPE_CHOICES: { scope: TokenScope; label: string; role: Role }[] =
   { scope: 'sdk-keys:write', label: 'Create and revoke SDK keys', role: 'admin' },
   { scope: 'webhooks:read', label: 'Read webhooks and deliveries', role: 'admin' },
   { scope: 'webhooks:write', label: 'Manage and replay webhooks', role: 'admin' },
+  { scope: 'code-references:write', label: 'Upload code references from scans', role: 'editor' },
 ];
 
 const EXPIRY_DAYS = [7, 30, 90, 365] as const;

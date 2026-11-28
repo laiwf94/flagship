@@ -224,6 +224,64 @@ export async function seed(base: string): Promise<void> {
     change: { enabled: true, fallthrough: rollout(50) },
   });
 
+  // Code references as `flagship scan` uploads them, on two branches.
+  const sha = '3f2a9c1d7e5b4a608c1f2e3d4b5a69788796a5b4';
+  const scanned = (branch: string, extra: object[] = []) => ({
+    repository: 'github.com/acme/storefront',
+    branch,
+    commit: sha,
+    urlTemplate: 'https://github.com/acme/storefront/blob/{commit}/{path}#L{line}',
+    filesScanned: 842,
+    references: {
+      'new-checkout': {
+        count: 4 + extra.length,
+        hunks: [
+          {
+            path: 'src/checkout/CheckoutPage.tsx',
+            startLine: 12,
+            lines: [
+              "import { useFlag } from '@flagship/react';",
+              '',
+              'export function CheckoutPage() {',
+              "  const newCheckout = useFlag('new-checkout', false);",
+              '  return newCheckout ? <NewCheckout /> : <LegacyCheckout />;',
+            ],
+            matchLines: [15],
+          },
+          {
+            path: 'src/server/routes/cart.ts',
+            startLine: 40,
+            lines: [
+              "router.post('/cart/checkout', async (req, res) => {",
+              "  if (await flags.boolVariation('new-checkout', req.user, false)) {",
+              '    return startPaymentFlow(req, res);',
+              '  }',
+              "  // Remove with 'new-checkout' once it ships to everyone.",
+            ],
+            matchLines: [41, 44],
+          },
+          { path: 'services/payments/main.go', startLine: 88, lines: [], matchLines: [88] },
+          ...extra,
+        ],
+      },
+    },
+  });
+  await call(base, s, 'PUT', `${P}/code-references`, scanned('main'));
+  await call(
+    base,
+    s,
+    'PUT',
+    `${P}/code-references`,
+    scanned('feature/one-page-checkout', [
+      {
+        path: 'src/checkout/OnePage.tsx',
+        startLine: 3,
+        lines: ["  if (!useFlag('new-checkout', false)) return null;"],
+        matchLines: [3],
+      },
+    ]),
+  );
+
   const server = await call<{ secret: string }>(
     base,
     s,
