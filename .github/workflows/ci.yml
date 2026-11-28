@@ -18,6 +18,11 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      # The codegen tests build, vet and test the generated Go.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
       - run: pnpm install --frozen-lockfile
       - name: Format
         run: pnpm format:check

@@ -260,6 +260,32 @@ A CI token for scanning needs the `flags:read` and `code-references:write` scope
 sets the lines of source kept around each reference (0 to 5, default 2) and `--no-source` uploads
 only paths and line numbers.
 
+### Typed accessors
+
+`flagship codegen` writes a module with a constant per flag key and one typed accessor per flag,
+so a misspelt key or a removed flag fails the build instead of quietly serving the fallback.
+TypeScript gets `serverFlags(client)` for `@flagship/node` and `browserFlags(client)` for
+`@flagship/browser` (client-side flags only); a string flag returns the union of its variant
+values, and the fallback if the server ever serves anything else. Go gets constants, a string
+type per string flag and an `Evaluator` interface for the Go SDK, formatted as gofmt would.
+
+```console
+$ flagship codegen --out src/flags.ts            # language from the extension
+$ flagship codegen --out internal/flags/flags.go # package name from the directory
+$ flagship codegen --file flags.yaml --out src/flags.ts --check   # in CI: exit 3 when stale
+```
+
+```ts
+import { serverFlags } from './flags.js';
+const flags = serverFlags(client);
+if (flags.newCheckout(user, false)) render(flags.theme(user, 'light')); // 'light' | 'dark'
+```
+
+Flags come from the server (a token with `flags:read` is enough when an environment is set), or
+from a flags file with `--file`, so the CI check needs no credentials. The output depends only
+on the flags, never on the time or the command line, so `--check` is stable; keep the file out
+of your formatter.
+
 ## HTTP API
 
 Admin routes use the session cookie and need `X-CSRF-Token` on writes, or an API token in

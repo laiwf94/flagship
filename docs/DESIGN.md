@@ -782,6 +782,43 @@ name drops any credentials from the origin URL. For GitHub, GitLab and Bitbucket
 (`{commit}`, `{branch}`, `{path}`, `{line}`) is filled in by default; the server accepts only
 http and https templates, and the console opens links with `noopener`.
 
+## Typed accessors
+
+`flagship codegen` (`packages/cli/src/codegen.ts`) turns the flag list into source: from the
+server (the flag list, then each flag eight at a time, archived ones left out) or from a flags
+file read by the same parser as `plan`. Flags are sorted by key and nothing else goes into the
+output (no time, version or command line), so the same flags always give the same bytes and
+`--check` can compare the file on disk byte for byte, reporting the first line that differs and
+exiting with status 3, like `plan --check`.
+
+A key becomes an identifier by splitting on anything but letters and digits: `new-checkout` is
+`newCheckout` in TypeScript and `NewCheckout` in Go, and a leading digit gets `flag`/`Flag` in
+front. Keys that differ only in separators or case would collide, so every generated name (for
+Go also `Key…`, `…Value` and one constant per string variant) is checked and a clash is an error
+naming both flags, never a silent overwrite.
+
+TypeScript gets `FlagValues` (key to value type), `FlagKey`, `FLAG_KEYS`, and accessor factories
+over two small interfaces, `ServerEvaluator<C>` and `BrowserEvaluator`, that `FlagshipClient` and
+`BrowserClient` satisfy structurally, so the module imports nothing. A string flag's type is the
+union of its variant values; since the evaluator only ever serves a variant or the fallback, the
+accessor checks the value against that list and returns the fallback for anything else, so a
+variant added after generation cannot reach an exhaustive `switch`. JSON flags are typed as the
+union of their variants' shapes (literals widened), numbers as `number`. Descriptions become JSDoc
+with `*/` broken up. A test compiles the output against the real SDK clients under the repo's
+strict settings with `noUnused*` on, including `@ts-expect-error` lines for a wrong value, a
+missing context and a server-only flag in the browser.
+
+Go gets a `Code generated ... DO NOT EDIT.` header, key constants, a `Keys` slice, a named string
+type with a constant per variant for string flags, and `Flags[C]` with one method per flag over
+`Evaluator[C]` (`BoolVariation`, `StringVariation`, `NumberVariation` with `float64`,
+`JSONVariation` with `any`), the method set the Go SDK implements. String accessors `switch` on
+the distinct values and fall back otherwise. The text is written as gofmt prints it: const blocks
+padded to gofmt's columns, strings quoted for Go (lone surrogates, which UTF-8 cannot hold,
+become U+FFFD), and doc comments kept to one unindented paragraph so gofmt finds no heading, list
+or code block in a description. Tests run `gofmt -l`, `go vet` and `go test` on the output for a
+fixed project and five seeded random ones with awkward keys, values and descriptions, so CI
+installs Go.
+
 ## Change requests
 
 An environment can require approvals (`PUT .../environments/:env/approvals`, admins, zero to

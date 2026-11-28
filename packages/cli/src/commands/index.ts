@@ -2,6 +2,7 @@ import type { Command } from '../command.js';
 import { authCommands } from './auth.js';
 import { changeRequestCommands } from './changeRequests.js';
 import { codeCommands } from './code.js';
+import { codegenCommands } from './codegen.js';
 import { evalCommands } from './evaluate.js';
 import { flagCommands } from './flags.js';
 import { scanCommands } from './scan.js';
@@ -16,6 +17,7 @@ export const COMMANDS: readonly Command[] = [
   ...evalCommands,
   ...codeCommands,
   ...scanCommands,
+  ...codegenCommands,
 ];
 
 /** Short names for command groups. */
